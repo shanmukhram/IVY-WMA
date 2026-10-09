@@ -85,7 +85,7 @@ public class VectorTests
         Assert.Equal(oid, Oids.Make(1_760_000_111_000, Bytes.FromHex("00000000000000000002")));
         var plaintext = Enumerable.Range(0, v.GetProperty("plaintextLen").GetInt32()).Select(i => (byte)(i % 256)).ToArray();
 
-        var result = Chunked.Encrypt(Hex(v, "recipientPublicKeyHex"), oid, Hex(v, "objectIdHex"), Kinds.FromWireName(Str(v, "payloadKind")),
+        var result = Chunked.Encrypt(Hex(v, "recipientPublicKeyHex"), oid, Hex(v, "objectIdHex"), Str(v, "payloadKind"),
             plaintext, v.GetProperty("chunkSize").GetInt32(), new ChunkedTestInputs(
                 Hex(inputs, "objectContentKeyHex"), Hex(inputs, "manifestEphemeralSecretKeyHex"), Hex(inputs, "manifestContentKeyHex"),
                 Hex(inputs, "manifestWrapNonceHex"), Hex(inputs, "manifestBodyNonceHex")));

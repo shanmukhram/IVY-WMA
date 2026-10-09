@@ -1,0 +1,39 @@
+{
+  "name": "@ivy/fake-mac",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Stand-in for the Mac dashboard: serves the S3 mock, pairs a device, ingests and decrypts uploads, issues commands. For smoke-testing the Windows app without the Mac side.",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "bin": {
+    "ivy-fake-mac": "./src/cli.ts"
+  },
+  "scripts": {
+    "serve": "node src/cli.ts serve",
+    "request-file": "node src/cli.ts request-file",
+    "rescan": "node src/cli.ts rescan",
+    "config": "node src/cli.ts config",
+    "audit": "node src/cli.ts audit",
+    "status": "node src/cli.ts status",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.1149.0",
+    "@ivy/audit": "workspace:*",
+    "@ivy/protocol": "workspace:*",
+    "@ivy/s3-mock": "workspace:*",
+    "qrcode-terminal": "0.12.0"
+  },
+  "devDependencies": {
+    "@types/node": "26.6.5",
+    "typescript": "7.0.2",
+    "vitest": "5.0.3"
+  }
+}

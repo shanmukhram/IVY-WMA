@@ -2,6 +2,8 @@ using System.Globalization;
 using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Text.Json.Serialization.Metadata;
+using Ivy.Core.Records;
 
 namespace Ivy.Core.Protocol;
 
@@ -22,7 +24,22 @@ public static class IvyJson
         NumberHandling = JsonNumberHandling.Strict,
         ReadCommentHandling = JsonCommentHandling.Disallow,
         AllowTrailingCommas = false,
+        TypeInfoResolver = new DefaultJsonTypeInfoResolver { Modifiers = { ConfigureUsageTitle } },
     };
+
+    /// <summary>
+    /// <c>usage_event.title</c> is tri-state (string | null | absent, PROTOCOL.md §6). The global
+    /// <see cref="JsonIgnoreCondition.WhenWritingNull"/> would drop a captured-but-excluded title
+    /// (<c>null</c>), so override serialization to emit <c>title</c> whenever a title was captured — even
+    /// when null — and omit it otherwise.
+    /// </summary>
+    private static void ConfigureUsageTitle(JsonTypeInfo info)
+    {
+        if (info.Type != typeof(UsageEventRecord)) return;
+        foreach (var prop in info.Properties)
+            if (prop.Name == "title")
+                prop.ShouldSerialize = (obj, _) => ((UsageEventRecord)obj).TitleCaptured;
+    }
 
     /// <summary>Serialize by RUNTIME type, so a record held as <c>IvyRecord</c> keeps its derived fields.</summary>
     public static byte[] SerializeToUtf8<T>(T value) where T : notnull => JsonSerializer.SerializeToUtf8Bytes(value, value.GetType(), Options);

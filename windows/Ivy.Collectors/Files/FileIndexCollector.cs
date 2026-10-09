@@ -50,9 +50,9 @@ public sealed class FileScanSummary
 /// <item>Incremental: FileSystemWatcher on all platforms, plus the NTFS USN journal on Windows (cursor =
 /// next USN per volume in <c>collector_state.cursor</c>). Events are debounced and re-stat'ed.</item>
 /// </list>
-/// Deletions: <c>file_meta</c> has no deleted flag (PROTOCOL.md §6), so a deletion is recorded in
-/// <c>file_tombstones</c>, the <c>file_cache</c> row is removed, and an activity entry is written; nothing
-/// is sent to the Mac until the schema grows a field for it.
+/// Deletions: an observed deletion (watcher delete, USN delete reason, or a file missing in a rescan) is
+/// recorded in <c>file_tombstones</c>, the <c>file_cache</c> row is removed, an activity entry is written,
+/// and a <c>file_meta</c> with <c>deleted: true</c> (PROTOCOL.md §6) is emitted to the Mac.
 /// </summary>
 public sealed class FileIndexCollector : Collector<FileIndexSettings>
 {
@@ -281,7 +281,7 @@ public sealed class FileIndexCollector : Collector<FileIndexSettings>
             if (!_walk.MoveNext())
             {
                 batch.Commit();
-                var deleted = SweepRoot(root, scan.StartedAt, _walker!.FailedDirectories);
+                var deleted = SweepRoot(sink, root, scan.StartedAt, _walker!.FailedDirectories);
                 _walk.Dispose();
                 _walk = null;
                 scan.RootIndex++;
@@ -333,7 +333,7 @@ public sealed class FileIndexCollector : Collector<FileIndexSettings>
     private void SaveScan() => Context.Settings.Save(Name, ScanKey, _scan);
 
     /// <summary>Cached files under a fully walked root that the scan did not see: deleted, or now excluded.</summary>
-    private int SweepRoot(string root, string scanStartedAt, IReadOnlyList<string> failedDirs)
+    private int SweepRoot(IRecordSink sink, string root, string scanStartedAt, IReadOnlyList<string> failedDirs)
     {
         if (_fs.Stat(root) is not { IsDirectory: true }) return 0; // unmounted drive: never mass-delete
         var stale = _store.StaleUnder(root, scanStartedAt);
@@ -348,6 +348,7 @@ public sealed class FileIndexCollector : Collector<FileIndexSettings>
             if (st is null)
             {
                 batch.Tombstone(path, hash, fileId, now, "deleted");
+                EmitDeletion(sink, path, now);
                 deleted++;
             }
             else if (!st.IsDirectory && !Admitted(path, st))
@@ -415,6 +416,23 @@ public sealed class FileIndexCollector : Collector<FileIndexSettings>
         return true;
     }
 
+    /// <summary>Emit a <c>file_meta</c> deletion (PROTOCOL.md §6) alongside the <c>file_tombstones</c> bookkeeping.</summary>
+    private void EmitDeletion(IRecordSink sink, string path, string nowStr)
+    {
+        var name = Path.GetFileName(path);
+        Emit(sink, new FileMetaRecord
+        {
+            DeviceId = DeviceId(sink),
+            EventTime = nowStr, // for a deletion, eventTime is when the deletion was observed
+            CaptureTime = nowStr,
+            Path = path,
+            Name = name,
+            Ext = PathUtil.Ext(name),
+            Deleted = true,
+            // size/mtime/quickHash intentionally omitted for a deletion
+        });
+    }
+
     private string? MakeThumbnail(IRecordSink sink, string path, string ext)
     {
         byte[]? jpeg;
@@ -430,7 +448,7 @@ public sealed class FileIndexCollector : Collector<FileIndexSettings>
         }
         if (jpeg is null) return null;
         using var ms = new MemoryStream(jpeg, writable: false);
-        return EmitBlob(sink, ms, Kind.FileMeta, jpeg.Length).Oid;
+        return EmitBlob(sink, ms, PayloadKinds.Thumbnail, jpeg.Length).Oid;
     }
 
     // ---------------------------------------------------------------- incremental
@@ -462,12 +480,17 @@ public sealed class FileIndexCollector : Collector<FileIndexSettings>
                 if (batch.Get(path) is { } c)
                 {
                     batch.Tombstone(path, c.QuickHash, c.FileId, nowStr, "deleted");
+                    EmitDeletion(sink, path, nowStr);
                     Activity(CollectorActivity.Deleted, "1 file");
                 }
                 else
                 {
                     var under = _store.Under(path);
-                    foreach (var (p, h, id) in under) batch.Tombstone(p, h, id, nowStr, "deleted");
+                    foreach (var (p, h, id) in under)
+                    {
+                        batch.Tombstone(p, h, id, nowStr, "deleted");
+                        EmitDeletion(sink, p, nowStr);
+                    }
                     if (under.Count > 0) Activity(CollectorActivity.Deleted, $"{under.Count} file(s) under a removed folder");
                 }
                 continue;

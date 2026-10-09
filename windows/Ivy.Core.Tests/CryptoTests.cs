@@ -87,7 +87,7 @@ public class EnvelopeTests
     [Fact]
     public void Chunk_part_is_not_a_single_shot_envelope()
     {
-        var r = Chunked.Encrypt(Mac.Pk, Oids.New(), new byte[16], Kind.Screenshot, new byte[300], 256);
+        var r = Chunked.Encrypt(Mac.Pk, Oids.New(), new byte[16], PayloadKinds.Screenshot, new byte[300], 256);
         Assert.Throws<IvyCryptoException>(() => Envelope.Decrypt(Mac.Sk, r.Parts[0].ObjectKey, r.Parts[0].Bytes));
     }
 }
@@ -101,7 +101,7 @@ public class ChunkedTests
         var plain = new byte[size];
         Random.Shared.NextBytes(plain);
         var oid = Oids.New();
-        return (Chunked.Encrypt(Mac.Pk, oid, Oids.ToBytes(oid), Kind.Screenshot, plain, chunk), plain);
+        return (Chunked.Encrypt(Mac.Pk, oid, Oids.ToBytes(oid), PayloadKinds.Screenshot, plain, chunk), plain);
     }
 
     private static Dictionary<int, byte[]> Parts(ChunkedResult r) => r.Parts.ToDictionary(p => p.Index, p => (byte[])p.Bytes.Clone());
@@ -210,7 +210,7 @@ public class ChunkedTests
     [Fact]
     public void Encryptor_requires_exact_chunk_lengths_and_all_chunks()
     {
-        using var enc = new ChunkedEncryptor(Mac.Pk, Oids.New(), new byte[16], Kind.FileMeta, 600, 256);
+        using var enc = new ChunkedEncryptor(Mac.Pk, Oids.New(), new byte[16], PayloadKinds.FileOriginal, 600, 256);
         Assert.Equal(3, enc.TotalChunks);
         Assert.Equal(88, enc.ChunkLength(2));
         Assert.Throws<ArgumentException>(() => enc.EncryptChunk(0, new byte[100]));

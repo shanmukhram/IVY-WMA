@@ -19,6 +19,37 @@ describe("record schemas", () => {
     expect(validateRecordKind("file_meta", rec).name).toBe("b.pdf");
   });
 
+  it("accepts a file_meta deletion with size/mtime/quickHash omitted", () => {
+    const rec = {
+      ...common, kind: "file_meta",
+      path: "C:/a/b.pdf", name: "b.pdf", ext: "pdf", deleted: true,
+    };
+    const parsed = validateRecordKind("file_meta", rec);
+    expect(parsed.deleted).toBe(true);
+    expect(parsed.mtime).toBeUndefined();
+  });
+
+  it("rejects a live file_meta missing mtime/size/quickHash", () => {
+    const rec = {
+      ...common, kind: "file_meta",
+      path: "C:/a/b.pdf", name: "b.pdf", ext: "pdf",
+    };
+    expect(() => validateRecordKind("file_meta", rec)).toThrow();
+  });
+
+  it("accepts a usage_event whose title is null (captured but excluded)", () => {
+    const rec = {
+      ...common, kind: "usage_event", app: "Code", exe: "Code.exe",
+      title: null, startedAt: common.eventTime, endedAt: common.captureTime,
+    };
+    const parsed = validateRecordKind("usage_event", rec);
+    expect(parsed.title).toBeNull();
+    // Absent title (not captured) is also valid.
+    const noTitle = { ...rec, title: undefined };
+    delete (noTitle as Record<string, unknown>).title;
+    expect(validateRecordKind("usage_event", noTitle).title).toBeUndefined();
+  });
+
   it("accepts a message_batch with attachments", () => {
     const rec = {
       ...common, kind: "message_batch",

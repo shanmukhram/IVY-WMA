@@ -62,10 +62,16 @@ import { parseKey } from "./objectkeys.js";
 
 /**
  * The logical kind of a reconstructed chunked object, as recorded in a manifest's
- * `payloadKind`. It is any record {@link Kind} plus `file_original`, used for an
- * original file uploaded in answer to a `file_request`.
+ * `payloadKind` (PROTOCOL.md §2.2). `file_original` is an original file uploaded in
+ * answer to a `file_request`; the rest describe the media a blob holds.
  */
-export type PayloadKind = Kind | "file_original";
+export type PayloadKind =
+  | "file_original"
+  | "screenshot"
+  | "thumbnail"
+  | "photo"
+  | "attachment"
+  | "media";
 
 export const MAGIC = utf8("IVY1");
 export const VERSION = 1;

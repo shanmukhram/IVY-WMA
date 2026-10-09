@@ -127,11 +127,11 @@ public class QueueTests : IDisposable
             // part written, process died before the row insert
             p.Queue.WritePartFile(orphanSingle, Kind.UsageEvent, Envelope(orphanSingle, Kind.UsageEvent));
             // complete blob written (manifest + all parts) but never enqueued
-            var blob = Chunked.Encrypt(_mac.PublicKey, blobOid, Oids.ToBytes(blobOid), Kind.Screenshot, new byte[600], 256);
+            var blob = Chunked.Encrypt(_mac.PublicKey, blobOid, Oids.ToBytes(blobOid), PayloadKinds.Screenshot, new byte[600], 256);
             foreach (var part in blob.Parts) p.Queue.WritePartFile(part.ObjectKey, Kind.BlobChunk, part.Bytes);
             p.Queue.WritePartFile(blob.ManifestKey, Kind.Manifest, blob.ManifestEnvelope);
             // incomplete blob: parts only, crashed before the manifest
-            var half = Chunked.Encrypt(_mac.PublicKey, halfBlobOid, Oids.ToBytes(halfBlobOid), Kind.Screenshot, new byte[600], 256);
+            var half = Chunked.Encrypt(_mac.PublicKey, halfBlobOid, Oids.ToBytes(halfBlobOid), PayloadKinds.Screenshot, new byte[600], 256);
             p.Queue.WritePartFile(half.Parts[0].ObjectKey, Kind.BlobChunk, half.Parts[0].Bytes);
             // a torn temp write
             File.WriteAllBytes(Path.Combine(p.Queue.QueueDirectory, "x.ivy.123.tmp"), new byte[10]);
@@ -234,7 +234,7 @@ public class UploaderTests : IDisposable
         var server = new FakeBucketServer();
         using var p = new AgentProcess(_dir.Path);
         var sink = new RecordSink(p.Queue, _mac.PublicKey, "dev-1", p.Activity, new RecordSinkOptions { ChunkSize = 1024 });
-        var blob = sink.EnqueueBlob(new MemoryStream(new byte[5000]), Kind.Screenshot, "screenshots");
+        var blob = sink.EnqueueBlob(new MemoryStream(new byte[5000]), PayloadKinds.Screenshot, "screenshots");
         var rec = sink.Enqueue(Kind.UsageEvent, "up/usg", """{"v":1,"kind":"usage_event","deviceId":"dev-1","eventTime":"t","captureTime":"t","app":"a","startedAt":"t","endedAt":"t"}""", "usage");
 
         var uploader = new Uploader(p.Queue, new FakeUpClient(server), activity: p.Activity);
@@ -266,7 +266,7 @@ public class UploaderTests : IDisposable
         var sink = new RecordSink(p.Queue, _mac.PublicKey, "dev-1"); // production defaults
         var data = new byte[40 * 1024 * 1024];
         Random.Shared.NextBytes(data);
-        var blob = sink.EnqueueBlob(new MemoryStream(data), Kind.FileMeta, "files");
+        var blob = sink.EnqueueBlob(new MemoryStream(data), PayloadKinds.FileOriginal, "files");
         Assert.Equal(2, blob.TotalChunks); // 32 MiB + 8 MiB
         Assert.Equal(3, await new Uploader(p.Queue, new FakeUpClient(server)).DrainAsync());
         var chunk0 = ObjectKeys.BlobChunk(blob.Oid, 0);

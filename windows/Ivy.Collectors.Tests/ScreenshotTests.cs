@@ -68,7 +68,7 @@ public class ScreenshotTests : IDisposable
 
         var blob = Assert.Single(_env.Sink.Blobs);
         Assert.Equal(png, blob.Data);
-        Assert.Equal(Kind.Screenshot, blob.PayloadKind);
+        Assert.Equal(PayloadKinds.Screenshot, blob.PayloadKind);
         Assert.Equal("screenshots", blob.Collector);
         var rec = Assert.Single(_env.Sink.Of(Kind.Screenshot));
         Assert.Equal(blob.Oid, rec.Str("blobOid"));

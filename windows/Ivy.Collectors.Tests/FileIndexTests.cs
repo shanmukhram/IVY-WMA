@@ -56,7 +56,11 @@ public class FileIndexTests : IDisposable
         return c;
     }
 
-    private IReadOnlyList<string> EmittedNames() => _env.Sink.Of(Kind.FileMeta).Select(r => r.Str("name")).OrderBy(n => n, StringComparer.Ordinal).ToList();
+    private static bool IsDeletion(CapturedRecord r) => r.Has("deleted") && r.Root.GetProperty("deleted").GetBoolean();
+    /// <summary>Names of emitted live (non-deletion) file_meta records.</summary>
+    private IReadOnlyList<string> EmittedNames() => _env.Sink.Of(Kind.FileMeta).Where(r => !IsDeletion(r)).Select(r => r.Str("name")).OrderBy(n => n, StringComparer.Ordinal).ToList();
+    /// <summary>Names of emitted deletion (deleted: true) file_meta records.</summary>
+    private IReadOnlyList<string> DeletedNames() => _env.Sink.Of(Kind.FileMeta).Where(IsDeletion).Select(r => r.Str("name")).OrderBy(n => n, StringComparer.Ordinal).ToList();
 
     [Fact]
     public async Task Initial_scan_emits_file_meta_for_admitted_files_only()
@@ -147,14 +151,20 @@ public class FileIndexTests : IDisposable
         _env.Time.Advance(TimeSpan.FromSeconds(3));
         await c.TickAsync(default);
 
-        var recs = _env.Sink.Of(Kind.FileMeta);
+        var recs = _env.Sink.Of(Kind.FileMeta).Where(r => !IsDeletion(r)).ToList();
         Assert.Equal(new[] { "a.txt", "new.pdf" }, recs.Select(r => r.Str("name")).OrderBy(n => n, StringComparer.Ordinal));
         var mod = recs.Single(r => r.Str("name") == "a.txt");
         Assert.NotEqual(oldHash, mod.Str("quickHash"));
         Assert.Equal(IvyTime.Format(T0.AddHours(1)), mod.Str("mtime"));
         Assert.Equal("pdf", recs.Single(r => r.Str("name") == "new.pdf").Str("ext"));
 
-        // Deletion: no file_meta (the schema has no deleted flag), tombstone + cache row removed + activity entry.
+        // Deletion: a file_meta with deleted:true reaches the Mac, plus tombstone + cache row removed + activity entry.
+        var del = _env.Sink.Of(Kind.FileMeta).Single(IsDeletion);
+        Assert.Equal("c.md", del.Str("name"));
+        Assert.Equal(gone, del.Str("path"));
+        Assert.False(del.Has("size"));
+        Assert.False(del.Has("mtime"));
+        Assert.False(del.Has("quickHash"));
         var cache = new FileCacheStore(_env.Db);
         Assert.Null(cache.Get(gone));
         Assert.True(c.IsTombstoned(gone));
@@ -170,7 +180,7 @@ public class FileIndexTests : IDisposable
     }
 
     [Fact]
-    public async Task Full_rescan_detects_changes_and_deletions_without_events()
+    public async Task Watcher_delete_emits_a_file_meta_deletion()
     {
         BuildTree();
         var c = NewCollector();
@@ -178,15 +188,48 @@ public class FileIndexTests : IDisposable
         c.RunScanToCompletion();
         _env.Sink.Clear();
 
-        File.Delete(Path.Combine(_root, "noext"));
+        var gone = Path.Combine(_root, "a.txt");
+        File.Delete(gone);
+        _changes.Raise(gone);
+        c.FlushChanges();
+
+        var del = Assert.Single(_env.Sink.Of(Kind.FileMeta));
+        Assert.True(IsDeletion(del));
+        Assert.Equal("a.txt", del.Str("name"));
+        Assert.Equal(gone, del.Str("path"));
+        Assert.Equal("txt", del.Str("ext"));
+        Assert.False(del.Has("mtime"));
+        Assert.False(del.Has("quickHash"));
+        Assert.True(c.IsTombstoned(gone));
+        Assert.Contains(_env.Activity.Recent(), e => e.Event == CollectorActivity.Deleted);
+    }
+
+    [Fact]
+    public async Task Full_rescan_detects_changes_and_emits_a_deletion()
+    {
+        BuildTree();
+        var c = NewCollector();
+        await c.StartAsync(default);
+        c.RunScanToCompletion();
+        _env.Sink.Clear();
+
+        var gone = Path.Combine(_root, "noext");
+        File.Delete(gone);
         _dir.Write("tree/sub/b.TXT", "bravo2", T0.AddDays(1));
         _env.Time.Advance(TimeSpan.FromMinutes(5));
+        var observedAt = IvyTime.Format(_env.Time.GetUtcNow());
         var outcome = await c.RescanAsync(null, default);
         Assert.Equal(Ivy.Core.Records.CommandStatusValues.Done, outcome.Status);
         c.RunScanToCompletion();
 
+        // The changed file is re-emitted live; the missing file is emitted as a deletion.
         Assert.Equal(new[] { "b.TXT" }, EmittedNames());
-        Assert.True(c.IsTombstoned(Path.Combine(_root, "noext")));
+        Assert.Equal(new[] { "noext" }, DeletedNames());
+        var del = _env.Sink.Of(Kind.FileMeta).Single(IsDeletion);
+        Assert.Equal(gone, del.Str("path"));
+        Assert.Equal(observedAt, del.Str("eventTime")); // for a deletion, eventTime is when it was observed
+        Assert.False(del.Has("size"));
+        Assert.True(c.IsTombstoned(gone));
         Assert.False(c.IsTombstoned(Path.Combine(_root, "a.txt")));
     }
 
@@ -333,7 +376,7 @@ public class FileIndexTests : IDisposable
         var rec = _env.Sink.Of(Kind.FileMeta).Single(r => r.Str("name") == "pic.png");
         var blob = Assert.Single(_env.Sink.Blobs);
         Assert.Equal(blob.Oid, rec.Str("thumbBlobOid"));
-        Assert.Equal(Kind.FileMeta, blob.PayloadKind);
+        Assert.Equal(PayloadKinds.Thumbnail, blob.PayloadKind);
         using (var bmp = SKBitmap.Decode(blob.Data)) Assert.Equal((256, 128), (bmp.Width, bmp.Height));
         Assert.False(_env.Sink.Of(Kind.FileMeta).Single(r => r.Str("name") == "notes.txt").Has("thumbBlobOid"));
 

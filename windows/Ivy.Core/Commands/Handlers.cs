@@ -106,7 +106,7 @@ public sealed class FileRequestHandler : IFileRequestHandler
             using var fs = new FileStream(full, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 1 << 16, FileOptions.SequentialScan);
             var length = fs.Length;
             if (length > _options.MaxBytes) return Task.FromResult(CommandOutcome.TooLarge($"{length} bytes exceeds limit {_options.MaxBytes}"));
-            var blob = _sink.EnqueueBlob(fs, Kind.FileMeta, Collector, length);
+            var blob = _sink.EnqueueBlob(fs, PayloadKinds.FileOriginal, Collector, length);
             return Task.FromResult(CommandOutcome.Uploaded(blob.Oid, $"{length} bytes in {blob.TotalChunks} chunks"));
         }
         catch (Exception e) when (e is FileNotFoundException or DirectoryNotFoundException)

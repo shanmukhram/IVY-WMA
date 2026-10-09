@@ -98,7 +98,7 @@ public abstract class CollectorBase
         return r;
     }
 
-    protected EnqueuedBlob EmitBlob(IRecordSink sink, Stream stream, Kind payloadKind, long length)
+    protected EnqueuedBlob EmitBlob(IRecordSink sink, Stream stream, string payloadKind, long length)
     {
         var b = sink.EnqueueBlob(stream, payloadKind, Name, length);
         Context.Activity?.Append(Name, CollectorActivity.Captured, $"blob {b.Oid} {b.TotalSize} bytes");

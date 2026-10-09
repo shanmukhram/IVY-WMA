@@ -92,7 +92,8 @@ public static class Schema
 
     private static readonly Dictionary<string, (string[] Required, string[] Optional)> Fields = new()
     {
-        ["file_meta"] = (new[] { "path", "name", "size", "ext", "mtime", "quickHash" }, new[] { "thumbBlobOid" }),
+        // file_meta: size/mtime/quickHash are required only for a live record; a deletion (deleted:true) may omit them.
+        ["file_meta"] = (new[] { "path", "name", "ext" }, new[] { "size", "mtime", "quickHash", "thumbBlobOid", "deleted" }),
         ["screenshot"] = (new[] { "sourcePath", "sha256", "blobOid" }, new[] { "width", "height", "takenAt", "savedAt" }),
         ["usage_event"] = (new[] { "app", "startedAt", "endedAt" }, new[] { "exe", "title" }),
         ["windows_notification"] = (new[] { "app", "title", "text", "postedAt" }, new[] { "sender" }),
@@ -100,6 +101,9 @@ public static class Schema
 
     private static readonly HashSet<string> Timestamps = new() { "eventTime", "captureTime", "mtime", "takenAt", "savedAt", "startedAt", "endedAt", "postedAt" };
     private static readonly HashSet<string> Integers = new() { "size", "width", "height", "v" };
+    private static readonly HashSet<string> Booleans = new() { "deleted" };
+    /// <summary>Fields that may be JSON null (null carries meaning: see PROTOCOL.md §6).</summary>
+    private static readonly HashSet<string> Nullable = new() { "title" };
 
     public static void Validate(string json)
     {
@@ -110,12 +114,20 @@ public static class Schema
         var (req, opt) = Fields[kind];
         var names = root.EnumerateObject().Select(p => p.Name).ToHashSet();
         foreach (var f in Base.Concat(req)) Assert.True(names.Contains(f), $"{kind}: missing required field '{f}' in {json}");
+        // A live file_meta still carries size/mtime/quickHash; only a deletion may omit them.
+        if (kind == "file_meta" && !(names.Contains("deleted") && root.GetProperty("deleted").GetBoolean()))
+            foreach (var f in new[] { "size", "mtime", "quickHash" })
+                Assert.True(names.Contains(f), $"file_meta: missing '{f}' on a non-deletion in {json}");
         var allowed = Base.Concat(req).Concat(opt).ToHashSet();
         foreach (var n in names) Assert.True(allowed.Contains(n), $"{kind}: unknown field '{n}' in {json}");
         Assert.Equal(1, root.GetProperty("v").GetInt32());
         foreach (var p in root.EnumerateObject())
         {
-            if (Timestamps.Contains(p.Name))
+            if (p.Value.ValueKind == JsonValueKind.Null)
+            {
+                Assert.True(Nullable.Contains(p.Name), $"{kind}: field '{p.Name}' may not be null in {json}");
+            }
+            else if (Timestamps.Contains(p.Name))
             {
                 Assert.Equal(JsonValueKind.String, p.Value.ValueKind);
                 Assert.Matches(@"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$", p.Value.GetString()!);
@@ -124,6 +136,10 @@ public static class Schema
             {
                 Assert.Equal(JsonValueKind.Number, p.Value.ValueKind);
                 Assert.True(p.Value.TryGetInt64(out var n) && n >= 0, $"{p.Name} must be a non-negative integer");
+            }
+            else if (Booleans.Contains(p.Name))
+            {
+                Assert.True(p.Value.ValueKind is JsonValueKind.True or JsonValueKind.False, $"{p.Name} must be a boolean");
             }
             else
             {
@@ -138,9 +154,11 @@ public sealed record CapturedRecord(Kind Kind, string Oid, string Json, string? 
     public JsonElement Root => JsonDocument.Parse(Json).RootElement;
     public string Str(string field) => Root.GetProperty(field).GetString()!;
     public bool Has(string field) => Root.TryGetProperty(field, out _);
+    /// <summary>True when the field is present and JSON null (e.g. a captured-but-excluded usage title).</summary>
+    public bool IsNull(string field) => Root.TryGetProperty(field, out var v) && v.ValueKind == JsonValueKind.Null;
 }
 
-public sealed record CapturedBlob(string Oid, Kind PayloadKind, byte[] Data, string? Collector);
+public sealed record CapturedBlob(string Oid, string PayloadKind, byte[] Data, string? Collector);
 
 /// <summary>Captures records/blobs and validates every record against the §6 field names.</summary>
 public sealed class FakeSink : IRecordSink, IDeviceIdProvider
@@ -175,7 +193,7 @@ public sealed class FakeSink : IRecordSink, IDeviceIdProvider
         return Enqueue(record.RecordKind, ObjectKeys.UpPrefix(record.RecordKind), IvyJson.Serialize(record), collector);
     }
 
-    public EnqueuedBlob EnqueueBlob(Stream stream, Kind payloadKind, string? collector = null, long? length = null)
+    public EnqueuedBlob EnqueueBlob(Stream stream, string payloadKind, string? collector = null, long? length = null)
     {
         using var ms = new MemoryStream();
         stream.CopyTo(ms);

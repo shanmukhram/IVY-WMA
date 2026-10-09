@@ -89,8 +89,8 @@ public sealed class UsageCollector : Collector<UsageSettings>
             SetError($"foreground probe failed: {e.Message}");
             return Task.CompletedTask;
         }
-        var title = sample is null ? null : _filter.Apply(sample.Title, sample.Exe);
-        foreach (var interval in _coalescer.Observe(now, sample?.App, sample?.Exe, title, idle)) Write(sink, interval);
+        var title = sample is null ? default : _filter.Classify(sample.Title, sample.Exe);
+        foreach (var interval in _coalescer.Observe(now, sample?.App, sample?.Exe, title.Value, title.Captured, idle)) Write(sink, interval);
         Context.Settings.Save(Name, OpenKey, _coalescer.Current);
         Cursor = IvyTime.Format(now);
         Detail = _coalescer.Current is { } c ? $"in {c.App} since {IvyTime.Format(c.StartedAt)}" : (idle >= TimeSpan.FromMinutes(Settings.IdleMinutes) ? "idle" : "no foreground window");
@@ -107,6 +107,7 @@ public sealed class UsageCollector : Collector<UsageSettings>
             App = i.App,
             Exe = i.Exe,
             Title = i.Title,
+            TitleCaptured = i.TitleCaptured,
             StartedAt = IvyTime.Format(i.StartedAt),
             EndedAt = IvyTime.Format(i.EndedAt),
         };

@@ -89,7 +89,7 @@ public class CommandPollerTests : IDisposable
             var parts = group.Where(i => i.Kind == "blob_chunk").ToDictionary(i => ObjectKeys.Parse(i.ObjectKey).ChunkIndex!.Value, i => File.ReadAllBytes(p.Queue.FullPathOf(i)));
             var (manifest, plain) = Chunked.Decrypt(_mac.SecretKey, group[0].ObjectKey, File.ReadAllBytes(p.Queue.FullPathOf(group[0])), parts);
             Assert.Equal(data, plain);
-            Assert.Equal("file_meta", manifest.PayloadKind);
+            Assert.Equal("file_original", manifest.PayloadKind);
 
             // second poll: everything already executed, nothing fetched again
             var getsBefore = _lastCmd!.Gets;

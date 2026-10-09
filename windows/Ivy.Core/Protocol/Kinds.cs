@@ -18,6 +18,21 @@ public enum Kind : byte
     PairingDevice = 0x0d,
 }
 
+/// <summary>
+/// Logical kinds of a reconstructed chunked object, recorded in a manifest's <c>payloadKind</c>
+/// (PROTOCOL.md §2.2). These are wire strings in their own namespace, distinct from the record
+/// <see cref="Kind"/>s of §5.
+/// </summary>
+public static class PayloadKinds
+{
+    public const string FileOriginal = "file_original";
+    public const string Screenshot = "screenshot";
+    public const string Thumbnail = "thumbnail";
+    public const string Photo = "photo";
+    public const string Attachment = "attachment";
+    public const string Media = "media";
+}
+
 public static class Kinds
 {
     private static readonly (Kind Kind, string Name, string Prefix)[] Table =

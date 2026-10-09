@@ -84,7 +84,7 @@ internal sealed class FileIndexStore
 
         public void SetThumb(string path, string quickHash, string oid) => _writes.Add((ThumbSetSql, new object?[] { path, quickHash, oid }));
 
-        /// <summary>Record the deletion (schema gap: file_meta has no deleted flag) and drop the cache row.</summary>
+        /// <summary>Record the deletion in <c>file_tombstones</c> and drop the cache row (the collector also emits a <c>file_meta</c> with <c>deleted: true</c>).</summary>
         public void Tombstone(string path, string? quickHash, string? fileId, string at, string reason) =>
             _writes.Add((TombSql, new object?[] { path, quickHash, fileId, at, reason }));
 

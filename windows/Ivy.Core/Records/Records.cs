@@ -62,17 +62,30 @@ public sealed record FileMetaRecord() : IvyRecord(Protocol.Kind.FileMeta)
 {
     [JsonPropertyName("path")] public required string Path { get; init; }
     [JsonPropertyName("name")] public required string Name { get; init; }
-    [JsonPropertyName("size")] public required long Size { get; init; }
+    [JsonPropertyName("size")] public long? Size { get; init; }
     [JsonPropertyName("ext")] public required string Ext { get; init; }
-    [JsonPropertyName("mtime")] public required string Mtime { get; init; }
-    [JsonPropertyName("quickHash")] public required string QuickHash { get; init; }
+    [JsonPropertyName("mtime")] public string? Mtime { get; init; }
+    [JsonPropertyName("quickHash")] public string? QuickHash { get; init; }
     [JsonPropertyName("thumbBlobOid")] public string? ThumbBlobOid { get; init; }
+
+    /// <summary>
+    /// True when this record reports a deletion (default false; omitted from the wire when false). When
+    /// true, <c>size</c>/<c>mtime</c>/<c>quickHash</c> MAY be omitted and <c>eventTime</c> is when the
+    /// deletion was observed. A live record still carries all three.
+    /// </summary>
+    [JsonPropertyName("deleted"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public bool Deleted { get; init; }
 
     public override void Validate()
     {
         base.Validate();
-        NonNegative(Size, "size");
-        Require(Mtime, "mtime");
+        if (Size is { } sz) NonNegative(sz, "size");
+        if (!Deleted)
+        {
+            if (Size is null) throw new RecordValidationException("size is required unless deleted");
+            Require(Mtime, "mtime");
+            Require(QuickHash, "quickHash");
+        }
     }
 }
 
@@ -102,7 +115,27 @@ public sealed record UsageEventRecord() : IvyRecord(Protocol.Kind.UsageEvent)
 {
     [JsonPropertyName("app")] public required string App { get; init; }
     [JsonPropertyName("exe")] public string? Exe { get; init; }
-    [JsonPropertyName("title")] public string? Title { get; init; }
+
+    private readonly string? _title;
+    private readonly bool _titleCaptured;
+
+    /// <summary>
+    /// Foreground window title (PROTOCOL.md §6), serialized as <c>string | null | absent</c>: a string is
+    /// the captured title; <c>null</c> means a title was captured but excluded by a setting; absent means
+    /// no title was captured. Setting this property (in code, or when a <c>title</c> key is present on
+    /// deserialization) marks the title as captured; leave it unset and set <see cref="TitleCaptured"/>
+    /// to false for the not-captured case.
+    /// </summary>
+    [JsonPropertyName("title")]
+    public string? Title
+    {
+        get => _title;
+        init { _title = value; _titleCaptured = true; }
+    }
+
+    /// <summary>Whether a title was captured at all. Controls whether <c>title</c> appears on the wire (see <see cref="IvyJson"/>).</summary>
+    [JsonIgnore] public bool TitleCaptured { get => _titleCaptured; init => _titleCaptured = value; }
+
     [JsonPropertyName("startedAt")] public required string StartedAt { get; init; }
     [JsonPropertyName("endedAt")] public required string EndedAt { get; init; }
 

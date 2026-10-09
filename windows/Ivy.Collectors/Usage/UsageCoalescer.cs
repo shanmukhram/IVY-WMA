@@ -1,10 +1,10 @@
 namespace Ivy.Collectors.Usage;
 
-/// <summary>A closed foreground interval, ready to become a <c>usage_event</c>.</summary>
-public sealed record UsageInterval(string App, string? Exe, string? Title, DateTimeOffset StartedAt, DateTimeOffset EndedAt);
+/// <summary>A closed foreground interval, ready to become a <c>usage_event</c>. <see cref="TitleCaptured"/> is false when no title was captured (absent on the wire).</summary>
+public sealed record UsageInterval(string App, string? Exe, string? Title, bool TitleCaptured, DateTimeOffset StartedAt, DateTimeOffset EndedAt);
 
 /// <summary>The open interval (persisted so a crash loses at most one sample period).</summary>
-public sealed record OpenUsage(string App, string? Exe, string? Title, DateTimeOffset StartedAt, DateTimeOffset LastSeenAt);
+public sealed record OpenUsage(string App, string? Exe, string? Title, bool TitleCaptured, DateTimeOffset StartedAt, DateTimeOffset LastSeenAt);
 
 /// <summary>
 /// Pure WC4 coalescing. Consecutive samples with the same exe + (recorded) title extend one interval.
@@ -28,7 +28,7 @@ public sealed class UsageCoalescer
 
     /// <param name="sample">Foreground at <paramref name="now"/> (title already filtered), or null for none.</param>
     /// <param name="idle">Time since last input at <paramref name="now"/>.</param>
-    public IReadOnlyList<UsageInterval> Observe(DateTimeOffset now, string? app, string? exe, string? title, TimeSpan idle)
+    public IReadOnlyList<UsageInterval> Observe(DateTimeOffset now, string? app, string? exe, string? title, bool titleCaptured, TimeSpan idle)
     {
         var closed = new List<UsageInterval>(2);
         if (idle >= _idle)
@@ -48,7 +48,7 @@ public sealed class UsageCoalescer
             Current = null;
             return closed;
         }
-        if (Current is { } cur && SameKey(cur, exe, title, app))
+        if (Current is { } cur && SameKey(cur, exe, title, titleCaptured, app))
         {
             if (now - cur.StartedAt >= _maxEvent)
             {
@@ -59,7 +59,7 @@ public sealed class UsageCoalescer
             return closed;
         }
         if (Current is { } prev) closed.Add(Close(prev, now));
-        Current = new OpenUsage(app, exe, title, now, now);
+        Current = new OpenUsage(app, exe, title, titleCaptured, now, now);
         return closed;
     }
 
@@ -79,8 +79,9 @@ public sealed class UsageCoalescer
         return Close(c, c.LastSeenAt);
     }
 
-    private static bool SameKey(OpenUsage c, string? exe, string? title, string app) =>
-        string.Equals(c.Exe ?? c.App, exe ?? app, StringComparison.OrdinalIgnoreCase) && string.Equals(c.Title, title, StringComparison.Ordinal);
+    private static bool SameKey(OpenUsage c, string? exe, string? title, bool titleCaptured, string app) =>
+        string.Equals(c.Exe ?? c.App, exe ?? app, StringComparison.OrdinalIgnoreCase)
+        && c.TitleCaptured == titleCaptured && string.Equals(c.Title, title, StringComparison.Ordinal);
 
-    private static UsageInterval Close(OpenUsage c, DateTimeOffset end) => new(c.App, c.Exe, c.Title, c.StartedAt, end);
+    private static UsageInterval Close(OpenUsage c, DateTimeOffset end) => new(c.App, c.Exe, c.Title, c.TitleCaptured, c.StartedAt, end);
 }

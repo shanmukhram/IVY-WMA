@@ -28,11 +28,24 @@ export const FileMetaRecord = z.object({
   kind: z.literal("file_meta"),
   path: z.string(),
   name: z.string(),
-  size: z.number().int().nonnegative(),
+  size: z.number().int().nonnegative().optional(),
   ext: z.string(),
-  mtime: ts,
-  quickHash: z.string(),
+  mtime: ts.optional(),
+  quickHash: z.string().optional(),
   thumbBlobOid: z.string().optional(),
+  /**
+   * True when this record reports a deletion (default false). When true, `size`,
+   * `mtime` and `quickHash` MAY be omitted and `eventTime` is when the deletion was
+   * observed. A live record (deleted absent/false) still carries all three.
+   */
+  deleted: z.boolean().optional(),
+}).superRefine((r, ctx) => {
+  // Only a deletion may omit size/mtime/quickHash; a live record still carries them.
+  if (!r.deleted) {
+    if (r.size === undefined) ctx.addIssue({ code: "custom", path: ["size"], message: "size is required unless deleted" });
+    if (r.mtime === undefined) ctx.addIssue({ code: "custom", path: ["mtime"], message: "mtime is required unless deleted" });
+    if (r.quickHash === undefined) ctx.addIssue({ code: "custom", path: ["quickHash"], message: "quickHash is required unless deleted" });
+  }
 });
 
 export const ScreenshotRecord = z.object({
@@ -53,7 +66,12 @@ export const UsageEventRecord = z.object({
   kind: z.literal("usage_event"),
   app: z.string(),
   exe: z.string().optional(),
-  title: z.string().optional(),
+  /**
+   * The foreground window title. Absent means the title was not captured (capture
+   * off, or no title); `null` means a title was captured but excluded by a
+   * `titleExclusions` setting; a string is the captured title.
+   */
+  title: z.string().nullable().optional(),
   startedAt: ts,
   endedAt: ts,
 });

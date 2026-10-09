@@ -130,11 +130,26 @@ public class UsageTests : IDisposable
         await Sample(c, Code);
         var events = _env.Sink.Of(Kind.UsageEvent);
         Assert.Equal(2, events.Count);
-        Assert.False(events[0].Has("title"));                   // excluded → recorded as absent
+        Assert.True(events[0].IsNull("title"));                 // captured but excluded → present and null
         Assert.Equal("chrome.exe", events[0].Str("exe"));
         Assert.Equal((At(0), At(90)), (events[0].Str("startedAt"), events[0].Str("endedAt")));
-        Assert.False(events[1].Has("title"));                   // exe glob
+        Assert.True(events[1].IsNull("title"));                 // exe glob
         Assert.Equal("KeePassXC", events[1].Str("app"));
+    }
+
+    [Fact]
+    public async Task Title_states_distinguish_captured_excluded_and_not_captured()
+    {
+        var c = NewCollector(new JsonObject { ["titleExclusions"] = new JsonArray("*secret*") });
+        await Sample(c, new ForegroundSample("App", "app.exe", "Report"), 0);        // captured
+        await Sample(c, new ForegroundSample("App2", "app2.exe", "my secret notes")); // 30: captured but excluded
+        await Sample(c, new ForegroundSample("App3", "app3.exe", ""));                // 60: no title → not captured
+        await Sample(c, Code);                                                        // 90: closes the third
+        var events = _env.Sink.Of(Kind.UsageEvent);
+        Assert.Equal(3, events.Count);
+        Assert.Equal("Report", events[0].Str("title"));   // captured string
+        Assert.True(events[1].IsNull("title"));            // captured but excluded → null
+        Assert.False(events[2].Has("title"));              // not captured → absent
     }
 
     [Fact]
@@ -170,11 +185,11 @@ public class UsageTests : IDisposable
     {
         var co = new UsageCoalescer(TimeSpan.FromMinutes(5), TimeSpan.FromMinutes(10));
         var t = _t0;
-        Assert.Empty(co.Observe(t, "A", "a.exe", "x", TimeSpan.Zero));
-        Assert.Empty(co.Observe(t.AddSeconds(30), "A", "A.EXE", "x", TimeSpan.Zero));   // exe compare is case-insensitive
-        var closed = co.Observe(t.AddSeconds(60), "B", "b.exe", null, TimeSpan.Zero);
-        Assert.Equal(new UsageInterval("A", "a.exe", "x", t, t.AddSeconds(60)), Assert.Single(closed));
-        Assert.Equal(new UsageInterval("B", "b.exe", null, t.AddSeconds(60), t.AddSeconds(90)), co.Flush(t.AddSeconds(90)));
+        Assert.Empty(co.Observe(t, "A", "a.exe", "x", true, TimeSpan.Zero));
+        Assert.Empty(co.Observe(t.AddSeconds(30), "A", "A.EXE", "x", true, TimeSpan.Zero));   // exe compare is case-insensitive
+        var closed = co.Observe(t.AddSeconds(60), "B", "b.exe", null, false, TimeSpan.Zero);
+        Assert.Equal(new UsageInterval("A", "a.exe", "x", true, t, t.AddSeconds(60)), Assert.Single(closed));
+        Assert.Equal(new UsageInterval("B", "b.exe", null, false, t.AddSeconds(60), t.AddSeconds(90)), co.Flush(t.AddSeconds(90)));
         Assert.Null(co.Flush(t.AddSeconds(100)));
     }
 

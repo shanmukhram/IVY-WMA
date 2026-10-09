@@ -36,15 +36,15 @@ public sealed class ChunkedEncryptor : IDisposable
 
     public string Oid { get; }
     public byte[] ObjectId { get; }
-    public Kind PayloadKind { get; }
+    public string PayloadKind { get; }
     public long TotalSize { get; }
     public int ChunkSize { get; }
     public int TotalChunks { get; }
 
-    public ChunkedEncryptor(byte[] recipientPublicKey, string oid, byte[] objectId, Kind payloadKind, long totalSize, int chunkSize, IRandomSource? random = null)
+    public ChunkedEncryptor(byte[] recipientPublicKey, string oid, byte[] objectId, string payloadKind, long totalSize, int chunkSize, IRandomSource? random = null)
         : this(recipientPublicKey, oid, objectId, payloadKind, totalSize, chunkSize, null, random) { }
 
-    internal ChunkedEncryptor(byte[] recipientPublicKey, string oid, byte[] objectId, Kind payloadKind, long totalSize, int chunkSize,
+    internal ChunkedEncryptor(byte[] recipientPublicKey, string oid, byte[] objectId, string payloadKind, long totalSize, int chunkSize,
         ChunkedTestInputs? inputs, IRandomSource? random = null)
     {
         if (recipientPublicKey.Length != X25519.KeyLen) throw new ArgumentException("recipient public key must be 32 bytes", nameof(recipientPublicKey));
@@ -110,7 +110,7 @@ public sealed class ChunkedEncryptor : IDisposable
         var manifest = new ManifestRecord
         {
             ObjectId = Bytes.ToHex(ObjectId),
-            PayloadKind = PayloadKind.WireName(),
+            PayloadKind = PayloadKind,
             TotalSize = TotalSize,
             ChunkSize = ChunkSize,
             TotalChunks = TotalChunks,
@@ -140,10 +140,10 @@ public sealed class ChunkedEncryptor : IDisposable
 /// <summary>Whole-buffer helpers and receiver-side verification for chunked objects.</summary>
 public static class Chunked
 {
-    public static ChunkedResult Encrypt(byte[] recipientPublicKey, string oid, byte[] objectId, Kind payloadKind, ReadOnlySpan<byte> plaintext, int chunkSize, IRandomSource? random = null) =>
+    public static ChunkedResult Encrypt(byte[] recipientPublicKey, string oid, byte[] objectId, string payloadKind, ReadOnlySpan<byte> plaintext, int chunkSize, IRandomSource? random = null) =>
         EncryptCore(new ChunkedEncryptor(recipientPublicKey, oid, objectId, payloadKind, plaintext.Length, chunkSize, random), plaintext);
 
-    internal static ChunkedResult Encrypt(byte[] recipientPublicKey, string oid, byte[] objectId, Kind payloadKind, ReadOnlySpan<byte> plaintext, int chunkSize, ChunkedTestInputs inputs) =>
+    internal static ChunkedResult Encrypt(byte[] recipientPublicKey, string oid, byte[] objectId, string payloadKind, ReadOnlySpan<byte> plaintext, int chunkSize, ChunkedTestInputs inputs) =>
         EncryptCore(new ChunkedEncryptor(recipientPublicKey, oid, objectId, payloadKind, plaintext.Length, chunkSize, inputs), plaintext);
 
     private static ChunkedResult EncryptCore(ChunkedEncryptor enc, ReadOnlySpan<byte> plaintext)

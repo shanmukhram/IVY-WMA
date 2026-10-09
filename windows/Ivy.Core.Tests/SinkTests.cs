@@ -67,7 +67,7 @@ public class SinkTests : IDisposable
         var sink = new RecordSink(p.Queue, _mac.PublicKey, "dev-1", options: new RecordSinkOptions { ChunkSize = 4096 });
         var data = new byte[10_000];
         Random.Shared.NextBytes(data);
-        var blob = sink.EnqueueBlob(new MemoryStream(data), Kind.Screenshot, "screenshots");
+        var blob = sink.EnqueueBlob(new MemoryStream(data), PayloadKinds.Screenshot, "screenshots");
         Assert.Equal(3, blob.TotalChunks);
         Assert.Equal(Bytes.ToHex(Bytes.Sha256(data)), blob.PlaintextSha256);
         var items = p.Queue.All();
@@ -85,8 +85,8 @@ public class SinkTests : IDisposable
     {
         using var p = new AgentProcess(_dir.Path);
         var sink = new RecordSink(p.Queue, _mac.PublicKey, "dev-1", options: new RecordSinkOptions { ChunkSize = 1000 });
-        Assert.Throws<IOException>(() => sink.EnqueueBlob(new MemoryStream(new byte[3000]), Kind.FileMeta, length: 5000));
-        Assert.Throws<IOException>(() => sink.EnqueueBlob(new MemoryStream(new byte[3000]), Kind.FileMeta, length: 2000));
+        Assert.Throws<IOException>(() => sink.EnqueueBlob(new MemoryStream(new byte[3000]), PayloadKinds.FileOriginal, length: 5000));
+        Assert.Throws<IOException>(() => sink.EnqueueBlob(new MemoryStream(new byte[3000]), PayloadKinds.FileOriginal, length: 2000));
         Assert.Empty(p.Queue.All());
         Assert.Empty(Directory.GetFiles(p.Queue.QueueDirectory));
     }
@@ -130,7 +130,7 @@ public class ZeroPlaintextTests : IDisposable
             sink.Enqueue(new UsageEventRecord { DeviceId = "dev-1", EventTime = t, CaptureTime = t, App = Marker, Title = Marker, StartedAt = t, EndedAt = t }, "usage");
             sink.Enqueue(Kind.FileMeta, "up/file", $$"""{"v":1,"kind":"file_meta","deviceId":"dev-1","eventTime":"{{t}}","captureTime":"{{t}}","path":"C:\\{{Marker}}.pdf","name":"{{Marker}}.pdf","size":1,"ext":"pdf","mtime":"{{t}}","quickHash":"q"}""", "files");
             var content = Encoding.UTF8.GetBytes(string.Concat(Enumerable.Repeat(Marker + "\n", 200)));
-            sink.EnqueueBlob(new MemoryStream(content), Kind.Screenshot, "screenshots");
+            sink.EnqueueBlob(new MemoryStream(content), PayloadKinds.Screenshot, "screenshots");
 
             // half-drained queue, with a failed attempt recorded in last_error
             var server = new FakeBucketServer();

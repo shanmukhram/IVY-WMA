@@ -124,6 +124,49 @@ public class RecordTests
     }
 
     [Fact]
+    public void File_meta_deletion_omits_size_mtime_quickhash_and_sets_deleted()
+    {
+        const string t = "2026-10-10T00:00:00.000Z";
+        var del = new FileMetaRecord { DeviceId = "d", EventTime = t, CaptureTime = t, Path = @"C:\a.pdf", Name = "a.pdf", Ext = "pdf", Deleted = true };
+        del.Validate();
+        var o = Obj(IvyJson.Serialize(del));
+        Assert.True(o["deleted"]!.GetValue<bool>());
+        Assert.False(o.ContainsKey("size"));
+        Assert.False(o.ContainsKey("mtime"));
+        Assert.False(o.ContainsKey("quickHash"));
+        Assert.Equal(del, RecordJson.Parse<FileMetaRecord>(Bytes.Utf8.GetBytes(IvyJson.Serialize(del))));
+
+        // A live record must still carry size/mtime/quickHash.
+        Assert.Throws<RecordValidationException>(() =>
+            new FileMetaRecord { DeviceId = "d", EventTime = t, CaptureTime = t, Path = "p", Name = "n", Ext = "x" }.Validate());
+        // A live record never writes the deleted flag.
+        var live = new FileMetaRecord { DeviceId = "d", EventTime = t, CaptureTime = t, Path = "p", Name = "n", Ext = "x", Size = 1, Mtime = t, QuickHash = "q" };
+        Assert.False(Obj(IvyJson.Serialize(live)).ContainsKey("deleted"));
+    }
+
+    [Fact]
+    public void Usage_event_title_is_string_null_or_absent()
+    {
+        const string t = "2026-10-10T00:00:00.000Z";
+        UsageEventRecord Make() => new() { DeviceId = "d", EventTime = t, CaptureTime = t, App = "a", StartedAt = t, EndedAt = t };
+
+        var captured = Make() with { Title = "Report" };
+        Assert.Equal("Report", Obj(IvyJson.Serialize(captured))["title"]!.GetValue<string>());
+
+        var excluded = Make() with { TitleCaptured = true }; // captured but excluded → null
+        var ox = Obj(IvyJson.Serialize(excluded));
+        Assert.True(ox.ContainsKey("title"));
+        Assert.Null(ox["title"]);
+
+        var absent = Make(); // not captured → omitted
+        Assert.False(Obj(IvyJson.Serialize(absent)).ContainsKey("title"));
+
+        // Round-trips preserve the distinction.
+        Assert.True(RecordJson.Parse<UsageEventRecord>(Bytes.Utf8.GetBytes(IvyJson.Serialize(excluded))).TitleCaptured);
+        Assert.False(RecordJson.Parse<UsageEventRecord>(Bytes.Utf8.GetBytes(IvyJson.Serialize(absent))).TitleCaptured);
+    }
+
+    [Fact]
     public void Every_schema_serializes_with_ts_field_names()
     {
         const string t = "2026-10-10T00:00:00.000Z";

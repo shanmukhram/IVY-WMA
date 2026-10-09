@@ -36,7 +36,7 @@ public interface IRecordSink
     /// The stream must be seekable (or <paramref name="length"/> given) because every chunk's AAD binds
     /// the total chunk count.
     /// </summary>
-    EnqueuedBlob EnqueueBlob(Stream stream, Kind payloadKind, string? collector = null, long? length = null);
+    EnqueuedBlob EnqueueBlob(Stream stream, string payloadKind, string? collector = null, long? length = null);
 }
 
 public sealed class RecordSinkOptions
@@ -141,7 +141,7 @@ public sealed class RecordSink : IRecordSink
         return new EnqueuedRecord(oid, key, envelope.Length);
     }
 
-    public EnqueuedBlob EnqueueBlob(Stream stream, Kind payloadKind, string? collector = null, long? length = null)
+    public EnqueuedBlob EnqueueBlob(Stream stream, string payloadKind, string? collector = null, long? length = null)
     {
         var total = length ?? (stream.CanSeek ? stream.Length - stream.Position : throw new ArgumentException("stream must be seekable or length given", nameof(stream)));
         var oid = Oids.New(_time, _random);
@@ -175,7 +175,7 @@ public sealed class RecordSink : IRecordSink
             ordered.AddRange(written);
             _queue.Enqueue(ordered, groupKey: oid, collector);
             var digest = Bytes.ToHex(sha.GetHashAndReset());
-            _activity?.Append(collector, ActivityEvents.Encrypted, $"blob {oid} {payloadKind.WireName()} {total} bytes in {enc.TotalChunks} chunks");
+            _activity?.Append(collector, ActivityEvents.Encrypted, $"blob {oid} {payloadKind} {total} bytes in {enc.TotalChunks} chunks");
             _activity?.Append(collector, ActivityEvents.Queued, $"{manifestKey} + {enc.TotalChunks} parts");
             return new EnqueuedBlob(oid, manifestKey, enc.TotalChunks, total, digest);
         }

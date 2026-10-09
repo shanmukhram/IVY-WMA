@@ -43,9 +43,22 @@ public sealed class TitleFilter
     }
 
     /// <summary>The title as it may be recorded (null when capture is off, excluded, or empty).</summary>
-    public string? Apply(string? title, string? exe)
+    public string? Apply(string? title, string? exe) => Classify(title, exe).Value;
+
+    /// <summary>
+    /// Classify a sampled title into the three wire states of PROTOCOL.md §6:
+    /// <list type="bullet">
+    /// <item><c>Captured=false</c>: no title was captured (capture off, or no/empty title) → absent on the wire.</item>
+    /// <item><c>Captured=true, Value=null</c>: a title was captured but excluded by a setting → <c>null</c> on the wire.</item>
+    /// <item><c>Captured=true, Value=title</c>: the captured title → the string on the wire.</item>
+    /// </list>
+    /// </summary>
+    public TitleClassification Classify(string? title, string? exe)
     {
-        if (!_capture || string.IsNullOrWhiteSpace(title)) return null;
-        return IsExcluded(title, exe) ? null : title;
+        if (!_capture || string.IsNullOrWhiteSpace(title)) return new TitleClassification(false, null);
+        return IsExcluded(title, exe) ? new TitleClassification(true, null) : new TitleClassification(true, title);
     }
 }
+
+/// <summary>Outcome of <see cref="TitleFilter.Classify"/>; <see cref="Captured"/> controls whether <c>title</c> is on the wire at all.</summary>
+public readonly record struct TitleClassification(bool Captured, string? Value);

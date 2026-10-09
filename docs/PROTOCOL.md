@@ -163,7 +163,10 @@ at `up/blob/<oid>/manifest`):
 ```
 
 - `objectId` is the hex of the same 16 bytes as the `oid` in the blob's object key (`up/blob/<oid>/…`); receivers read it from the manifest and MUST check it against the key.
-- `payloadKind` for an original uploaded in answer to a `file_request` is `file_original`.
+- `payloadKind` is the logical kind of the reconstructed object, one of:
+  `file_original` (an original file uploaded in answer to a `file_request`),
+  `screenshot`, `thumbnail`, `photo`, `attachment`, `media`. It is a string in its
+  own namespace, distinct from the record kinds of §5.
 - `cek` is the object content key. It is only ever present inside the encrypted
   manifest envelope, so it never exists as plaintext at rest.
 - `chunks[i].sha256` is SHA-256 over the **entire part** (header + ciphertext +
@@ -313,14 +316,22 @@ ports agree byte-for-byte).
 The authoritative schemas are the zod definitions in
 `packages/protocol/src/schemas.ts`. Summary:
 
-**file_meta** — `path, name, size, ext, mtime, quickHash, thumbBlobOid?`
-(WC1/WC2; metadata only, original on request).
+**file_meta** — `path, name, ext, size, mtime, quickHash, thumbBlobOid?,
+deleted?` (WC1/WC2; metadata only, original on request). `deleted` is an optional
+boolean (default false). When `deleted` is true the file has been observed removed
+(watcher delete, USN delete reason, or missing in a rescan); `size`, `mtime` and
+`quickHash` MAY then be omitted, and `eventTime` is when the deletion was observed.
+A live record (deleted absent or false) still carries `size`, `mtime` and
+`quickHash`.
 
 **screenshot** — `sourcePath, width?, height?, sha256, blobOid, takenAt?,
 savedAt?` where `blobOid` references the chunked blob holding the original image
 (WC3, M1/M2/M7).
 
-**usage_event** — `app, exe?, title?, startedAt, endedAt` (WC4/AC9).
+**usage_event** — `app, exe?, title?, startedAt, endedAt` (WC4/AC9). `title` is
+`string | null`: a string is the captured window title, `null` means a title was
+captured but excluded by a `titleExclusions`/capture setting, and an absent `title`
+means no title was captured at all.
 
 **windows_notification** — `app, title, text, sender?, postedAt` (WC5).
 

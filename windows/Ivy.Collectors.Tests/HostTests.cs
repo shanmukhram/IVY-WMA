@@ -135,7 +135,10 @@ public class HostTests : IDisposable
         var r = await Rescan(host, (new RescanParams { Collector = "files" }));
         Assert.Equal(CommandStatusValues.Done, r.Status);
         await host.TickNowAsync("files");
-        Assert.Equal("b.txt", _env.Sink.Of(Kind.FileMeta).Last().Str("name"));
+        var fileMetas = _env.Sink.Of(Kind.FileMeta);
+        bool IsDeletion(CapturedRecord r) => r.Has("deleted") && r.Root.GetProperty("deleted").GetBoolean();
+        Assert.Equal("b.txt", fileMetas.Last(r => !IsDeletion(r)).Str("name"));
+        Assert.Equal("a.txt", Assert.Single(fileMetas.Where(IsDeletion)).Str("name")); // the removed file reaches the Mac as a deletion
         Assert.True(host.Get<FileIndexCollector>().IsTombstoned(Path.Combine(_root, "a.txt")));
 
         Assert.Equal(CommandStatusValues.Done, (await Rescan(host, (new RescanParams { Collector = "all" }))).Status);

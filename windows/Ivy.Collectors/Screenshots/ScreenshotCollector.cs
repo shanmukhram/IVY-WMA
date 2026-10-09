@@ -204,7 +204,7 @@ public sealed class ScreenshotCollector : Collector<ScreenshotSettings>
         using (var s = _fs.OpenRead(st.FullPath))
         {
             if (s.Length != st.Size) throw new IOException("file changed while uploading");
-            blob = EmitBlob(sink, s, Kind.Screenshot, s.Length);
+            blob = EmitBlob(sink, s, PayloadKinds.Screenshot, s.Length);
         }
         if (!string.Equals(blob.PlaintextSha256, sha, StringComparison.Ordinal)) sha = blob.PlaintextSha256; // record what was actually sent
 
