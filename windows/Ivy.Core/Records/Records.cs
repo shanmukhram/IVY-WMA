@@ -214,12 +214,13 @@ public sealed record CommandRecord() : IvyRecord(Protocol.Kind.Command)
 public static class CommandStatusValues
 {
     public const string Uploaded = "uploaded";
+    public const string Done = "done";
     public const string NotFound = "not_found";
     public const string AccessDenied = "access_denied";
     public const string TooLarge = "too_large";
     public const string Error = "error";
 
-    public static bool IsValid(string s) => s is Uploaded or NotFound or AccessDenied or TooLarge or Error;
+    public static bool IsValid(string s) => s is Uploaded or Done or NotFound or AccessDenied or TooLarge or Error;
 }
 
 /// <summary><c>command_status</c> (WR2).</summary>

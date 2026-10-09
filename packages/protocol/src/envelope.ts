@@ -57,6 +57,15 @@ import { randomBytes } from "./random.js";
 import { publicKeyFromSecret } from "./keys.js";
 import type { Kind } from "./kinds.js";
 import { kindId, kindById } from "./kinds.js";
+import { fromCrockford } from "./bytes.js";
+import { parseKey } from "./objectkeys.js";
+
+/**
+ * The logical kind of a reconstructed chunked object, as recorded in a manifest's
+ * `payloadKind`. It is any record {@link Kind} plus `file_original`, used for an
+ * original file uploaded in answer to a `file_request`.
+ */
+export type PayloadKind = Kind | "file_original";
 
 export const MAGIC = utf8("IVY1");
 export const VERSION = 1;
@@ -156,6 +165,7 @@ export function decryptEnvelope(params: DecryptParams): DecryptResult {
   if (!timingSafeEqual(envelope.subarray(0, 4), MAGIC)) throw new Error("bad magic");
   if (envelope[4] !== VERSION) throw new Error(`unsupported version ${envelope[4]}`);
   if (envelope[5] !== MODE_SINGLE) throw new Error(`not a single-shot envelope (mode ${envelope[5]})`);
+  if (envelope[7] !== 0x00) throw new Error(`reserved byte must be 0x00, got 0x${envelope[7]!.toString(16)}`);
   const kind = kindById(envelope[6]!);
   if (expectedKind && kind !== expectedKind) {
     throw new Error(`kind mismatch: header says ${kind}, expected ${expectedKind}`);
@@ -205,7 +215,7 @@ export interface ManifestChunk {
 export interface ChunkedManifest {
   v: 1;
   objectId: string; // hex of the 16-byte object id
-  payloadKind: Kind; // logical kind of the reconstructed object (e.g. screenshot, file_meta)
+  payloadKind: PayloadKind; // logical kind of the reconstructed object (e.g. screenshot, file_meta, file_original)
   totalSize: number;
   chunkSize: number;
   totalChunks: number;
@@ -220,7 +230,7 @@ export interface EncryptChunkedParams {
   oid: string;
   /** 16-byte object id (binary, bound into every chunk's AAD). */
   objectId: Uint8Array;
-  payloadKind: Kind;
+  payloadKind: PayloadKind;
   plaintext: Uint8Array;
   chunkSize: number;
   options?: {
@@ -325,6 +335,8 @@ export function parseChunkHeader(bytes: Uint8Array): {
   if (!timingSafeEqual(bytes.subarray(0, 4), MAGIC)) throw new Error("bad magic");
   if (bytes[4] !== VERSION) throw new Error(`unsupported version ${bytes[4]}`);
   if (bytes[5] !== MODE_CHUNK) throw new Error(`not a chunk part (mode ${bytes[5]})`);
+  if (bytes[6] !== kindId("blob_chunk")) throw new Error(`chunk kind must be blob_chunk, got 0x${bytes[6]!.toString(16)}`);
+  if (bytes[7] !== 0x00) throw new Error(`reserved byte must be 0x00, got 0x${bytes[7]!.toString(16)}`);
   const objectId = bytes.subarray(8, 24);
   const index = readU32be(bytes, 24);
   const totalChunks = readU32be(bytes, 28);
@@ -381,4 +393,40 @@ export function decryptChunkedObject(params: DecryptChunkedParams): {
   const plaintext = concatBytes(...out);
   if (plaintext.length !== manifest.totalSize) throw new Error("reassembled size mismatch");
   return { manifest, plaintext };
+}
+
+/**
+ * Decrypt a chunked blob located at a storage key, additionally verifying that
+ * the object id is the 16 bytes of the key's `oid` (§4/§4.1). The manifest's
+ * `objectId` and every chunk header's object id MUST equal those 16 bytes;
+ * otherwise the blob has been relocated or substituted and this throws. This is
+ * the receiver-side entry point; `decryptChunkedObject` does the raw crypto and
+ * does not know the key's oid.
+ */
+export function decryptBlobByKey(params: DecryptChunkedParams): {
+  manifest: ChunkedManifest;
+  plaintext: Uint8Array;
+} {
+  const { manifestKey, parts } = params;
+  const parsed = parseKey(manifestKey);
+  if (parsed.area !== "up" || parsed.blobPart !== "manifest" || !parsed.oid) {
+    throw new Error(`not a blob manifest key: ${manifestKey}`);
+  }
+  const expectedObjectId = fromCrockford(parsed.oid);
+  if (expectedObjectId.length !== 16) throw new Error("oid did not decode to 16 bytes");
+  const expectedHex = toHex(expectedObjectId);
+
+  // Each chunk part's header object id must be the key's oid bytes.
+  for (const [i, part] of parts) {
+    const h = parseChunkHeader(part);
+    if (!timingSafeEqual(h.objectId, expectedObjectId)) {
+      throw new Error(`chunk ${i} objectId does not match the key oid`);
+    }
+  }
+
+  const res = decryptChunkedObject(params);
+  if (res.manifest.objectId !== expectedHex) {
+    throw new Error(`manifest objectId ${res.manifest.objectId} does not match key oid ${expectedHex}`);
+  }
+  return res;
 }

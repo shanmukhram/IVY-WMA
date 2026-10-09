@@ -65,7 +65,7 @@ public sealed class EndToEndTests : IDisposable
     {
         var key = ObjectKeys.Command(Oids.New());
         var now = IvyTime.Now();
-        var cmd = new CommandRecord { DeviceId = "mac", EventTime = now, CaptureTime = now, CommandId = Guid.NewGuid().ToString(), IssuedAt = now, Params = ps };
+        var cmd = new CommandRecord { DeviceId = device.DeviceId!, EventTime = now, CaptureTime = now, CommandId = Guid.NewGuid().ToString(), IssuedAt = now, Params = ps };
         await _mac.PutCmdAsync(key, Envelope.Encrypt(Bytes.FromBase64(device.DevicePublicKey), Kind.Command, key, IvyJson.SerializeToUtf8(cmd)));
         return cmd.CommandId;
     }

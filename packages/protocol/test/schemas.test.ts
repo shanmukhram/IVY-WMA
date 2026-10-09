@@ -46,6 +46,23 @@ describe("record schemas", () => {
     expect(validateRecord(st).kind).toBe("command_status");
   });
 
+  it("accepts command_status with the done status (rescan/collector_config)", () => {
+    const st = {
+      ...common, kind: "command_status", commandId: "cmd2",
+      status: "done", reportedAt: common.eventTime,
+    };
+    expect(validateRecordKind("command_status", st).status).toBe("done");
+  });
+
+  it("accepts a manifest whose payloadKind is file_original", () => {
+    const m = {
+      v: 1, objectId: "aabb", payloadKind: "file_original",
+      totalSize: 1000, chunkSize: 256, totalChunks: 4, cek: "AAAA",
+      chunks: [{ index: 0, ctLen: 300, sha256: "deadbeef" }],
+    };
+    expect(validateManifest(m).payloadKind).toBe("file_original");
+  });
+
   it("accepts a device_report with collector state", () => {
     const rec = {
       ...common, kind: "device_report", role: "windows",

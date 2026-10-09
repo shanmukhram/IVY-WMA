@@ -176,7 +176,7 @@ export const CommandStatusRecord = z.object({
   ...base,
   kind: z.literal("command_status"),
   commandId: z.string(),
-  status: z.enum(["uploaded", "not_found", "access_denied", "too_large", "error"]),
+  status: z.enum(["uploaded", "done", "not_found", "access_denied", "too_large", "error"]),
   detail: z.string().optional(),
   /** oid of the result object (e.g. the uploaded blob), when status=uploaded */
   resultOid: z.string().optional(),

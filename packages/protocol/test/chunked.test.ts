@@ -2,10 +2,13 @@ import { describe, it, expect } from "vitest";
 import {
   encryptChunkedObject,
   decryptChunkedObject,
+  decryptBlobByKey,
   generateKeyPair,
   randomBytes,
   blobManifestKey,
   parseChunkHeader,
+  newOid,
+  fromCrockford,
 } from "../src/index.js";
 
 const RECIPIENT = generateKeyPair();
@@ -108,6 +111,65 @@ describe("chunked object", () => {
         parts,
       }),
     ).toThrow();
+  });
+
+  it("parseChunkHeader rejects a non-zero reserved byte", () => {
+    const { res } = build(1000, 256);
+    const p = res.parts[0]!.bytes.slice();
+    p[7] = 0x01; // reserved MUST be 0x00
+    expect(() => parseChunkHeader(p)).toThrow(/reserved/);
+  });
+
+  it("parseChunkHeader rejects a wrong kind byte", () => {
+    const { res } = build(1000, 256);
+    const p = res.parts[0]!.bytes.slice();
+    p[6] = 0x02; // not blob_chunk (0x09)
+    expect(() => parseChunkHeader(p)).toThrow(/blob_chunk/);
+  });
+
+  it("decryptBlobByKey round-trips when objectId matches the key oid", () => {
+    const oid = newOid();
+    const objectId = fromCrockford(oid); // objectId = the 16 oid bytes of the key
+    const plaintext = randomBytes(900);
+    const res = encryptChunkedObject({
+      recipientPublicKey: RECIPIENT.publicKey,
+      oid,
+      objectId,
+      payloadKind: "file_original",
+      plaintext,
+      chunkSize: 256,
+    });
+    const parts = new Map(res.parts.map((p) => [p.index, p.bytes]));
+    const out = decryptBlobByKey({
+      recipientSecretKey: RECIPIENT.secretKey,
+      manifestKey: blobManifestKey(oid),
+      manifestEnvelope: res.manifestEnvelope,
+      parts,
+    });
+    expect(out.manifest.payloadKind).toBe("file_original");
+    expect(Buffer.from(out.plaintext).equals(Buffer.from(plaintext))).toBe(true);
+  });
+
+  it("decryptBlobByKey rejects an objectId that does not match the key oid", () => {
+    const oid = newOid();
+    const objectId = randomBytes(16); // unrelated to the key's oid
+    const res = encryptChunkedObject({
+      recipientPublicKey: RECIPIENT.publicKey,
+      oid,
+      objectId,
+      payloadKind: "file_original",
+      plaintext: randomBytes(900),
+      chunkSize: 256,
+    });
+    const parts = new Map(res.parts.map((p) => [p.index, p.bytes]));
+    expect(() =>
+      decryptBlobByKey({
+        recipientSecretKey: RECIPIENT.secretKey,
+        manifestKey: blobManifestKey(oid),
+        manifestEnvelope: res.manifestEnvelope,
+        parts,
+      }),
+    ).toThrow(/objectId|oid/);
   });
 
   it("handles a single-chunk object", () => {

@@ -19,7 +19,7 @@ public sealed record CommandOutcome(string Status, string? Detail = null, string
     public static CommandOutcome TooLarge(string? detail = null) => new(CommandStatusValues.TooLarge, detail);
     public static CommandOutcome Error(string? detail = null) => new(CommandStatusValues.Error, detail);
     /// <summary>Success for commands that do not upload a result object (rescan, collector_config).</summary>
-    public static CommandOutcome Done(string? detail = null) => new(CommandStatusValues.Uploaded, detail);
+    public static CommandOutcome Done(string? detail = null) => new(CommandStatusValues.Done, detail);
 }
 
 /// <summary>Handles <c>file_request</c> (WR1/WR2).</summary>

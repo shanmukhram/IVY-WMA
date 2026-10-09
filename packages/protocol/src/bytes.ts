@@ -125,3 +125,25 @@ export function toCrockford(b: Uint8Array): string {
   }
   return out;
 }
+
+/**
+ * Decode Crockford base32 (big-endian bit order) back to bytes. Reads 5 bits per
+ * character, most-significant first, and emits whole bytes; trailing pad bits
+ * that do not complete a byte are discarded. A 26-char oid yields its 16 bytes.
+ */
+export function fromCrockford(s: string): Uint8Array {
+  let value = 0;
+  let bits = 0;
+  const out: number[] = [];
+  for (const ch of s.toUpperCase()) {
+    const idx = CROCKFORD.indexOf(ch);
+    if (idx < 0) throw new Error(`invalid Crockford character: ${ch}`);
+    value = (value << 5) | idx;
+    bits += 5;
+    if (bits >= 8) {
+      out.push((value >>> (bits - 8)) & 0xff);
+      bits -= 8;
+    }
+  }
+  return new Uint8Array(out);
+}

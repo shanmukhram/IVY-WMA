@@ -25,13 +25,13 @@ public class CommandPollerTests : IDisposable
     }
     public void Dispose() => _dir.Dispose();
 
-    private string PutCommand(CommandParams ps, string? commandId = null, byte[]? recipient = null, string? key = null)
+    private string PutCommand(CommandParams ps, string? commandId = null, byte[]? recipient = null, string? key = null, string? deviceId = null)
     {
         var oid = Oids.New();
         key ??= ObjectKeys.Command(oid);
         var cmd = new CommandRecord
         {
-            DeviceId = "mac", EventTime = IvyTime.Now(), CaptureTime = IvyTime.Now(), CommandId = commandId ?? Guid.NewGuid().ToString(),
+            DeviceId = deviceId ?? "dev-1", EventTime = IvyTime.Now(), CaptureTime = IvyTime.Now(), CommandId = commandId ?? Guid.NewGuid().ToString(),
             IssuedAt = IvyTime.Now(), Params = ps,
         };
         _server.Cmd[key] = Envelope.Encrypt(recipient ?? _devicePub, Kind.Command, key, IvyJson.SerializeToUtf8(cmd));
@@ -147,6 +147,26 @@ public class CommandPollerTests : IDisposable
     }
 
     [Fact]
+    public async Task Command_for_other_device_reports_error_and_is_recorded_executed()
+    {
+        var rescan = new RecordingRescan();
+        var id = PutCommand(new RescanParams { Collector = "files" }, deviceId: "someone-else");
+        var (poller, p, _) = Make(rescan);
+        using (p)
+        {
+            var r1 = await poller.PollOnceAsync();
+            Assert.Equal(1, r1.Executed);
+            var st = Assert.Single(Statuses(p));
+            Assert.Equal(id, st.CommandId);
+            Assert.Equal(CommandStatusValues.Error, st.Status);
+            Assert.Empty(rescan.Seen);
+            var r2 = await poller.PollOnceAsync();
+            Assert.Equal(0, r2.Executed);
+            Assert.Single(Statuses(p));
+        }
+    }
+
+    [Fact]
     public async Task Rescan_and_config_dispatch_or_report_missing_handler()
     {
         var rescanId = PutCommand(new RescanParams { Collector = "files", Scope = "D:\\" });
@@ -157,7 +177,7 @@ public class CommandPollerTests : IDisposable
         {
             await poller.PollOnceAsync();
             var st = Statuses(p).ToDictionary(s => s.CommandId);
-            Assert.Equal(CommandStatusValues.Uploaded, st[rescanId].Status);
+            Assert.Equal(CommandStatusValues.Done, st[rescanId].Status);
             Assert.Equal("files", Assert.Single(rescan.Seen).Collector);
             Assert.Equal(CommandStatusValues.Error, st[cfgId].Status);
             Assert.Contains("no handler", st[cfgId].Detail);

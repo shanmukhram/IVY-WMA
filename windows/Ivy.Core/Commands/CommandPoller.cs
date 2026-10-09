@@ -159,6 +159,13 @@ public sealed class CommandPoller
             return ProcessResult.Skipped;
         }
 
+        if (!string.Equals(command.DeviceId, _sink.DeviceId, StringComparison.Ordinal))
+        {
+            // Addressed to another device: never execute; report error and mark executed.
+            Report(key, command.CommandId, CommandOutcome.Error("command is addressed to a different device"));
+            return ProcessResult.Executed;
+        }
+
         _activity?.Append(Collector, ActivityEvents.CommandReceived, $"{command.Params.Type} {command.CommandId}");
         CommandOutcome outcome;
         try

@@ -93,6 +93,15 @@ describe("single-shot envelope", () => {
     expect(Buffer.from(a).equals(Buffer.from(b))).toBe(false);
   });
 
+  it("rejects a non-zero reserved byte", () => {
+    const { env, objectKey } = makeEnvelope();
+    const tampered = env.slice();
+    tampered[7] = 0x01; // reserved byte MUST be 0x00
+    expect(() =>
+      decryptEnvelope({ recipientSecretKey: RECIPIENT.secretKey, objectKey, envelope: tampered }),
+    ).toThrow(/reserved/);
+  });
+
   it("leaks no plaintext bytes into the envelope", () => {
     const secret = "COLLABORATION-OFFER-ROBOTICS";
     const env = encryptEnvelope({
