@@ -1,0 +1,449 @@
+using Ivy.Core.Protocol;
+using Microsoft.Data.Sqlite;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
+
+namespace Ivy.Core.Storage;
+
+public enum QueueStatus { Queued, Uploading, Done }
+
+/// <summary>One row of <c>pending_uploads</c>.</summary>
+public sealed record QueueItem(
+    string Id, long Seq, string ObjectKey, string PartPath, long Size, int Attempts, QueueStatus Status,
+    string Kind, string? GroupKey, string? Collector, string CreatedAt, long NextAttemptMs, string? LastError,
+    string? UploadId, long? PartSize);
+
+public sealed record CompletedPart(int PartNumber, string ETag, long Size);
+
+/// <summary>A ciphertext file already written by <see cref="UploadQueue.WritePartFile"/>, ready to enqueue.</summary>
+public sealed record PartFile(string ObjectKey, Kind Kind, string FullPath, long Size);
+
+public sealed record ReconcileReport(int ResetUploading, int OrphansRequeued, int OrphansDeleted, int TempFilesDeleted, int RowsMissingFile, int DoneRowsFinalized);
+
+public sealed class BackoffPolicy
+{
+    public TimeSpan BaseDelay { get; init; } = TimeSpan.FromSeconds(5);
+    public TimeSpan MaxDelay { get; init; } = TimeSpan.FromMinutes(30);
+
+    /// <summary>Delay before the next try after <paramref name="attempts"/> failures (1-based): base·2^(n−1), capped.</summary>
+    public TimeSpan DelayFor(int attempts)
+    {
+        if (attempts <= 0) return TimeSpan.Zero;
+        var exp = Math.Min(attempts - 1, 30);
+        var ms = BaseDelay.TotalMilliseconds * Math.Pow(2, exp);
+        return TimeSpan.FromMilliseconds(Math.Min(ms, MaxDelay.TotalMilliseconds));
+    }
+}
+
+/// <summary>
+/// The local encrypted upload queue (WU2/WU3). Invariants:
+/// <list type="bullet">
+/// <item>Ciphertext is written to the queue directory (temp file, fsync, atomic rename) BEFORE its row is inserted.</item>
+/// <item>A row is deleted only after the upload is confirmed (<see cref="Complete"/>): status→done, file deleted, row deleted.</item>
+/// <item>Items sharing a <c>group_key</c> upload strictly in <c>seq</c> order (a blob's manifest before its parts,
+/// a file_request's status after the blob).</item>
+/// <item><see cref="Reconcile"/> repairs any crash window at startup.</item>
+/// </list>
+/// </summary>
+public sealed class UploadQueue
+{
+    public const string PartExtension = ".ivy";
+    private const string TempExtension = ".tmp";
+    private readonly VaultDb _db;
+    private readonly TimeProvider _time;
+    private readonly ILogger _logger;
+    private readonly ActivityLog? _activity;
+
+    public UploadQueue(VaultDb db, string queueDirectory, BackoffPolicy? backoff = null, TimeProvider? time = null,
+        ActivityLog? activity = null, ILogger<UploadQueue>? logger = null)
+    {
+        _db = db;
+        QueueDirectory = Path.GetFullPath(queueDirectory);
+        Directory.CreateDirectory(QueueDirectory);
+        Backoff = backoff ?? new BackoffPolicy();
+        _time = time ?? TimeProvider.System;
+        _activity = activity;
+        _logger = (ILogger?)logger ?? NullLogger.Instance;
+    }
+
+    public string QueueDirectory { get; }
+    public BackoffPolicy Backoff { get; }
+
+    /// <summary>Raised after rows are inserted (the uploader listens to wake up).</summary>
+    public event EventHandler? Enqueued;
+
+    /// <summary>Queue file name for an object key ('/' is not allowed in file names; '~' never occurs in keys).</summary>
+    public static string FileNameFor(string objectKey)
+    {
+        if (objectKey.Contains('~') || objectKey.Contains('\\') || objectKey.Contains("..")) throw new ArgumentException("invalid object key", nameof(objectKey));
+        return objectKey.Replace('/', '~') + PartExtension;
+    }
+
+    public static string ObjectKeyFromFileName(string fileName) =>
+        fileName.EndsWith(PartExtension, StringComparison.Ordinal)
+            ? fileName[..^PartExtension.Length].Replace('~', '/')
+            : throw new ArgumentException("not a queue part file", nameof(fileName));
+
+    /// <summary>
+    /// Write ciphertext for <paramref name="objectKey"/> into the queue directory durably. Does NOT enqueue;
+    /// call <see cref="Enqueue"/> afterwards. Only ciphertext may be passed here.
+    /// </summary>
+    public PartFile WritePartFile(string objectKey, Kind kind, ReadOnlySpan<byte> ciphertext)
+    {
+        var final = Path.Combine(QueueDirectory, FileNameFor(objectKey));
+        var tmp = final + "." + Guid.NewGuid().ToString("N") + TempExtension;
+        using (var fs = new FileStream(tmp, FileMode.CreateNew, FileAccess.Write, FileShare.None, 1 << 16, FileOptions.WriteThrough))
+        {
+            fs.Write(ciphertext);
+            fs.Flush(flushToDisk: true);
+        }
+        File.Move(tmp, final, overwrite: true);
+        return new PartFile(objectKey, kind, final, ciphertext.Length);
+    }
+
+    /// <summary>Insert rows for already-written part files, in list order, in one transaction.</summary>
+    public IReadOnlyList<string> Enqueue(IReadOnlyList<PartFile> files, string? groupKey = null, string? collector = null)
+    {
+        var ids = new List<string>(files.Count);
+        var now = IvyTime.Now(_time);
+        using (var c = _db.Open())
+        using (var tx = c.BeginTransaction())
+        {
+            using var seqCmd = c.CreateCommand();
+            seqCmd.Transaction = tx;
+            seqCmd.CommandText = "SELECT COALESCE(MAX(seq), 0) FROM pending_uploads";
+            var seq = (long)seqCmd.ExecuteScalar()!;
+            using var ins = c.CreateCommand();
+            ins.Transaction = tx;
+            ins.CommandText = """
+                INSERT INTO pending_uploads(id, seq, object_key, part_path, size, attempts, status, kind, group_key, collector, created_at, next_attempt_ms)
+                VALUES ($id, $seq, $key, $path, $size, 0, 'queued', $kind, $group, $collector, $created, 0)
+                """;
+            foreach (var f in files)
+            {
+                if (!File.Exists(f.FullPath)) throw new InvalidOperationException($"part file missing for {f.ObjectKey}");
+                var id = Guid.NewGuid().ToString();
+                ins.Parameters.Clear();
+                ins.Parameters.AddWithValue("$id", id);
+                ins.Parameters.AddWithValue("$seq", ++seq);
+                ins.Parameters.AddWithValue("$key", f.ObjectKey);
+                ins.Parameters.AddWithValue("$path", Path.GetFileName(f.FullPath));
+                ins.Parameters.AddWithValue("$size", f.Size);
+                ins.Parameters.AddWithValue("$kind", f.Kind.WireName());
+                ins.Parameters.AddWithValue("$group", (object?)groupKey ?? DBNull.Value);
+                ins.Parameters.AddWithValue("$collector", (object?)collector ?? DBNull.Value);
+                ins.Parameters.AddWithValue("$created", now);
+                ins.ExecuteNonQuery();
+                ids.Add(id);
+            }
+            tx.Commit();
+        }
+        Enqueued?.Invoke(this, EventArgs.Empty);
+        return ids;
+    }
+
+    /// <summary>Write and enqueue a single ciphertext object.</summary>
+    public string EnqueueCiphertext(string objectKey, Kind kind, ReadOnlySpan<byte> ciphertext, string? collector = null, string? groupKey = null) =>
+        Enqueue(new[] { WritePartFile(objectKey, kind, ciphertext) }, groupKey, collector)[0];
+
+    public string FullPathOf(QueueItem item) => Path.Combine(QueueDirectory, item.PartPath);
+
+    private const string Columns = "id, seq, object_key, part_path, size, attempts, status, kind, group_key, collector, created_at, next_attempt_ms, last_error, upload_id, part_size";
+
+    private static QueueItem Read(SqliteDataReader r) => new(
+        r.GetString(0), r.GetInt64(1), r.GetString(2), r.GetString(3), r.GetInt64(4), r.GetInt32(5),
+        r.GetString(6) switch { "queued" => QueueStatus.Queued, "uploading" => QueueStatus.Uploading, _ => QueueStatus.Done },
+        r.GetString(7), r.IsDBNull(8) ? null : r.GetString(8), r.IsDBNull(9) ? null : r.GetString(9), r.GetString(10),
+        r.GetInt64(11), r.IsDBNull(12) ? null : r.GetString(12), r.IsDBNull(13) ? null : r.GetString(13), r.IsDBNull(14) ? null : r.GetInt64(14));
+
+    /// <summary>
+    /// The next item to upload: lowest <c>seq</c> that is queued, past its backoff gate, and not behind an
+    /// unfinished earlier item of the same group.
+    /// </summary>
+    public QueueItem? NextDue()
+    {
+        using var c = _db.Open();
+        using var cmd = c.CreateCommand();
+        cmd.CommandText = $"""
+            SELECT {Columns} FROM pending_uploads p
+            WHERE p.status = 'queued' AND p.next_attempt_ms <= $now
+              AND (p.group_key IS NULL OR NOT EXISTS (
+                    SELECT 1 FROM pending_uploads q WHERE q.group_key = p.group_key AND q.seq < p.seq AND q.status <> 'done'))
+            ORDER BY p.seq LIMIT 1
+            """;
+        cmd.Parameters.AddWithValue("$now", _time.GetUtcNow().ToUnixTimeMilliseconds());
+        using var r = cmd.ExecuteReader();
+        return r.Read() ? Read(r) : null;
+    }
+
+    /// <summary>Earliest backoff gate among queued items (for the uploader's sleep), or null.</summary>
+    public DateTimeOffset? NextAttemptTime()
+    {
+        using var c = _db.Open();
+        using var cmd = c.CreateCommand();
+        cmd.CommandText = "SELECT MIN(next_attempt_ms) FROM pending_uploads WHERE status = 'queued'";
+        var v = cmd.ExecuteScalar();
+        return v is long ms ? DateTimeOffset.FromUnixTimeMilliseconds(ms) : null;
+    }
+
+    public QueueItem? Get(string id)
+    {
+        using var c = _db.Open();
+        using var cmd = c.CreateCommand();
+        cmd.CommandText = $"SELECT {Columns} FROM pending_uploads WHERE id = $id";
+        cmd.Parameters.AddWithValue("$id", id);
+        using var r = cmd.ExecuteReader();
+        return r.Read() ? Read(r) : null;
+    }
+
+    public IReadOnlyList<QueueItem> All()
+    {
+        using var c = _db.Open();
+        using var cmd = c.CreateCommand();
+        cmd.CommandText = $"SELECT {Columns} FROM pending_uploads ORDER BY seq";
+        using var r = cmd.ExecuteReader();
+        var list = new List<QueueItem>();
+        while (r.Read()) list.Add(Read(r));
+        return list;
+    }
+
+    public int Depth(string? collector = null)
+    {
+        using var c = _db.Open();
+        using var cmd = c.CreateCommand();
+        cmd.CommandText = collector is null
+            ? "SELECT COUNT(*) FROM pending_uploads WHERE status <> 'done'"
+            : "SELECT COUNT(*) FROM pending_uploads WHERE status <> 'done' AND collector = $c";
+        if (collector is not null) cmd.Parameters.AddWithValue("$c", collector);
+        return (int)(long)cmd.ExecuteScalar()!;
+    }
+
+    public IReadOnlyDictionary<string, int> DepthByCollector()
+    {
+        using var c = _db.Open();
+        using var cmd = c.CreateCommand();
+        cmd.CommandText = "SELECT collector, COUNT(*) FROM pending_uploads WHERE status <> 'done' AND collector IS NOT NULL GROUP BY collector";
+        using var r = cmd.ExecuteReader();
+        var d = new Dictionary<string, int>(StringComparer.Ordinal);
+        while (r.Read()) d[r.GetString(0)] = (int)r.GetInt64(1);
+        return d;
+    }
+
+    private void Exec(string sql, params (string Name, object? Value)[] ps)
+    {
+        using var c = _db.Open();
+        using var cmd = c.CreateCommand();
+        cmd.CommandText = sql;
+        foreach (var (n, v) in ps) cmd.Parameters.AddWithValue(n, v ?? DBNull.Value);
+        cmd.ExecuteNonQuery();
+    }
+
+    public void MarkUploading(string id) => Exec("UPDATE pending_uploads SET status = 'uploading' WHERE id = $id AND status = 'queued'", ("$id", id));
+
+    /// <summary>Record a failed attempt: attempts+1, back to queued, gated by exponential backoff.</summary>
+    public TimeSpan MarkFailed(string id, string error)
+    {
+        using var c = _db.Open();
+        using var tx = c.BeginTransaction();
+        using var cmd = c.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandText = "SELECT attempts FROM pending_uploads WHERE id = $id";
+        cmd.Parameters.AddWithValue("$id", id);
+        var attempts = cmd.ExecuteScalar() is long a ? (int)a + 1 : 1;
+        var delay = Backoff.DelayFor(attempts);
+        cmd.CommandText = "UPDATE pending_uploads SET status = 'queued', attempts = $a, next_attempt_ms = $n, last_error = $e WHERE id = $id";
+        cmd.Parameters.AddWithValue("$a", attempts);
+        cmd.Parameters.AddWithValue("$n", (_time.GetUtcNow() + delay).ToUnixTimeMilliseconds());
+        cmd.Parameters.AddWithValue("$e", error.Length > 500 ? error[..500] : error);
+        cmd.ExecuteNonQuery();
+        tx.Commit();
+        return delay;
+    }
+
+    /// <summary>Put an item back to queued without counting an attempt (pause / cancellation).</summary>
+    public void Requeue(string id) => Exec("UPDATE pending_uploads SET status = 'queued' WHERE id = $id AND status = 'uploading'", ("$id", id));
+
+    /// <summary>Confirmed upload: mark done, delete the part file, then delete the row (and its multipart parts).</summary>
+    public void Complete(string id)
+    {
+        var item = Get(id);
+        if (item is null) return;
+        Exec("UPDATE pending_uploads SET status = 'done' WHERE id = $id", ("$id", id));
+        var path = FullPathOf(item);
+        if (File.Exists(path)) File.Delete(path);
+        Exec("DELETE FROM pending_uploads WHERE id = $id", ("$id", id));
+    }
+
+    // ---- multipart resume state ----
+
+    public void SetMultipartUpload(string id, string uploadId, long partSize) =>
+        Exec("UPDATE pending_uploads SET upload_id = $u, part_size = $s WHERE id = $id", ("$u", uploadId), ("$s", partSize), ("$id", id));
+
+    public void AddCompletedPart(string id, int partNumber, string etag, long size) =>
+        Exec("INSERT OR REPLACE INTO pending_upload_parts(upload_row_id, part_number, etag, size) VALUES ($id, $n, $e, $s)",
+            ("$id", id), ("$n", partNumber), ("$e", etag), ("$s", size));
+
+    public IReadOnlyList<CompletedPart> GetCompletedParts(string id)
+    {
+        using var c = _db.Open();
+        using var cmd = c.CreateCommand();
+        cmd.CommandText = "SELECT part_number, etag, size FROM pending_upload_parts WHERE upload_row_id = $id ORDER BY part_number";
+        cmd.Parameters.AddWithValue("$id", id);
+        using var r = cmd.ExecuteReader();
+        var list = new List<CompletedPart>();
+        while (r.Read()) list.Add(new CompletedPart(r.GetInt32(0), r.GetString(1), r.GetInt64(2)));
+        return list;
+    }
+
+    /// <summary>Forget a multipart upload (e.g. the server no longer knows the upload id) so it restarts.</summary>
+    public void ResetMultipart(string id)
+    {
+        using var c = _db.Open();
+        using var tx = c.BeginTransaction();
+        using var cmd = c.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandText = "DELETE FROM pending_upload_parts WHERE upload_row_id = $id; UPDATE pending_uploads SET upload_id = NULL, part_size = NULL WHERE id = $id;";
+        cmd.Parameters.AddWithValue("$id", id);
+        cmd.ExecuteNonQuery();
+        tx.Commit();
+    }
+
+    // ---- crash reconciliation ----
+
+    /// <summary>
+    /// Startup repair. 'uploading' rows go back to 'queued' (multipart progress is kept); 'done' rows are
+    /// finalized; rows whose part file vanished are dropped and logged as lost; leftover temp files are
+    /// deleted; complete orphan part files (written, but the process died before the row was inserted)
+    /// are re-enqueued — single objects alone, blobs only when the manifest and every part are present
+    /// (manifest first), otherwise the incomplete blob is deleted.
+    /// </summary>
+    public ReconcileReport Reconcile()
+    {
+        int reset, missing = 0, doneFinal = 0, tmpDeleted = 0, requeued = 0, orphansDeleted = 0;
+        using (var c = _db.Open())
+        using (var cmd = c.CreateCommand())
+        {
+            cmd.CommandText = "UPDATE pending_uploads SET status = 'queued' WHERE status = 'uploading'";
+            reset = cmd.ExecuteNonQuery();
+        }
+
+        foreach (var item in All())
+        {
+            var path = FullPathOf(item);
+            if (item.Status == QueueStatus.Done)
+            {
+                if (File.Exists(path)) File.Delete(path);
+                Exec("DELETE FROM pending_uploads WHERE id = $id", ("$id", item.Id));
+                doneFinal++;
+            }
+            else if (!File.Exists(path))
+            {
+                Exec("DELETE FROM pending_uploads WHERE id = $id", ("$id", item.Id));
+                missing++;
+                _logger.LogWarning("queue row {ObjectKey} had no part file; dropped", item.ObjectKey);
+                _activity?.Append(item.Collector, ActivityEvents.Lost, $"{item.ObjectKey} part file missing at startup");
+            }
+        }
+
+        foreach (var tmp in Directory.EnumerateFiles(QueueDirectory, "*" + TempExtension))
+        {
+            File.Delete(tmp);
+            tmpDeleted++;
+        }
+
+        var referenced = new HashSet<string>(All().Select(i => i.PartPath), StringComparer.Ordinal);
+        var singles = new List<PartFile>();
+        var blobs = new Dictionary<string, (PartFile? Manifest, SortedDictionary<int, PartFile> Parts)>(StringComparer.Ordinal);
+        foreach (var file in Directory.EnumerateFiles(QueueDirectory, "*" + PartExtension).OrderBy(f => f, StringComparer.Ordinal))
+        {
+            var name = Path.GetFileName(file);
+            if (referenced.Contains(name)) continue;
+            ParsedKey parsed;
+            string key;
+            try
+            {
+                key = ObjectKeyFromFileName(name);
+                parsed = ObjectKeys.Parse(key);
+            }
+            catch (Exception e) when (e is FormatException or ArgumentException)
+            {
+                File.Delete(file);
+                orphansDeleted++;
+                continue;
+            }
+            var size = new FileInfo(file).Length;
+            if (parsed.Kind is Kind.Manifest or Kind.BlobChunk)
+            {
+                var oid = parsed.Oid!;
+                if (!blobs.TryGetValue(oid, out var b)) b = (null, new SortedDictionary<int, PartFile>());
+                if (parsed.IsManifest) b.Manifest = new PartFile(key, Kind.Manifest, file, size);
+                else b.Parts[parsed.ChunkIndex!.Value] = new PartFile(key, Kind.BlobChunk, file, size);
+                blobs[oid] = b;
+            }
+            else
+            {
+                Kind kind;
+                try
+                {
+                    var header = new byte[Envelope.MinLength];
+                    using (var fs = File.OpenRead(file)) fs.ReadExactly(header);
+                    kind = Envelope.PeekKind(header);
+                }
+                catch (Exception e) when (e is IvyCryptoException or EndOfStreamException or IOException)
+                {
+                    File.Delete(file);
+                    orphansDeleted++;
+                    continue;
+                }
+                singles.Add(new PartFile(key, kind, file, size));
+            }
+        }
+
+        foreach (var s in singles)
+        {
+            Enqueue(new[] { s }, null, null);
+            requeued++;
+        }
+
+        foreach (var (oid, b) in blobs)
+        {
+            var complete = b.Manifest is not null && b.Parts.Count > 0 && TotalFromPart(b.Parts.Values.First()) is { } total
+                           && b.Parts.Count == total && b.Parts.Keys.SequenceEqual(Enumerable.Range(0, total));
+            if (complete)
+            {
+                var list = new List<PartFile> { b.Manifest! };
+                list.AddRange(b.Parts.Values);
+                Enqueue(list, oid, null);
+                requeued += list.Count;
+            }
+            else
+            {
+                if (b.Manifest is not null) { File.Delete(b.Manifest.FullPath); orphansDeleted++; }
+                foreach (var p in b.Parts.Values) { File.Delete(p.FullPath); orphansDeleted++; }
+            }
+        }
+
+        var report = new ReconcileReport(reset, requeued, orphansDeleted, tmpDeleted, missing, doneFinal);
+        if (reset + requeued + orphansDeleted + tmpDeleted + missing + doneFinal > 0)
+        {
+            _logger.LogInformation("queue reconciled: {Report}", report);
+            _activity?.Append(null, ActivityEvents.Reconciled,
+                $"reset={reset} requeued={requeued} orphansDeleted={orphansDeleted} tmp={tmpDeleted} missing={missing} done={doneFinal}");
+        }
+        return report;
+    }
+
+    private static int? TotalFromPart(PartFile part)
+    {
+        try
+        {
+            var header = new byte[ChunkedEncryptor.ChunkHeaderLen + AesGcm256.TagLen];
+            using (var fs = File.OpenRead(part.FullPath)) fs.ReadExactly(header);
+            return Chunked.ParseChunkHeader(header).TotalChunks;
+        }
+        catch (Exception e) when (e is IvyCryptoException or EndOfStreamException or IOException)
+        {
+            return null;
+        }
+    }
+}
