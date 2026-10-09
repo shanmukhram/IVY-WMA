@@ -1,0 +1,32 @@
+{
+  "description": "Pairing string encoding + bootstrap sealed to the one-time secret.",
+  "pairingPayload": {
+    "v": 1,
+    "r2Endpoint": "https://acct.r2.cloudflarestorage.com",
+    "role": "windows",
+    "cmdBucket": "ivy-cmd-windows",
+    "upBucket": "ivy-up-windows",
+    "cmdReadToken": "CMD_READ_TOKEN_FIXED",
+    "macPublicKey": "tRbhaXKgP1Qo/c9dfXzDhld8ojfiiITigoLAtC16E3w=",
+    "macFingerprint": "CF0A-77FB-0DA6-ACE6",
+    "pairingId": "0102030405060708090a0b0c0d0e0f10",
+    "secret": "oKGio6SlpqeoqaqrrK2ur7CxsrO0tba3uLm6u7y9vr8=",
+    "exp": 1760000600000
+  },
+  "pairingString": "IVYPAIR1.eyJ2IjoxLCJyMkVuZHBvaW50IjoiaHR0cHM6Ly9hY2N0LnIyLmNsb3VkZmxhcmVzdG9yYWdlLmNvbSIsInJvbGUiOiJ3aW5kb3dzIiwiY21kQnVja2V0IjoiaXZ5LWNtZC13aW5kb3dzIiwidXBCdWNrZXQiOiJpdnktdXAtd2luZG93cyIsImNtZFJlYWRUb2tlbiI6IkNNRF9SRUFEX1RPS0VOX0ZJWEVEIiwibWFjUHVibGljS2V5IjoidFJiaGFYS2dQMVFvL2M5ZGZYekRobGQ4b2pmaWlJVGlnb0xBdEMxNkUzdz0iLCJtYWNGaW5nZXJwcmludCI6IkNGMEEtNzdGQi0wREE2LUFDRTYiLCJwYWlyaW5nSWQiOiIwMTAyMDMwNDA1MDYwNzA4MDkwYTBiMGMwZDBlMGYxMCIsInNlY3JldCI6Im9LR2lvNlNscHFlb3FhcXJySzJ1cjdDeHNyTzB0YmEzdUxtNnU3eTl2cjg9IiwiZXhwIjoxNzYwMDAwNjAwMDAwfQ",
+  "bootstrapInputs": {
+    "secretHex": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+    "nonceHex": "c0c1c2c3c4c5c6c7c8c9cacb"
+  },
+  "bootstrapPlaintext": {
+    "v": 1,
+    "upBucket": "ivy-up-windows",
+    "upWriteToken": "UP_WRITE_TOKEN_FIXED",
+    "pairingId": "0102030405060708090a0b0c0d0e0f10"
+  },
+  "sealedBootstrap": {
+    "v": 1,
+    "nonce": "wMHCw8TFxsfIycrL",
+    "ct": "V1+TdeJkbF4PGbCkcZ27nLJSUK1fFRkHBsfxBVn7ZN0etCZ8TGeS3DzNFRMZaKNeNrS6kzygx9J+ERxgLuSXf2TxQAbd+dER7iPXXRH5bCLkTBVFQT2hrDGMv7kIgVddhit0JvKpwGJgPpnAv97zmf3+DfHYvxnjM/IZInWVruVdyceoX16WPw=="
+  }
+}

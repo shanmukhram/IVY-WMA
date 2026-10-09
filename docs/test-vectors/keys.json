@@ -1,0 +1,8 @@
+{
+  "description": "X25519 public-key derivation and fingerprint format.",
+  "macSecretKeyHex": "a1a2a3a4a5a6a7a8b1b2b3b4b5b6b7b8c1c2c3c4c5c6c7c8d1d2d3d4d5d6d7d8",
+  "macPublicKeyHex": "b516e16972a03f5428fdcf5d7d7cc386577ca237e28884e28282c0b42d7a137c",
+  "macPublicKeyB64": "tRbhaXKgP1Qo/c9dfXzDhld8ojfiiITigoLAtC16E3w=",
+  "fingerprint": "CF0A-77FB-0DA6-ACE6",
+  "fingerprintFormat": "SHA-256(pubkey)[0:8] uppercase hex, grouped XXXX-XXXX-XXXX-XXXX"
+}

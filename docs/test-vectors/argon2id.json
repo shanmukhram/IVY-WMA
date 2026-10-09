@@ -1,0 +1,16 @@
+{
+  "description": "Argon2id passphrase -> deterministic X25519 Mac keypair.",
+  "params": {
+    "algorithm": "argon2id",
+    "memoryKiB": 65536,
+    "iterations": 3,
+    "parallelism": 1,
+    "saltLen": 16,
+    "outputLen": 32
+  },
+  "passphrase": "correct horse battery staple",
+  "saltHex": "00112233445566778899aabbccddeeff",
+  "derivedSecretKeyHex": "c63a7e80f29a251ff0f1067c51d08ff12594199c5d2bd4a51d95348f3a205883",
+  "derivedPublicKeyHex": "51294de211d26b82282f6de92253a42a4ca5ddd1fd64f11e7ba75b14d5c1474b",
+  "fingerprint": "E27C-D362-C293-28D5"
+}

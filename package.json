@@ -8,6 +8,7 @@
   },
   "packageManager": "pnpm@10.28.2",
   "scripts": {
-    "test": "pnpm -r test"
+    "test": "pnpm -r test",
+    "vectors": "pnpm --filter @ivy/protocol vectors"
   }
 }
