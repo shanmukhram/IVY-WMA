@@ -1,0 +1,15 @@
+node_modules/
+dist/
+out/
+build/
+bin/
+obj/
+.gradle/
+*.db
+*.db-wal
+*.db-shm
+data/
+.env
+.DS_Store
+coverage/
+*.log
