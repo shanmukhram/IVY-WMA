@@ -45,9 +45,19 @@ windows/
     Agent/                       PairingService, DeviceReporter, VaultAgent (composition root)
   Ivy.Core.Tests/                xunit: vectors, crypto tamper, queue/crash, uploader, sink, zero-plaintext, commands,
                                  pairing, key store, and Integration/ (s3-mock end to end)
+  Ivy.Collectors/                net8.0 + net8.0-windows10.0.19041.0 (task 1.7)
+    Abstractions/                IFileSystemSource, IFileChangeSource, IUsnJournal, IForegroundWindowProbe, INotificationDbReader
+    Common/                      CollectorBase, settings store, glob exclusions, status, collector-owned tables
+    Files/ Thumbnails/           FileIndexCollector (scan/resume/watcher/USN/tombstones), QuickHash, ThumbnailGenerator
+    Screenshots/ Usage/ Notifications/   the other three collectors
+    Host/                        CollectorHost (lifecycle, settings, rescan/collector_config handlers), PlatformServices
+    Windows/                     Win32 P/Invoke: USN journal, foreground window probe (#if WINDOWS)
+  Ivy.Collectors.Tests/          xunit on macOS: temp-tree scans, resume, thumbnails, debounce, usage, wpndatabase fixture, host
 ```
 
 ## What the collectors (task 1.7) implement and consume
+
+(Implemented in `Ivy.Collectors`; see the Collectors section below.)
 
 - **Emit captures** through `IRecordSink` (`VaultAgent.Sink`):
   - `Enqueue(kind, "up/<prefix>", recordJson, collector)`: the JSON must be a v1 record whose `kind` matches.
@@ -76,6 +86,77 @@ windows/
   - `PairingState.DeviceFingerprint`
   - bucket reachability from `Poller.LastPollAt` / `LastPollError` and the uploader's `Failed` events
 - **Collector rows**: `Collectors.All()` and `Collectors.SetEnabled`.
+
+## Collectors: `Ivy.Collectors` (task 1.7)
+
+`Ivy.Collectors` targets `net8.0;net8.0-windows10.0.19041.0`. The platform-independent logic builds and is tested on macOS: diffing, hashing, record building, cursors, coalescing, debounce, exclusion matching, toast parsing and the notification-db snapshot. The Win32 code lives in `Ivy.Collectors/Windows/`, under `#if WINDOWS` and `[SupportedOSPlatform("windows")]`, and is compiled only into the Windows target: the USN journal and the foreground window probe. `EnableWindowsTargeting` lets macOS compile that target. `Ivy.Collectors.Tests` (xunit, `net8.0`) covers the rest.
+
+**Wiring:** call `CollectorHost.CreateFor(agent)`, then `StartAsync()`. This builds the four collectors with the platform services and registers the host as `agent.RescanHandler` / `agent.CollectorConfigHandler`. Until pairing completes, collectors read `agent.Sink` as null and show `WaitingForPairing`; they capture nothing in that state. Every capture is logged in `activity_log`: the collector logs `captured <kind> <oid>`, and the sink logs `encrypted` and `queued`. The details hold kinds, oids and sizes, never content or paths.
+
+**Host:** `CollectorHost` owns all four collectors.
+- It can start, stop, `PauseAsync` or `Resume` each one, or all of them. `SetEnabledAsync` persists the toggle in `collector_state.enabled`.
+- `UpdateSettingsAsync(name, enabled?, settings?)` merges a settings patch and validates it. Unknown keys and out-of-range values return `error` with a reason. It persists the result in `agent_settings` as `collector.<name>.settings` and restarts a running collector. `collector_config` commands use this same path.
+- `rescan` accepts `files` (optional `scope` = a folder under a root), `screenshots` or `all`. For `usage` and `notifications` it returns `error`.
+- `Statuses()` / `StatusChanged` give the UI: name, enabled, running, paused, state, lastRunAt, lastCaptureAt, cursor, queueDepth, lastError, detail.
+- The host writes `collector_state.last_run_at`/`cursor` when the cursor moves, at least once a minute, and on stop. The device report reads those rows.
+
+| Collector | Captures | Key settings (camelCase in `collector_config.settings`) |
+| --- | --- | --- |
+| `files` (WC1/WC2/WC6) | `file_meta` for every admitted file under the roots: path, name, size, ext (lower-case, no dot), mtime, quickHash, and `thumbBlobOid` for images and PDFs. Metadata only; originals are sent on request. `eventTime` = mtime. | `roots` (empty until folders are picked), `exclusions` (globs), `includeHidden`/`includeSystem` (false), `fullRescanHours` (24), `scanBatchSize` (500 files per 1 s tick), `thumbnails` (true), `thumbnailMaxBytes` (64 MiB), `useUsnJournal` (true), `usnPollSeconds` (30), `changeDebounceSeconds` (2) |
+| `screenshots` (WC3) | The original image as a chunked blob (payload kind `screenshot`) plus a `screenshot` record: sha256, width/height, `blobOid`, `takenAt` (EXIF DateTimeOriginal, else file creation time), `savedAt` (mtime) | `roots` (`%USERPROFILE%\Pictures\Screenshots`; several allowed), `extensions`, `debounceSeconds` (2), `uploadExisting` (true), `sweepSeconds` (60), `maxBytes` (256 MiB) |
+| `usage` (WC4) | `usage_event` (app = FileDescription, exe = file name, title, startedAt, endedAt) | `sampleSeconds` (30), `captureTitles` (true), `titleExclusions` (substring, or glob with `*`/`?`, matched against title or exe; a match omits the title), `idleMinutes` (5), `maxEventMinutes` (10) |
+| `notifications` (WC5) | `windows_notification` (app = `NotificationHandler.PrimaryId`, title = first toast text, text = the rest joined by newlines, sender = attribution text, postedAt = ArrivalTime) | `databasePath` (default `%LOCALAPPDATA%\Microsoft\Windows\Notifications\wpndatabase.db`), `pollSeconds` (60), `batchSize` (500), `excludedApps` |
+
+**Files:**
+- **Quick hash:** SHA-256 over (first 64 KiB) ‖ (last 64 KiB) ‖ (size as little-endian int64), truncated to 16 bytes and hex-encoded. Files of 128 KiB or less are hashed whole. A change in the middle of a large file is not seen by design, but the file's mtime still changes, so a new `file_meta` is emitted anyway.
+- **Full scan:** a deterministic, sorted pre-order walk. After each batch the scan state is persisted in `agent_settings` as `collector.files.scan`, holding the last completed directory, so a restart resumes there. Unchanged files are not re-read: a file is unchanged when its mtime equals the one in `file_cache`. When a root finishes, cached files the scan did not see are re-checked, then recorded as deleted (or excluded). If a root is missing, nothing under it is marked deleted and the collector shows an error.
+- **Incremental updates:** FileSystemWatcher runs on all platforms; on Windows the USN journal runs as well. Events are debounced and re-stat'ed.
+  - The cursor is `{"C:\\":{"journalId":…,"nextUsn":…}}` in `collector_state.cursor`.
+  - If the journal is recreated, or wraps past the cursor, a full rescan is scheduled.
+  - A watcher buffer overflow also schedules one.
+- **Settings changes:** changing the roots, exclusions or the hidden/system toggles restarts the scan.
+- **Exclusions:**
+  - Defaults: `node_modules`, `.git`, `$Recycle.Bin`, `System Volume Information`, `?:/Windows`, `?:/Program Files`, `?:/Program Files (x86)`, `**/AppData/Local/Temp`.
+  - Pattern rules: a pattern without `/` matches one path segment at any depth. Other patterns match the whole path. Matching is case-insensitive, and excluding a directory excludes its subtree.
+  - Reparse points (junctions, symlinks) are never followed. The agent's own data directory is always excluded.
+- **Thumbnails** (`Thumbnails/`): images are decoded with SkiaSharp, with EXIF orientation applied. PDF first pages are rendered with PDFtoImage (PDFium). The long edge is 256 px; the output is JPEG with transparent areas on white. Each thumbnail goes up as a chunked blob and is reused while the quick hash is unchanged.
+- **`file_cache.file_id`** is set to the oid of the latest `file_meta` for that path, so a `file_request.fileId` naming that oid resolves.
+
+**Screenshots:**
+- **Debounce:** a file is uploaded only after it is seen twice, at least `debounceSeconds` apart, with the same size and mtime. It must also be non-empty and open with `FileShare.Read`, which fails on Windows while a writer still holds it.
+- **Dedupe:** by SHA-256 in `screenshot_seen`. Files already examined (path + size + mtime) are kept in `screenshot_files`, so sweeps never re-hash them.
+
+**Usage:**
+- **Coalescing:** consecutive samples with the same exe and recorded title extend one event.
+- **When an event closes:** when the foreground changes (ended at the new sample), when there is no foreground window, after `idleMinutes` without input (ended at the last input, from GetLastInputInfo), or every `maxEventMinutes` for long sessions (the session continues as a new event).
+- **Crash recovery:** the open interval is saved every sample. After a crash it is emitted ending at its last sample.
+
+**Notifications:**
+- **Snapshot read:** each poll copies `wpndatabase.db`, `-wal` and `-shm` to a private temp directory using shared-read streams. It retries until the three files' sizes and mtimes match before and after the copy, then queries the copy (the WAL is applied) and deletes it.
+- **Cursor:** the highest `Notification.Id` read, persisted after every row. Only `Type = 'toast'` rows are emitted. The toast XML is parsed with DTDs prohibited.
+- **Access:** on most Windows 11 builds the database is readable by the signed-in user. If the platform service holds it without sharing, or the ACLs deny the account, the app has to run elevated (PRD WC5).
+- **Unreadable database:** the collector goes to the `Error` state with the reason, for example "access denied reading …\wpndatabase.db (run elevated?)", "not found" or "could not be queried". It emits nothing and keeps retrying each poll. It never reports a healthy state it does not have.
+
+**Collector-owned tables** (created additively in `vault-agent.db`; metadata only): `file_tombstones`, `file_thumbs`, `screenshot_seen`, `screenshot_files`.
+
+**Schema gap:** `file_meta` has no `deleted` field (PROTOCOL.md §6 and `schemas.ts`). Deletions therefore stay local: the path goes to `file_tombstones` (reason `deleted` or `excluded`), the `file_cache` row is removed, and a `deleted` activity entry is logged. Nothing reaches the Mac until the protocol adds a field or kind for deletions.
+
+**Libraries:**
+- **SkiaSharp (MIT):** used for images instead of SixLabors.ImageSharp. ImageSharp 3.1.x has open high-severity advisories, which fail the build under warnings-as-errors. ImageSharp 4.x needs a Six Labors license key for Release builds.
+- **MetadataExtractor (Apache-2.0):** reads EXIF.
+- **PDFtoImage (MIT, PDFium):** renders PDF first pages. It ships natives for win-x64/arm64 and macOS, so the PDF thumbnail is tested here too.
+
+**Not verified on macOS:**
+- **Compiled for the Windows target but never run:**
+  - `WindowsUsnJournal`: DeviceIoControl `FSCTL_QUERY_USN_JOURNAL` / `FSCTL_READ_USN_JOURNAL` with USN_RECORD_V2 parsing. If GENERIC_READ on `\\.\C:` is denied, it falls back to `FSCTL_READ_UNPRIVILEGED_USN_JOURNAL`. Parent paths come from `OpenFileById` + `GetFinalPathNameByHandle`.
+  - `WindowsForegroundWindowProbe`: GetForegroundWindow, GetWindowThreadProcessId, QueryFullProcessImageName, FileDescription, the UWP ApplicationFrameHost child lookup, and GetLastInputInfo.
+- **Tested here only through fakes:** USN cursor handling and the foreground probe's consumers (`FakeUsnJournal`, `FakeProbe`).
+- **Windows behaviour not exercised:**
+  - FileSystemWatcher on NTFS: buffer overflows on whole-drive roots.
+  - Hidden/System attributes on real Windows folders, such as AppData being Hidden.
+  - The real lock behaviour of `wpndatabase.db` and of a screenshot still being written.
+  - Whether the current build's toast payloads match the fixture XML.
+  - PDFium on win-arm64.
 
 ## Defaults
 

@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Capture collectors (PRD WC1-WC6, WR3). Two targets:
+      net8.0                         platform-independent logic; builds and tests on macOS.
+      net8.0-windows10.0.19041.0     adds the Win32 implementations (USN journal, foreground window probe)
+                                     under #if WINDOWS. EnableWindowsTargeting lets macOS compile it.
+  -->
+  <PropertyGroup>
+    <TargetFrameworks>net8.0;net8.0-windows10.0.19041.0</TargetFrameworks>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <RootNamespace>Ivy.Collectors</RootNamespace>
+    <AssemblyName>Ivy.Collectors</AssemblyName>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="SkiaSharp" Version="4.150.1" />
+    <PackageReference Include="MetadataExtractor" Version="2.9.3" />
+    <PackageReference Include="PDFtoImage" Version="5.4.0" />
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.11" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="8.0.3" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Ivy.Core\Ivy.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Ivy.Collectors.Tests" />
+  </ItemGroup>
+
+</Project>

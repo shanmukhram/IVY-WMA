@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Platform-neutral half of the Windows app (PRD Part 1 "App UI", PLAN task 1.8): view models, state,
+       formatting, activity-feed buffering and settings binding. Plain net8.0 so it builds and tests on macOS.
+       The WinUI shell (Ivy.App) is a thin view over these types. -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>Ivy.App.Core</RootNamespace>
+    <AssemblyName>Ivy.App.Core</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Ivy.Core\Ivy.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Ivy.App.Core.Tests" />
+  </ItemGroup>
+
+</Project>
