@@ -1,0 +1,31 @@
+{
+  "name": "@ivy/audit",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Zero-plaintext audit for IVY buckets, SQLite queues and queue-part directories",
+  "engines": {
+    "node": ">=25"
+  },
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "bin": {
+    "ivy-audit": "./src/cli.ts"
+  },
+  "scripts": {
+    "audit": "node src/cli.ts",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "26.6.5",
+    "typescript": "7.0.2",
+    "vitest": "5.0.3",
+    "@ivy/s3-mock": "workspace:*"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.1149.0"
+  }
+}

@@ -13,3 +13,4 @@ data/
 .DS_Store
 coverage/
 *.log
+.s3/

@@ -1,0 +1,28 @@
+{
+  "name": "@ivy/s3-mock",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "In-process S3-compatible server for IVY tests and local development",
+  "engines": {
+    "node": ">=25"
+  },
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "bin": {
+    "ivy-s3-mock": "./src/cli.ts"
+  },
+  "scripts": {
+    "start": "node src/cli.ts",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@aws-sdk/client-s3": "^3.1149.0",
+    "@types/node": "26.6.5",
+    "typescript": "7.0.2",
+    "vitest": "5.0.3"
+  }
+}
