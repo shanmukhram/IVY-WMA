@@ -59,7 +59,7 @@ Byte layout:
 | 4 | 1 | version `0x01` |
 | 5 | 1 | mode `0x01` |
 | 6 | 1 | kind id (§5) |
-| 7 | 1 | reserved `0x00` |
+| 7 | 1 | reserved `0x00` (decoders MUST reject any other value) |
 | 8 | 32 | ephemeral X25519 public key (`epk`) |
 | 40 | 12 | wrap nonce |
 | 52 | 48 | wrapped CEK (`ciphertext(32) || tag(16)`) |
@@ -123,8 +123,8 @@ binding the parts together.
 | 4 | 1 | version `0x01` |
 | 5 | 1 | mode `0x02` |
 | 6 | 1 | kind id = `blob_chunk` (0x09) |
-| 7 | 1 | reserved `0x00` |
-| 8 | 16 | object id (binary) |
+| 7 | 1 | reserved `0x00` (decoders MUST reject any other value; the kind byte MUST be `blob_chunk`) |
+| 8 | 16 | object id (binary) = the 16 bytes of the blob's `oid` (§4.1) |
 | 24 | 4 | chunk index (u32) |
 | 28 | 4 | total chunks (u32) |
 | 32 | … | body `ciphertext || tag` |
@@ -162,6 +162,8 @@ at `up/blob/<oid>/manifest`):
 }
 ```
 
+- `objectId` is the hex of the same 16 bytes as the `oid` in the blob's object key (`up/blob/<oid>/…`); receivers read it from the manifest and MUST check it against the key.
+- `payloadKind` for an original uploaded in answer to a `file_request` is `file_original`.
 - `cek` is the object content key. It is only ever present inside the encrypted
   manifest envelope, so it never exists as plaintext at rest.
 - `chunks[i].sha256` is SHA-256 over the **entire part** (header + ciphertext +
@@ -269,7 +271,10 @@ An `oid` is a 128-bit identifier in ULID layout: 48-bit millisecond timestamp
 (big-endian) followed by 80 random bits, encoded as **26 Crockford base32**
 characters (alphabet `0123456789ABCDEFGHJKMNPQRSTVWXYZ`, no padding). Because the
 time is the high-order part and base32 preserves byte order, **sorting oids as
-strings sorts them by time**. "List objects since marker M" is therefore every
+strings sorts them by time**. Bit packing is normative: the 128 bits are consumed
+most-significant first in 5-bit groups, and the final group is the last 3 bits
+padded on the **right** with two zero bits (this differs from off-the-shelf ULID
+text encoders, which pad at the front; ports MUST NOT use a ULID library). "List objects since marker M" is therefore every
 key whose `oid` string is `> M`. This drives the Mac's incremental sync marker
 (PRD S1).
 
@@ -342,8 +347,11 @@ union on `type`:
 - `rescan`: `{ type, collector, scope? }` (WR3/AC2a)
 - `collector_config`: `{ type, collector, enabled?, settings? }` (WR3)
 
-**command_status** — `commandId, status(uploaded|not_found|access_denied|
-too_large|error), detail?, resultOid?, reportedAt` (WR2/AR1).
+**command_status** — `commandId, status(uploaded|done|not_found|access_denied|
+too_large|error), detail?, resultOid?, reportedAt` (WR2/AR1). `uploaded` is for
+`file_request` (with `resultOid` = the blob oid); `done` is the success status for
+`rescan` and `collector_config`. A command whose `deviceId` is not the receiving
+device's own id is ignored and reported as `error`.
 
 **device_report** — `role(windows|android), appVersion?, queueDepthTotal,
 reportedAt, collectors[]`. Each collector:
@@ -375,7 +383,7 @@ string). Payload fields:
   "role": "windows",
   "cmdBucket": "ivy-cmd-windows",
   "upBucket": "ivy-up-windows",
-  "cmdReadToken": "<device cmd-bucket READ token>",
+  "cmdReadToken": "<accessKeyId>:<secretAccessKey>  (device cmd-bucket READ token)",
   "macPublicKey": "<base64 Mac X25519 public key>",
   "macFingerprint": "CF0A-77FB-0DA6-ACE6",
   "pairingId": "<hex>",
@@ -396,6 +404,8 @@ sealed    = AES-256-GCM(key=bootKey, nonce, pt=bootstrapJSON, aad=AAD_boot)
 
 serialized as `{ v:1, nonce, ct }` (base64). Bootstrap plaintext:
 `{ v:1, upBucket, upWriteToken, pairingId }` — the up-bucket **write** token.
+All R2 tokens on the wire are the string `<accessKeyId>:<secretAccessKey>`
+(S3 SigV4 credentials); the vector tokens are placeholders, not usable credentials.
 
 **Flow and verification.**
 
