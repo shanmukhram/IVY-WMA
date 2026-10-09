@@ -1,10 +1,16 @@
 # Prompt for the Windows Claude Code session
 
-Paste everything below the line into Claude Code on the Windows 11 desktop, started inside a fresh clone of https://github.com/shanmukhram/IVY-WMA.git.
+Paste everything below the line into Claude Code on the Windows 11 desktop. It can be started in any folder; the prompt tells it to clone the repo.
 
 ---
 
-You are doing the first real build and run of the IVY Windows companion app. Everything in this repo was written and unit-tested on a Mac; the WinUI 3 app itself (windows/Ivy.App) has never been compiled or executed. Your job is to get it building, running, paired, and capturing on this PC, fix what breaks, and report honestly.
+You are doing the first real build and run of the IVY Windows companion app. The repo is https://github.com/shanmukhram/IVY-WMA.git. Start by cloning it and working inside the clone:
+
+```
+git clone https://github.com/shanmukhram/IVY-WMA.git
+cd IVY-WMA
+```
+ Everything in this repo was written and unit-tested on a Mac; the WinUI 3 app itself (windows/Ivy.App) has never been compiled or executed. Your job is to get it building, running, paired, and capturing on this PC, fix what breaks, and report honestly.
 
 Read first: docs/PRD.md Part 1, docs/PLAN.md, windows/README.md, windows/Ivy.App/README.md (build steps and the first-run checklist), and tools/fake-mac/README.md (a stand-in for the Mac so you can test pairing and retrieval locally).
 
