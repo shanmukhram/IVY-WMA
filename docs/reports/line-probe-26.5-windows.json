@@ -1,0 +1,2634 @@
+{
+ "schema": 1,
+ "generatedAt": "2026-10-10T08:26:26.483Z",
+ "lineVersion": "unknown",
+ "locations": [
+  {
+   "label": "installer",
+   "path": "C:\\Users\\admin\\AppData\\Local\\LINE\\Data",
+   "exists": true,
+   "files": [
+    {
+     "relativePath": "LINE.ini",
+     "size": 3090,
+     "mtime": "2026-10-06T15:40:14.369Z",
+     "head16Hex": null,
+     "kind": "Json",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": "head16Hex removed from the committed copy (text content)"
+    },
+    {
+     "relativePath": "_qt_dt_connection_admin",
+     "size": 36,
+     "mtime": "2026-10-06T15:35:12.921Z",
+     "head16Hex": null,
+     "kind": "Text",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": "head16Hex removed from the committed copy (text content)"
+    },
+    {
+     "relativePath": "advertisement/cc475325499f9a96254fda282dc4d8f6/advertisement0.dat",
+     "size": 29008,
+     "mtime": "2026-10-06T02:11:48.904Z",
+     "head16Hex": "c445826583d55d8d03dcef78ee2c480f",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "advertisement/cc475325499f9a96254fda282dc4d8f6/advertisement1.dat",
+     "size": 224,
+     "mtime": "2026-10-06T02:11:47.634Z",
+     "head16Hex": "90b33d72f5504fb74f70e1ee53b9dc95",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "db/AutoSuggest/qwcc68c86ea190f10a6b78361790f878.edb",
+     "size": 10133504,
+     "mtime": "2026-10-06T04:44:54.296Z",
+     "head16Hex": "ea8ac8444445429ab659d033d2477758",
+     "kind": "Binary",
+     "looksEncrypted": true,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "db/album_qw475325499f9a96254fda282dc4d8f6.edb",
+     "size": 20480,
+     "mtime": "2026-10-06T00:25:36.541Z",
+     "head16Hex": "ea8ac8444445429aa0335924c763a09e",
+     "kind": "Binary",
+     "looksEncrypted": true,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "db/chatStats_qw475325499f9a96254fda282dc4d8f6.edb",
+     "size": 28672,
+     "mtime": "2026-10-06T00:25:38.035Z",
+     "head16Hex": "ea8ac8444445429a4e0114e0194d96dc",
+     "kind": "Binary",
+     "looksEncrypted": true,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "db/f59c00309acd23908b1254ee081d8258",
+     "size": 32768,
+     "mtime": "2026-10-06T00:25:42.238Z",
+     "head16Hex": "53514c69746520666f726d6174203300",
+     "kind": "Sqlite",
+     "looksEncrypted": false,
+     "tables": [
+      {
+       "name": "_combination_sticker_metadata",
+       "columns": [
+        "_combinationStickerId",
+        "_metadata"
+       ]
+      },
+      {
+       "name": "_meta_info",
+       "columns": [
+        "m_n",
+        "m_v",
+        "m_p",
+        "m_s",
+        "m_c",
+        "m_i",
+        "m_f",
+        "m_d"
+       ]
+      },
+      {
+       "name": "_sticker_metadata",
+       "columns": [
+        "_packageId",
+        "_metadata"
+       ]
+      },
+      {
+       "name": "_sticonMetadata",
+       "columns": [
+        "_packageId",
+        "_metadata"
+       ]
+      }
+     ],
+     "note": null
+    },
+    {
+     "relativePath": "db/keep_qw475325499f9a96254fda282dc4d8f6.edb",
+     "size": 49152,
+     "mtime": "2026-10-06T00:25:40.659Z",
+     "head16Hex": "ea8ac8444445429ab7849722b97b7770",
+     "kind": "Binary",
+     "looksEncrypted": true,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "db/qw475325499f9a96254fda282dc4d8f6.edb",
+     "size": 516096,
+     "mtime": "2026-10-06T00:31:45.718Z",
+     "head16Hex": "ea8ac8444445429a9f268eec10e1061c",
+     "kind": "Binary",
+     "looksEncrypted": true,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "db/qw475325499f9a96254fda282dc4d8f6.edb-shm",
+     "size": 32768,
+     "mtime": "2026-10-06T00:25:36.102Z",
+     "head16Hex": "18e22d00000000009800000001000010",
+     "kind": "SqliteSidecar",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "db/qw475325499f9a96254fda282dc4d8f6.edb-wal",
+     "size": 4144752,
+     "mtime": "2026-10-06T06:28:49.974Z",
+     "head16Hex": "377f0682002de2180000100000000001",
+     "kind": "SqliteSidecar",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "installLang.ini",
+     "size": 42,
+     "mtime": "2026-10-06T15:35:12.847Z",
+     "head16Hex": null,
+     "kind": "Json",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": "head16Hex removed from the committed copy (text content)"
+    },
+    {
+     "relativePath": "plugin/LineCall/1.0.0.913/.sentry-native/62a33f3b-469f-4779-5cd7-26d49d826718.run.lock",
+     "size": 0,
+     "mtime": "2026-10-06T00:25:56.972Z",
+     "head16Hex": "",
+     "kind": "Empty",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineCall/1.0.0.913/.sentry-native/62a33f3b-469f-4779-5cd7-26d49d826718.run/session.json",
+     "size": 217,
+     "mtime": "2026-10-06T00:25:56.972Z",
+     "head16Hex": null,
+     "kind": "Json",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": "head16Hex removed from the committed copy (text content)"
+    },
+    {
+     "relativePath": "plugin/LineCall/1.0.0.913/D3DCompiler_47.dll",
+     "size": 4517376,
+     "mtime": "2026-10-06T00:25:55.137Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineCall/1.0.0.913/ElsaKit.dll",
+     "size": 5218736,
+     "mtime": "2026-10-06T00:25:55.156Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineCall/1.0.0.913/LineCall.exe",
+     "size": 14375360,
+     "mtime": "2026-10-06T00:25:55.246Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineCall/1.0.0.913/MNN.dll",
+     "size": 2557360,
+     "mtime": "2026-10-06T00:25:55.256Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineCall/1.0.0.913/NeuralLine.dll",
+     "size": 9418160,
+     "mtime": "2026-10-06T00:25:55.298Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineCall/1.0.0.913/Qt6Core.dll",
+     "size": 6213040,
+     "mtime": "2026-10-06T00:25:55.321Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineCall/1.0.0.913/Qt6Core5Compat.dll",
+     "size": 883120,
+     "mtime": "2026-10-06T00:25:55.325Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineCall/1.0.0.913/Qt6Gui.dll",
+     "size": 8548784,
+     "mtime": "2026-10-06T00:25:55.356Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineCall/1.0.0.913/Qt6Network.dll",
+     "size": 1506224,
+     "mtime": "2026-10-06T00:25:55.363Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineCall/1.0.0.913/Qt6OpenGL.dll",
+     "size": 1989552,
+     "mtime": "2026-10-06T00:25:55.368Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineCall/1.0.0.913/Qt6Qml.dll",
+     "size": 5041584,
+     "mtime": "2026-10-06T00:25:55.386Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineCall/1.0.0.913/Qt6QmlModels.dll",
+     "size": 733104,
+     "mtime": "2026-10-06T00:25:55.389Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineCall/1.0.0.913/Qt6QmlWorkerScript.dll",
+     "size": 87984,
+     "mtime": "2026-10-06T00:25:55.389Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineCall/1.0.0.913/Qt6Quick.dll",
+     "size": 5494704,
+     "mtime": "2026-10-06T00:25:55.408Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineCall/1.0.0.913/Qt6QuickControls2.dll",
+     "size": 101808,
+     "mtime": "2026-10-06T00:25:55.408Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineCall/1.0.0.913/Qt6QuickControls2Basic.dll",
+     "size": 1084336,
+     "mtime": "2026-10-06T00:25:55.412Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineCall/1.0.0.913/Qt6QuickControls2BasicStyleImpl.dll",
+     "size": 77232,
+     "mtime": "2026-10-06T00:25:55.413Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineCall/1.0.0.913/Qt6QuickControls2Fusion.dll",
+     "size": 991664,
+     "mtime": "2026-10-06T00:25:55.415Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineCall/1.0.0.913/Qt6QuickControls2FusionStyleImpl.dll",
+     "size": 170416,
+     "mtime": "2026-10-06T00:25:55.416Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineCall/1.0.0.913/Qt6QuickControls2Impl.dll",
+     "size": 309168,
+     "mtime": "2026-10-06T00:25:55.418Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineCall/1.0.0.913/Qt6QuickDialogs2.dll",
+     "size": 172976,
+     "mtime": "2026-10-06T00:25:55.419Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineCall/1.0.0.913/Qt6QuickDialogs2QuickImpl.dll",
+     "size": 1734576,
+     "mtime": "2026-10-06T00:25:55.423Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineCall/1.0.0.913/Qt6QuickDialogs2Utils.dll",
+     "size": 60848,
+     "mtime": "2026-10-06T00:25:55.423Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineCall/1.0.0.913/Qt6QuickLayouts.dll",
+     "size": 232368,
+     "mtime": "2026-10-06T00:25:55.425Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineCall/1.0.0.913/Qt6QuickShapes.dll",
+     "size": 435120,
+     "mtime": "2026-10-06T00:25:55.426Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineCall/1.0.0.913/Qt6QuickTemplates2.dll",
+     "size": 1823152,
+     "mtime": "2026-10-06T00:25:55.432Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineCall/1.0.0.913/Qt6ShaderTools.dll",
+     "size": 3710384,
+     "mtime": "2026-10-06T00:25:55.446Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineCall/1.0.0.913/Qt6StateMachine.dll",
+     "size": 355248,
+     "mtime": "2026-10-06T00:25:55.447Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineCall/1.0.0.913/Qt6Svg.dll",
+     "size": 391088,
+     "mtime": "2026-10-06T00:25:55.448Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineCall/1.0.0.913/Qt6Widgets.dll",
+     "size": 6380976,
+     "mtime": "2026-10-06T00:25:55.472Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineCall/1.0.0.913/WebView2Loader.dll",
+     "size": 180144,
+     "mtime": "2026-10-06T00:25:55.499Z",
+     "head16Hex": "4d5a7800010000000400000000000000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineCall/1.0.0.913/YukiDesktop.dll",
+     "size": 8986032,
+     "mtime": "2026-10-06T00:25:55.530Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineCall/1.0.0.913/ampkit_windows.dll",
+     "size": 20722608,
+     "mtime": "2026-10-06T00:25:55.091Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineCall/1.0.0.913/beauty.epk",
+     "size": 4852648,
+     "mtime": "2026-10-06T00:25:55.105Z",
+     "head16Hex": "454c5341010018000000000000006c07",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineCall/1.0.0.913/bundle.epk",
+     "size": 4029006,
+     "mtime": "2026-10-06T00:25:55.118Z",
+     "head16Hex": "454c53410100b10e0000000000000111",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineCall/1.0.0.913/concrt140.dll",
+     "size": 322672,
+     "mtime": "2026-10-06T00:25:55.119Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineCall/1.0.0.913/extension.epk",
+     "size": 13016581,
+     "mtime": "2026-10-06T00:25:55.171Z",
+     "head16Hex": "454c534101000600000000000000119d",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineCall/1.0.0.913/filters.epk",
+     "size": 2346996,
+     "mtime": "2026-10-06T00:25:55.174Z",
+     "head16Hex": "454c534101000b0000000000000054ce",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineCall/1.0.0.913/imageformats/qgif.dll",
+     "size": 60336,
+     "mtime": "2026-10-06T00:25:55.530Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineCall/1.0.0.913/imageformats/qico.dll",
+     "size": 58800,
+     "mtime": "2026-10-06T00:25:55.531Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineCall/1.0.0.913/imageformats/qjpeg.dll",
+     "size": 583088,
+     "mtime": "2026-10-06T00:25:55.533Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineCall/1.0.0.913/imageformats/qsvg.dll",
+     "size": 52144,
+     "mtime": "2026-10-06T00:25:55.533Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineCall/1.0.0.913/imageformats/qwebp.dll",
+     "size": 561072,
+     "mtime": "2026-10-06T00:25:55.535Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineCall/1.0.0.913/libEGL.dll",
+     "size": 44464,
+     "mtime": "2026-10-06T00:25:55.184Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineCall/1.0.0.913/libGLESv2.dll",
+     "size": 5820848,
+     "mtime": "2026-10-06T00:25:55.204Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineCall/1.0.0.913/libcrypto-1_1-x64.dll",
+     "size": 2265520,
+     "mtime": "2026-10-06T00:25:55.183Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineCall/1.0.0.913/libssl-1_1-x64.dll",
+     "size": 647088,
+     "mtime": "2026-10-06T00:25:55.206Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineCall/1.0.0.913/msvcp140.dll",
+     "size": 575568,
+     "mtime": "2026-10-06T00:25:55.260Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineCall/1.0.0.913/msvcp140_1.dll",
+     "size": 35920,
+     "mtime": "2026-10-06T00:25:55.260Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineCall/1.0.0.913/msvcp140_2.dll",
+     "size": 267888,
+     "mtime": "2026-10-06T00:25:55.262Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineCall/1.0.0.913/platforms/qwindows.dll",
+     "size": 896432,
+     "mtime": "2026-10-06T00:25:55.538Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineCall/1.0.0.913/plugins/effectsplugin.dll",
+     "size": 43440,
+     "mtime": "2026-10-06T00:25:55.539Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineCall/1.0.0.913/plugins/modelsplugin.dll",
+     "size": 43440,
+     "mtime": "2026-10-06T00:25:55.539Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineCall/1.0.0.913/plugins/particlesplugin.dll",
+     "size": 43440,
+     "mtime": "2026-10-06T00:25:55.541Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineCall/1.0.0.913/plugins/qmlfolderlistmodelplugin.dll",
+     "size": 43440,
+     "mtime": "2026-10-06T00:25:55.541Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineCall/1.0.0.913/plugins/qmllocalstorageplugin.dll",
+     "size": 43440,
+     "mtime": "2026-10-06T00:25:55.542Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineCall/1.0.0.913/plugins/qmlmetaplugin.dll",
+     "size": 43952,
+     "mtime": "2026-10-06T00:25:55.542Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineCall/1.0.0.913/plugins/qmlplugin.dll",
+     "size": 42928,
+     "mtime": "2026-10-06T00:25:55.542Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineCall/1.0.0.913/plugins/qmlshapesplugin.dll",
+     "size": 43440,
+     "mtime": "2026-10-06T00:25:55.543Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineCall/1.0.0.913/plugins/qmlxmllistmodelplugin.dll",
+     "size": 43440,
+     "mtime": "2026-10-06T00:25:55.543Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineCall/1.0.0.913/plugins/qquicklayoutsplugin.dll",
+     "size": 43440,
+     "mtime": "2026-10-06T00:25:55.543Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineCall/1.0.0.913/plugins/qtgraphicaleffectsplugin.dll",
+     "size": 576432,
+     "mtime": "2026-10-06T00:25:55.546Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineCall/1.0.0.913/plugins/qtgraphicaleffectsprivateplugin.dll",
+     "size": 324016,
+     "mtime": "2026-10-06T00:25:55.547Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineCall/1.0.0.913/plugins/qtqmlstatemachineplugin.dll",
+     "size": 43440,
+     "mtime": "2026-10-06T00:25:55.547Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineCall/1.0.0.913/plugins/qtquick2plugin.dll",
+     "size": 43440,
+     "mtime": "2026-10-06T00:25:55.547Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineCall/1.0.0.913/plugins/qtquickcontrols2basicstyleimplplugin.dll",
+     "size": 43440,
+     "mtime": "2026-10-06T00:25:55.548Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineCall/1.0.0.913/plugins/qtquickcontrols2basicstyleplugin.dll",
+     "size": 43952,
+     "mtime": "2026-10-06T00:25:55.548Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineCall/1.0.0.913/plugins/qtquickcontrols2fusionstyleimplplugin.dll",
+     "size": 43440,
+     "mtime": "2026-10-06T00:25:55.548Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineCall/1.0.0.913/plugins/qtquickcontrols2fusionstyleplugin.dll",
+     "size": 43952,
+     "mtime": "2026-10-06T00:25:55.548Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineCall/1.0.0.913/plugins/qtquickcontrols2imaginestyleimplplugin.dll",
+     "size": 43440,
+     "mtime": "2026-10-06T00:25:55.549Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineCall/1.0.0.913/plugins/qtquickcontrols2imaginestyleplugin.dll",
+     "size": 43952,
+     "mtime": "2026-10-06T00:25:55.549Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineCall/1.0.0.913/plugins/qtquickcontrols2implplugin.dll",
+     "size": 43440,
+     "mtime": "2026-10-06T00:25:55.549Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineCall/1.0.0.913/plugins/qtquickcontrols2materialstyleimplplugin.dll",
+     "size": 43440,
+     "mtime": "2026-10-06T00:25:55.550Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineCall/1.0.0.913/plugins/qtquickcontrols2materialstyleplugin.dll",
+     "size": 43952,
+     "mtime": "2026-10-06T00:25:55.550Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineCall/1.0.0.913/plugins/qtquickcontrols2nativestyleplugin.dll",
+     "size": 686512,
+     "mtime": "2026-10-06T00:25:55.552Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineCall/1.0.0.913/plugins/qtquickcontrols2plugin.dll",
+     "size": 53168,
+     "mtime": "2026-10-06T00:25:55.552Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineCall/1.0.0.913/plugins/qtquickcontrols2universalstyleimplplugin.dll",
+     "size": 43440,
+     "mtime": "2026-10-06T00:25:55.552Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineCall/1.0.0.913/plugins/qtquickcontrols2universalstyleplugin.dll",
+     "size": 43952,
+     "mtime": "2026-10-06T00:25:55.554Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineCall/1.0.0.913/plugins/qtquickcontrols2windowsstyleplugin.dll",
+     "size": 238512,
+     "mtime": "2026-10-06T00:25:55.555Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineCall/1.0.0.913/plugins/qtquickdialogs2quickimplplugin.dll",
+     "size": 43440,
+     "mtime": "2026-10-06T00:25:55.555Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineCall/1.0.0.913/plugins/qtquickdialogsplugin.dll",
+     "size": 43440,
+     "mtime": "2026-10-06T00:25:55.555Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineCall/1.0.0.913/plugins/qtquicktemplates2plugin.dll",
+     "size": 43952,
+     "mtime": "2026-10-06T00:25:55.556Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineCall/1.0.0.913/plugins/qtquicktimelineplugin.dll",
+     "size": 43440,
+     "mtime": "2026-10-06T00:25:55.556Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineCall/1.0.0.913/plugins/qtvkbbuiltinstylesplugin.dll",
+     "size": 382896,
+     "mtime": "2026-10-06T00:25:55.557Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineCall/1.0.0.913/plugins/qtvkbcomponentsplugin.dll",
+     "size": 569776,
+     "mtime": "2026-10-06T00:25:55.558Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineCall/1.0.0.913/plugins/qtvkbhangulplugin.dll",
+     "size": 70064,
+     "mtime": "2026-10-06T00:25:55.559Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineCall/1.0.0.913/plugins/qtvkblayoutsplugin.dll",
+     "size": 96176,
+     "mtime": "2026-10-06T00:25:55.559Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineCall/1.0.0.913/plugins/qtvkbopenwnnplugin.dll",
+     "size": 1579440,
+     "mtime": "2026-10-06T00:25:55.567Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineCall/1.0.0.913/plugins/qtvkbpinyinplugin.dll",
+     "size": 1204656,
+     "mtime": "2026-10-06T00:25:55.571Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineCall/1.0.0.913/plugins/qtvkbplugin.dll",
+     "size": 43440,
+     "mtime": "2026-10-06T00:25:55.571Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineCall/1.0.0.913/plugins/qtvkbpluginsplugin.dll",
+     "size": 44464,
+     "mtime": "2026-10-06T00:25:55.572Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineCall/1.0.0.913/plugins/qtvkbsettingsplugin.dll",
+     "size": 43440,
+     "mtime": "2026-10-06T00:25:55.572Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineCall/1.0.0.913/plugins/qtvkbstylesplugin.dll",
+     "size": 133040,
+     "mtime": "2026-10-06T00:25:55.572Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineCall/1.0.0.913/plugins/qtvkbtcimeplugin.dll",
+     "size": 324016,
+     "mtime": "2026-10-06T00:25:55.575Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineCall/1.0.0.913/plugins/qtvkbthaiplugin.dll",
+     "size": 55728,
+     "mtime": "2026-10-06T00:25:55.577Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineCall/1.0.0.913/plugins/quicktoolingplugin.dll",
+     "size": 73648,
+     "mtime": "2026-10-06T00:25:55.578Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineCall/1.0.0.913/plugins/quickwindowplugin.dll",
+     "size": 43952,
+     "mtime": "2026-10-06T00:25:55.578Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineCall/1.0.0.913/plugins/workerscriptplugin.dll",
+     "size": 43440,
+     "mtime": "2026-10-06T00:25:55.579Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineCall/1.0.0.913/resource/default.dat",
+     "size": 22308029,
+     "mtime": "2026-10-06T00:25:55.646Z",
+     "head16Hex": "71726573000000030153009d00000018",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineCall/1.0.0.913/skottie.dll",
+     "size": 5168048,
+     "mtime": "2026-10-06T00:25:55.493Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineCall/1.0.0.913/steplog.log",
+     "size": 197,
+     "mtime": "2026-10-06T00:25:57.128Z",
+     "head16Hex": "2d696e69740d0a2d696e697420646f6e",
+     "kind": "LevelDb",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineCall/1.0.0.913/ucrtbase.dll",
+     "size": 1046080,
+     "mtime": "2026-10-06T00:25:55.496Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineCall/1.0.0.913/vcruntime140.dll",
+     "size": 120400,
+     "mtime": "2026-10-06T00:25:55.498Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineCall/1.0.0.913/vcruntime140_1.dll",
+     "size": 49776,
+     "mtime": "2026-10-06T00:25:55.498Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/.sentry-native/07c5db48-d28d-47c8-f902-e9b42e0b76bc.run.lock",
+     "size": 0,
+     "mtime": "2026-10-06T00:25:49.566Z",
+     "head16Hex": "",
+     "kind": "Empty",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/.sentry-native/07c5db48-d28d-47c8-f902-e9b42e0b76bc.run/session.json",
+     "size": 219,
+     "mtime": "2026-10-06T00:25:49.566Z",
+     "head16Hex": null,
+     "kind": "Json",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": "head16Hex removed from the committed copy (text content)"
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/.sentry-native/3b0c277d-26ef-458a-42e1-08763e8f140c.run.lock",
+     "size": 0,
+     "mtime": "2026-10-06T00:25:49.566Z",
+     "head16Hex": "",
+     "kind": "Empty",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/.sentry-native/3b0c277d-26ef-458a-42e1-08763e8f140c.run/session.json",
+     "size": 219,
+     "mtime": "2026-10-06T00:25:49.494Z",
+     "head16Hex": null,
+     "kind": "Json",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": "head16Hex removed from the committed copy (text content)"
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/D3DCompiler_47.dll",
+     "size": 4517376,
+     "mtime": "2026-10-06T00:25:48.015Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/LineMediaPlayer.exe",
+     "size": 9719744,
+     "mtime": "2026-10-06T00:25:48.055Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/OpenAL32.dll",
+     "size": 1281968,
+     "mtime": "2026-10-06T00:25:48.065Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/Qt6Core.dll",
+     "size": 6213040,
+     "mtime": "2026-10-06T00:25:48.141Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/Qt6Core5Compat.dll",
+     "size": 883120,
+     "mtime": "2026-10-06T00:25:48.145Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/Qt6Gui.dll",
+     "size": 8548784,
+     "mtime": "2026-10-06T00:25:48.177Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/Qt6Multimedia.dll",
+     "size": 876976,
+     "mtime": "2026-10-06T00:25:48.182Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/Qt6MultimediaWidgets.dll",
+     "size": 73648,
+     "mtime": "2026-10-06T00:25:48.182Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/Qt6Network.dll",
+     "size": 1506224,
+     "mtime": "2026-10-06T00:25:48.187Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/Qt6OpenGL.dll",
+     "size": 1989552,
+     "mtime": "2026-10-06T00:25:48.192Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/Qt6OpenGLWidgets.dll",
+     "size": 76720,
+     "mtime": "2026-10-06T00:25:48.193Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/Qt6Qml.dll",
+     "size": 5041584,
+     "mtime": "2026-10-06T00:25:48.212Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/Qt6QmlModels.dll",
+     "size": 733104,
+     "mtime": "2026-10-06T00:25:48.214Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/Qt6QmlWorkerScript.dll",
+     "size": 87984,
+     "mtime": "2026-10-06T00:25:48.215Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/Qt6Quick.dll",
+     "size": 5494704,
+     "mtime": "2026-10-06T00:25:48.234Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/Qt6QuickControls2.dll",
+     "size": 101808,
+     "mtime": "2026-10-06T00:25:48.234Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/Qt6QuickControls2Basic.dll",
+     "size": 1084336,
+     "mtime": "2026-10-06T00:25:48.239Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/Qt6QuickControls2BasicStyleImpl.dll",
+     "size": 77232,
+     "mtime": "2026-10-06T00:25:48.239Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/Qt6QuickControls2Fusion.dll",
+     "size": 991664,
+     "mtime": "2026-10-06T00:25:48.242Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/Qt6QuickControls2FusionStyleImpl.dll",
+     "size": 170416,
+     "mtime": "2026-10-06T00:25:48.242Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/Qt6QuickControls2Impl.dll",
+     "size": 309168,
+     "mtime": "2026-10-06T00:25:48.243Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/Qt6QuickDialogs2.dll",
+     "size": 172976,
+     "mtime": "2026-10-06T00:25:48.244Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/Qt6QuickDialogs2QuickImpl.dll",
+     "size": 1734576,
+     "mtime": "2026-10-06T00:25:48.249Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/Qt6QuickDialogs2Utils.dll",
+     "size": 60848,
+     "mtime": "2026-10-06T00:25:48.250Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/Qt6QuickLayouts.dll",
+     "size": 232368,
+     "mtime": "2026-10-06T00:25:48.251Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/Qt6QuickShapes.dll",
+     "size": 435120,
+     "mtime": "2026-10-06T00:25:48.252Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/Qt6QuickTemplates2.dll",
+     "size": 1823152,
+     "mtime": "2026-10-06T00:25:48.259Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/Qt6QuickWidgets.dll",
+     "size": 129456,
+     "mtime": "2026-10-06T00:25:48.260Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/Qt6ShaderTools.dll",
+     "size": 3710384,
+     "mtime": "2026-10-06T00:25:48.272Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/Qt6StateMachine.dll",
+     "size": 355248,
+     "mtime": "2026-10-06T00:25:48.273Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/Qt6Svg.dll",
+     "size": 391088,
+     "mtime": "2026-10-06T00:25:48.275Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/Qt6TextToSpeech.dll",
+     "size": 144304,
+     "mtime": "2026-10-06T00:25:48.277Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/Qt6Widgets.dll",
+     "size": 6380976,
+     "mtime": "2026-10-06T00:25:48.299Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/Qt6Xml.dll",
+     "size": 165296,
+     "mtime": "2026-10-06T00:25:48.300Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/StepLog",
+     "size": 131,
+     "mtime": "2026-10-06T00:25:49.643Z",
+     "head16Hex": null,
+     "kind": "Text",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": "head16Hex removed from the committed copy (text content)"
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/api-ms-win-core-file-l1-2-0.dll",
+     "size": 18696,
+     "mtime": "2026-10-06T00:25:47.929Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/api-ms-win-core-file-l2-1-0.dll",
+     "size": 18696,
+     "mtime": "2026-10-06T00:25:47.929Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/api-ms-win-core-localization-l1-2-0.dll",
+     "size": 21256,
+     "mtime": "2026-10-06T00:25:47.929Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/api-ms-win-core-processthreads-l1-1-1.dll",
+     "size": 19208,
+     "mtime": "2026-10-06T00:25:47.929Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/api-ms-win-core-synch-l1-2-0.dll",
+     "size": 19208,
+     "mtime": "2026-10-06T00:25:47.930Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/api-ms-win-core-timezone-l1-1-0.dll",
+     "size": 19208,
+     "mtime": "2026-10-06T00:25:47.930Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/api-ms-win-crt-conio-l1-1-0.dll",
+     "size": 19720,
+     "mtime": "2026-10-06T00:25:47.930Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/api-ms-win-crt-convert-l1-1-0.dll",
+     "size": 22792,
+     "mtime": "2026-10-06T00:25:47.930Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/api-ms-win-crt-environment-l1-1-0.dll",
+     "size": 19208,
+     "mtime": "2026-10-06T00:25:47.930Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/api-ms-win-crt-filesystem-l1-1-0.dll",
+     "size": 20744,
+     "mtime": "2026-10-06T00:25:47.931Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/api-ms-win-crt-heap-l1-1-0.dll",
+     "size": 19720,
+     "mtime": "2026-10-06T00:25:47.931Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/api-ms-win-crt-locale-l1-1-0.dll",
+     "size": 19208,
+     "mtime": "2026-10-06T00:25:47.932Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/api-ms-win-crt-math-l1-1-0.dll",
+     "size": 27912,
+     "mtime": "2026-10-06T00:25:47.933Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/api-ms-win-crt-runtime-l1-1-0.dll",
+     "size": 23304,
+     "mtime": "2026-10-06T00:25:47.934Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/api-ms-win-crt-stdio-l1-1-0.dll",
+     "size": 24840,
+     "mtime": "2026-10-06T00:25:47.935Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/api-ms-win-crt-string-l1-1-0.dll",
+     "size": 24840,
+     "mtime": "2026-10-06T00:25:47.936Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/api-ms-win-crt-time-l1-1-0.dll",
+     "size": 21256,
+     "mtime": "2026-10-06T00:25:47.937Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/api-ms-win-crt-utility-l1-1-0.dll",
+     "size": 19208,
+     "mtime": "2026-10-06T00:25:47.937Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/avcodec-57.dll",
+     "size": 12509616,
+     "mtime": "2026-10-06T00:25:47.977Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/avfilter-6.dll",
+     "size": 2742704,
+     "mtime": "2026-10-06T00:25:47.986Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/avformat-57.dll",
+     "size": 2881968,
+     "mtime": "2026-10-06T00:25:47.996Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/avutil-55.dll",
+     "size": 604080,
+     "mtime": "2026-10-06T00:25:47.999Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/imageformats/qgif.dll",
+     "size": 60336,
+     "mtime": "2026-10-06T00:25:48.332Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/imageformats/qjpeg.dll",
+     "size": 583088,
+     "mtime": "2026-10-06T00:25:48.334Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/imageformats/qsvg.dll",
+     "size": 52144,
+     "mtime": "2026-10-06T00:25:48.334Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/imageformats/qwebp.dll",
+     "size": 561072,
+     "mtime": "2026-10-06T00:25:48.337Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/libcrypto-1_1-x64.dll",
+     "size": 2241024,
+     "mtime": "2026-10-06T00:25:48.024Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/msvcp140.dll",
+     "size": 575568,
+     "mtime": "2026-10-06T00:25:48.058Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/msvcp140_1.dll",
+     "size": 35920,
+     "mtime": "2026-10-06T00:25:48.058Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/msvcp140_2.dll",
+     "size": 267888,
+     "mtime": "2026-10-06T00:25:48.059Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/opengl32sw.dll",
+     "size": 16020400,
+     "mtime": "2026-10-06T00:25:48.118Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/opensource_notice.txt",
+     "size": 58734,
+     "mtime": "2026-10-06T00:25:48.118Z",
+     "head16Hex": null,
+     "kind": "Text",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": "head16Hex removed from the committed copy (text content)"
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/platforms/qwindows.dll",
+     "size": 896432,
+     "mtime": "2026-10-06T00:25:48.340Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/plugins/QtQml/WorkerScript/qmldir",
+     "size": 260,
+     "mtime": "2026-10-06T00:25:48.379Z",
+     "head16Hex": null,
+     "kind": "Text",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": "head16Hex removed from the committed copy (text content)"
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/plugins/QtQuick/Controls/Basic/qmldir",
+     "size": 4048,
+     "mtime": "2026-10-06T00:25:48.382Z",
+     "head16Hex": null,
+     "kind": "Text",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": "head16Hex removed from the committed copy (text content)"
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/plugins/QtQuick/Controls/Fusion/qmldir",
+     "size": 3440,
+     "mtime": "2026-10-06T00:25:48.383Z",
+     "head16Hex": null,
+     "kind": "Text",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": "head16Hex removed from the committed copy (text content)"
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/plugins/QtQuick/Controls/Windows/qmldir",
+     "size": 1193,
+     "mtime": "2026-10-06T00:25:48.383Z",
+     "head16Hex": null,
+     "kind": "Text",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": "head16Hex removed from the committed copy (text content)"
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/plugins/QtQuick/Controls/impl/qmldir",
+     "size": 295,
+     "mtime": "2026-10-06T00:25:48.383Z",
+     "head16Hex": null,
+     "kind": "Text",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": "head16Hex removed from the committed copy (text content)"
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/plugins/QtQuick/Controls/qmldir",
+     "size": 598,
+     "mtime": "2026-10-06T00:25:48.382Z",
+     "head16Hex": null,
+     "kind": "Text",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": "head16Hex removed from the committed copy (text content)"
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/plugins/effectsplugin.dll",
+     "size": 43440,
+     "mtime": "2026-10-06T00:25:48.341Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/plugins/labsmodelsplugin.dll",
+     "size": 43440,
+     "mtime": "2026-10-06T00:25:48.342Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/plugins/modelsplugin.dll",
+     "size": 43440,
+     "mtime": "2026-10-06T00:25:48.342Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/plugins/particlesplugin.dll",
+     "size": 43440,
+     "mtime": "2026-10-06T00:25:48.342Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/plugins/qmlfolderlistmodelplugin.dll",
+     "size": 43440,
+     "mtime": "2026-10-06T00:25:48.344Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/plugins/qmllocalstorageplugin.dll",
+     "size": 43440,
+     "mtime": "2026-10-06T00:25:48.344Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/plugins/qmlmetaplugin.dll",
+     "size": 43952,
+     "mtime": "2026-10-06T00:25:48.344Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/plugins/qmlplugin.dll",
+     "size": 42928,
+     "mtime": "2026-10-06T00:25:48.344Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/plugins/qmlshapesplugin.dll",
+     "size": 43440,
+     "mtime": "2026-10-06T00:25:48.345Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/plugins/qmlxmllistmodelplugin.dll",
+     "size": 43440,
+     "mtime": "2026-10-06T00:25:48.345Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/plugins/qquicklayoutsplugin.dll",
+     "size": 43440,
+     "mtime": "2026-10-06T00:25:48.345Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/plugins/qtgraphicaleffectsplugin.dll",
+     "size": 576432,
+     "mtime": "2026-10-06T00:25:48.347Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/plugins/qtgraphicaleffectsprivateplugin.dll",
+     "size": 324016,
+     "mtime": "2026-10-06T00:25:48.348Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/plugins/qtlabsplatformplugin.dll",
+     "size": 314288,
+     "mtime": "2026-10-06T00:25:48.349Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/plugins/qtqmlstatemachineplugin.dll",
+     "size": 43440,
+     "mtime": "2026-10-06T00:25:48.349Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/plugins/qtquick2plugin.dll",
+     "size": 43440,
+     "mtime": "2026-10-06T00:25:48.349Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/plugins/qtquickcontrols2basicstyleimplplugin.dll",
+     "size": 43440,
+     "mtime": "2026-10-06T00:25:48.350Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/plugins/qtquickcontrols2basicstyleplugin.dll",
+     "size": 43952,
+     "mtime": "2026-10-06T00:25:48.350Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/plugins/qtquickcontrols2fusionstyleimplplugin.dll",
+     "size": 43440,
+     "mtime": "2026-10-06T00:25:48.350Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/plugins/qtquickcontrols2fusionstyleplugin.dll",
+     "size": 43952,
+     "mtime": "2026-10-06T00:25:48.351Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/plugins/qtquickcontrols2imaginestyleimplplugin.dll",
+     "size": 43440,
+     "mtime": "2026-10-06T00:25:48.351Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/plugins/qtquickcontrols2imaginestyleplugin.dll",
+     "size": 43952,
+     "mtime": "2026-10-06T00:25:48.351Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/plugins/qtquickcontrols2implplugin.dll",
+     "size": 43440,
+     "mtime": "2026-10-06T00:25:48.351Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/plugins/qtquickcontrols2materialstyleimplplugin.dll",
+     "size": 43440,
+     "mtime": "2026-10-06T00:25:48.353Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/plugins/qtquickcontrols2materialstyleplugin.dll",
+     "size": 43952,
+     "mtime": "2026-10-06T00:25:48.353Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/plugins/qtquickcontrols2nativestyleplugin.dll",
+     "size": 686512,
+     "mtime": "2026-10-06T00:25:48.355Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/plugins/qtquickcontrols2plugin.dll",
+     "size": 53168,
+     "mtime": "2026-10-06T00:25:48.356Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/plugins/qtquickcontrols2universalstyleimplplugin.dll",
+     "size": 43440,
+     "mtime": "2026-10-06T00:25:48.356Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/plugins/qtquickcontrols2universalstyleplugin.dll",
+     "size": 43952,
+     "mtime": "2026-10-06T00:25:48.356Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/plugins/qtquickcontrols2windowsstyleplugin.dll",
+     "size": 238512,
+     "mtime": "2026-10-06T00:25:48.357Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/plugins/qtquickdialogs2quickimplplugin.dll",
+     "size": 43440,
+     "mtime": "2026-10-06T00:25:48.358Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/plugins/qtquickdialogsplugin.dll",
+     "size": 43440,
+     "mtime": "2026-10-06T00:25:48.358Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/plugins/qtquicktemplates2plugin.dll",
+     "size": 43952,
+     "mtime": "2026-10-06T00:25:48.358Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/plugins/qtquicktimelineplugin.dll",
+     "size": 43440,
+     "mtime": "2026-10-06T00:25:48.358Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/plugins/qtvkbbuiltinstylesplugin.dll",
+     "size": 382896,
+     "mtime": "2026-10-06T00:25:48.359Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/plugins/qtvkbcomponentsplugin.dll",
+     "size": 569776,
+     "mtime": "2026-10-06T00:25:48.361Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/plugins/qtvkbhangulplugin.dll",
+     "size": 70064,
+     "mtime": "2026-10-06T00:25:48.361Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/plugins/qtvkblayoutsplugin.dll",
+     "size": 96176,
+     "mtime": "2026-10-06T00:25:48.362Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/plugins/qtvkbopenwnnplugin.dll",
+     "size": 1579440,
+     "mtime": "2026-10-06T00:25:48.369Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/plugins/qtvkbpinyinplugin.dll",
+     "size": 1204656,
+     "mtime": "2026-10-06T00:25:48.374Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/plugins/qtvkbplugin.dll",
+     "size": 43440,
+     "mtime": "2026-10-06T00:25:48.374Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/plugins/qtvkbpluginsplugin.dll",
+     "size": 44464,
+     "mtime": "2026-10-06T00:25:48.375Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/plugins/qtvkbsettingsplugin.dll",
+     "size": 43440,
+     "mtime": "2026-10-06T00:25:48.375Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/plugins/qtvkbstylesplugin.dll",
+     "size": 133040,
+     "mtime": "2026-10-06T00:25:48.376Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/plugins/qtvkbtcimeplugin.dll",
+     "size": 324016,
+     "mtime": "2026-10-06T00:25:48.377Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/plugins/qtvkbthaiplugin.dll",
+     "size": 55728,
+     "mtime": "2026-10-06T00:25:48.377Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/plugins/quickmultimediaplugin.dll",
+     "size": 44976,
+     "mtime": "2026-10-06T00:25:48.378Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/plugins/quicktoolingplugin.dll",
+     "size": 73648,
+     "mtime": "2026-10-06T00:25:48.378Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/plugins/quickwindowplugin.dll",
+     "size": 43952,
+     "mtime": "2026-10-06T00:25:48.378Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/plugins/workerscriptplugin.dll",
+     "size": 43440,
+     "mtime": "2026-10-06T00:25:48.379Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/skottie.dll",
+     "size": 5168048,
+     "mtime": "2026-10-06T00:25:48.321Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/swresample-2.dll",
+     "size": 172464,
+     "mtime": "2026-10-06T00:25:48.321Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/swscale-4.dll",
+     "size": 655280,
+     "mtime": "2026-10-06T00:25:48.327Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/ucrtbase.dll",
+     "size": 1046080,
+     "mtime": "2026-10-06T00:25:48.331Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/vcruntime140.dll",
+     "size": 120400,
+     "mtime": "2026-10-06T00:25:48.331Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/vcruntime140_1.dll",
+     "size": 49776,
+     "mtime": "2026-10-06T00:25:48.332Z",
+     "head16Hex": "4d5a90000300000004000000ffff0000",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "plugin/LineMediaPlayer/setting.ini",
+     "size": 158,
+     "mtime": "2026-10-06T00:25:49.942Z",
+     "head16Hex": null,
+     "kind": "Json",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": "head16Hex removed from the committed copy (text content)"
+    },
+    {
+     "relativePath": "plugin/plugin.bin",
+     "size": 13696,
+     "mtime": "2026-10-06T00:25:55.856Z",
+     "head16Hex": "9a9ed3dc946d1b6d2626115aa449e53e",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "qci_3.bin",
+     "size": 3636,
+     "mtime": "2026-10-06T04:44:54.080Z",
+     "head16Hex": "02a967ee88247030c8aff93733fdaaa5",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "setting.ini",
+     "size": 93,
+     "mtime": "2026-10-06T00:24:26.584Z",
+     "head16Hex": null,
+     "kind": "Json",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": "head16Hex removed from the committed copy (text content)"
+    },
+    {
+     "relativePath": "utsinfo/common.dat",
+     "size": 64,
+     "mtime": "2026-10-06T00:24:26.516Z",
+     "head16Hex": "37ebcd3c1ea10272e279b8ee3b848cb8",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    }
+   ]
+  }
+ ],
+ "summary": {
+  "totalFiles": 258,
+  "databases": 6,
+  "readable": 1
+ }
+}
