@@ -88,11 +88,16 @@ internal static class NativeMethods
     [DllImport("user32.dll")]
     public static extern IntPtr GetForegroundWindow();
 
+    public const uint WM_GETTEXT = 0x000D;
+    public const uint WM_GETTEXTLENGTH = 0x000E;
+    public const uint SMTO_ABORTIFHUNG = 0x0002;
+
+    // GetWindowTextW is not used: it sends WM_GETTEXT with no timeout (see ForegroundTitleReader).
     [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
-    public static extern int GetWindowTextLengthW(IntPtr hWnd);
+    public static extern IntPtr SendMessageTimeoutW(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam, uint flags, uint timeoutMs, out IntPtr result);
 
     [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
-    public static extern int GetWindowTextW(IntPtr hWnd, [Out] char[] lpString, int nMaxCount);
+    public static extern IntPtr SendMessageTimeoutW(IntPtr hWnd, uint msg, IntPtr wParam, [Out] char[] lParam, uint flags, uint timeoutMs, out IntPtr result);
 
     [DllImport("user32.dll", SetLastError = true)]
     public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);

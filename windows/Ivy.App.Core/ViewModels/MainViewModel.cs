@@ -1,22 +1,33 @@
 using System.Collections.Concurrent;
 using System.Collections.ObjectModel;
+using System.Diagnostics;
+using Ivy.App.Core.Diagnostics;
 using Ivy.App.Core.Hosting;
 using Ivy.Core.Storage;
 using Ivy.Core.Upload;
+using Microsoft.Extensions.Logging;
 
 namespace Ivy.App.Core.ViewModels;
 
 /// <summary>
 /// Root view model for the status window and the tray. The WinUI shell calls <see cref="StartAsync"/> once,
 /// then <see cref="RefreshAsync"/> once a second; agent events are marshalled through <see cref="IUiDispatcher"/>.
+/// Side effects that write (uploader pause, collector host start/pause/toggle) run on the thread pool through
+/// <see cref="BackgroundWork"/>; only their resulting state is set on the UI thread.
 /// </summary>
 public sealed class MainViewModel : ObservableObject
 {
     public const int FeedSeedCount = ActivityFeed.DefaultCapacity;
+    /// <summary>UI-thread work longer than this is logged (Apply, FlushFeed).</summary>
+    public static readonly TimeSpan SlowUi = TimeSpan.FromMilliseconds(50);
+    /// <summary>Each part of the worker-side refresh longer than this is logged.</summary>
+    public static readonly TimeSpan SlowGather = TimeSpan.FromMilliseconds(250);
     private readonly IAgentView _agent;
     private readonly ICollectorHostView _host;
     private readonly IUiDispatcher _ui;
     private readonly TimeProvider _time;
+    private readonly ILogger? _log;
+    private readonly BackgroundWork _work = new();
     private readonly ConcurrentQueue<FeedEntry> _incoming = new();
     private int _flushScheduled;
     private UploadProgress? _latestProgress;
@@ -41,9 +52,11 @@ public sealed class MainViewModel : ObservableObject
     private string _hostError = "";
 
     public MainViewModel(IAgentView agent, ICollectorHostView host, IUiDispatcher ui, IStartupRegistration startup,
-        Func<Task<string?>> pickFolder, string exePath, string appVersion, TimeProvider? time = null, Action<string>? openFile = null)
+        Func<Task<string?>> pickFolder, string exePath, string appVersion, TimeProvider? time = null, Action<string>? openFile = null,
+        ILogger? log = null)
     {
         _agent = agent;
+        _log = log;
         _host = host;
         _ui = ui;
         _time = time ?? TimeProvider.System;
@@ -108,6 +121,12 @@ public sealed class MainViewModel : ObservableObject
     /// <summary>Errors from the collector host or the snapshot query; empty when fine.</summary>
     public string HostErrorText { get => _hostError; private set => Set(ref _hostError, value); }
 
+    /// <summary>
+    /// Completes when the most recent pause/resume or collector toggle has been applied off the UI thread and its
+    /// result shown (tests and the shell can await it).
+    /// </summary>
+    public Task LastHostWork { get; private set; } = Task.CompletedTask;
+
     /// <summary>Tray label for the pause item.</summary>
     public string PauseMenuText => _isRunning ? "Pause" : "Resume";
 
@@ -156,8 +175,13 @@ public sealed class MainViewModel : ObservableObject
                 HostErrorText = "Status refresh failed: " + e.Message;
                 return;
             }
-            Apply(snap, infos, import);
-            HostErrorText = error;
+            using (UiBreadcrumb.Enter("Apply rows=" + infos.Count))
+            {
+                var t0 = Stopwatch.GetTimestamp();
+                Apply(snap, infos, import);
+                HostErrorText = error;
+                LogIfSlow("Apply rows=" + infos.Count, t0, SlowUi);
+            }
         }
         finally
         {
@@ -165,22 +189,35 @@ public sealed class MainViewModel : ObservableObject
         }
     }
 
+    /// <summary>Thread pool. Each part is timed separately so a slow refresh says which source was slow.</summary>
     private (AgentSnapshot, IReadOnlyList<CollectorInfo>, FileImportProgress?, string) Gather()
     {
+        var t0 = Stopwatch.GetTimestamp();
         var snap = _agent.Snapshot();
+        LogIfSlow("refresh Snapshot", t0, SlowGather);
         IReadOnlyList<CollectorInfo> infos = Array.Empty<CollectorInfo>();
         FileImportProgress? import = null;
         var error = "";
         try
         {
+            t0 = Stopwatch.GetTimestamp();
             infos = _host.Collectors();
+            LogIfSlow("refresh Statuses", t0, SlowGather);
+            t0 = Stopwatch.GetTimestamp();
             import = _host.FileImport;
+            LogIfSlow("refresh FileImport", t0, SlowGather);
         }
         catch (Exception e)
         {
             error = "Collector host: " + e.Message;
         }
         return (snap, infos, import, error);
+    }
+
+    private void LogIfSlow(string what, long startTimestamp, TimeSpan limit)
+    {
+        var took = Stopwatch.GetElapsedTime(startTimestamp);
+        if (took > limit) _log?.LogWarning("{Line}", HangReport.Slow(what, took));
     }
 
     private void Apply(AgentSnapshot snap, IReadOnlyList<CollectorInfo> infos, FileImportProgress? import)
@@ -253,26 +290,56 @@ public sealed class MainViewModel : ObservableObject
     private void EnqueueFeed(FeedEntry entry)
     {
         _incoming.Enqueue(entry);
-        if (Interlocked.Exchange(ref _flushScheduled, 1) == 0) _ui.Post(FlushFeed);
+        if (Interlocked.Exchange(ref _flushScheduled, 1) != 0) return;
+        if (_ui.Post(FlushFeed)) return;
+        // The dispatcher refused the post, so FlushFeed will never run: without this the flag stays set and the
+        // feed silently stops. The entries stay queued and the next event schedules a new flush.
+        Volatile.Write(ref _flushScheduled, 0);
+        _log?.LogWarning("feed flush was not accepted by the UI dispatcher; {Pending} entries wait for the next event", _incoming.Count);
     }
+
+    /// <summary>True while a feed flush is posted and not yet run (tests).</summary>
+    internal bool FlushScheduled => Volatile.Read(ref _flushScheduled) != 0;
 
     private void FlushFeed()
     {
         Volatile.Write(ref _flushScheduled, 0); // anything arriving during the drain schedules a new flush
         var batch = new List<FeedEntry>();
         while (_incoming.TryDequeue(out var e)) batch.Add(e);
-        if (batch.Count > 0) Feed.AddRange(batch);
+        if (batch.Count == 0) return;
+        var what = "FlushFeed batch=" + batch.Count;
+        using var crumb = UiBreadcrumb.Enter(what);
+        var t0 = Stopwatch.GetTimestamp();
+        Feed.AddRange(batch);
+        LogIfSlow(what, t0, SlowUi);
     }
 
     public void TogglePause() => IsRunning = !_isRunning;
 
+    /// <summary>
+    /// UI thread: flip the state the window shows now; the uploader flag (SQLite write + activity append) and the
+    /// collector host pause/resume (per-collector settings writes) run on the thread pool, in order.
+    /// </summary>
     private void ApplyRunning(bool running)
     {
+        using var crumb = UiBreadcrumb.Enter(running ? "ApplyRunning resume" : "ApplyRunning pause");
         _isRunning = running;
-        try { _agent.UploadsPaused = !running; }
-        catch (Exception e) { HostErrorText = "Uploader: " + e.Message; }
-        _ = RunHostAsync(running ? _host.ResumeAsync : _host.PauseAsync);
         UpdateRunState();
+        LastHostWork = ApplyRunningAsync(running);
+    }
+
+    private async Task ApplyRunningAsync(bool running)
+    {
+        var error = await _work.Run<string?>(async () =>
+        {
+            string? err = null;
+            try { _agent.UploadsPaused = !running; }
+            catch (Exception e) { err = "Uploader: " + e.Message; }
+            try { await (running ? _host.ResumeAsync() : _host.PauseAsync()).ConfigureAwait(false); }
+            catch (Exception e) { err = "Collector host: " + e.Message; }
+            return err;
+        });
+        if (error is not null) HostErrorText = error;
     }
 
     private void UpdateRunState()
@@ -298,18 +365,22 @@ public sealed class MainViewModel : ObservableObject
         await RefreshAsync();
     }
 
-    private void SetCollectorEnabled(string name, bool enabled) => _ = RunHostAsync(() => _host.SetEnabledAsync(name, enabled));
+    private void SetCollectorEnabled(string name, bool enabled)
+    {
+        using var crumb = UiBreadcrumb.Enter("SetCollectorEnabled");
+        LastHostWork = RunHostAsync(() => _host.SetEnabledAsync(name, enabled));
+    }
 
-    /// <summary>Run a host operation; failures become the header's error line instead of exceptions.</summary>
+    /// <summary>Run a host operation on the thread pool; failures become the header's error line instead of exceptions.</summary>
     private async Task RunHostAsync(Func<Task> op)
     {
-        try { await op(); }
+        try { await _work.Run(op); }
         catch (Exception e) { HostErrorText = "Collector host: " + e.Message; }
     }
 
     private async Task StartHostAsync()
     {
-        try { await _host.StartAsync(); }
+        try { await _work.Run(() => _host.StartAsync()); }
         catch (Exception e) { HostErrorText = "Collector host failed to start: " + e.Message; }
     }
 
@@ -333,6 +404,7 @@ public sealed class MainViewModel : ObservableObject
     /// <summary>Stop the collector host (the app disposes the agent afterwards).</summary>
     public async Task ShutdownAsync()
     {
+        await _work.Idle().ConfigureAwait(false);
         try { await _host.DisposeAsync(); }
         catch (Exception e) { HostErrorText = "Collector host stop: " + e.Message; }
     }

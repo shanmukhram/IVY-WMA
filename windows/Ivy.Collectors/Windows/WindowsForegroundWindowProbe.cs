@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using Ivy.Collectors.Abstractions;
+using Ivy.Collectors.Usage;
 using static Ivy.Collectors.Windows.NativeMethods;
 
 namespace Ivy.Collectors.Windows;
@@ -11,20 +12,22 @@ namespace Ivy.Collectors.Windows;
 /// GetForegroundWindow → GetWindowThreadProcessId → OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION) →
 /// QueryFullProcessImageName; friendly name from the exe's FileDescription (cached). UWP apps run inside
 /// ApplicationFrameHost.exe, so for those the first child window owned by another process is used.
-/// Idle time from GetLastInputInfo. NOT VERIFIED ON macOS: compiled for the Windows target only.
+/// Idle time from GetLastInputInfo. The title goes through <see cref="ForegroundTitleReader"/>: never a
+/// blocking WM_GETTEXT, and never to IVY's own windows. NOT VERIFIED ON macOS: compiled for the Windows target only.
 /// </summary>
 [SupportedOSPlatform("windows")]
 public sealed class WindowsForegroundWindowProbe : IForegroundWindowProbe
 {
     private readonly Dictionary<string, string> _friendly = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ForegroundTitleReader _titles = new(new TimeoutWindowTextSource());
 
     public ForegroundSample? Sample()
     {
         var hwnd = GetForegroundWindow();
         if (hwnd == IntPtr.Zero) return null;
-        var title = WindowTitle(hwnd);
         GetWindowThreadProcessId(hwnd, out var pid);
         if (pid == 0) return null;
+        var title = _titles.Title(hwnd, pid);
         var exePath = ImagePath(pid);
         if (exePath is not null && Path.GetFileName(exePath).Equals("ApplicationFrameHost.exe", StringComparison.OrdinalIgnoreCase))
         {
@@ -44,13 +47,22 @@ public sealed class WindowsForegroundWindowProbe : IForegroundWindowProbe
         return TimeSpan.FromMilliseconds(elapsed);
     }
 
-    private static string? WindowTitle(IntPtr hwnd)
+    /// <summary>WM_GETTEXTLENGTH then WM_GETTEXT, each through SendMessageTimeout(SMTO_ABORTIFHUNG).</summary>
+    private sealed class TimeoutWindowTextSource : IWindowTextSource
     {
-        var len = GetWindowTextLengthW(hwnd);
-        if (len <= 0) return null;
-        var buf = new char[len + 1];
-        var n = GetWindowTextW(hwnd, buf, buf.Length);
-        return n > 0 ? new string(buf, 0, n) : null;
+        private const int MaxChars = 4096;
+
+        public string? ReadTitle(IntPtr hwnd, TimeSpan timeout)
+        {
+            var ms = (uint)Math.Max(1, timeout.TotalMilliseconds);
+            if (SendMessageTimeoutW(hwnd, WM_GETTEXTLENGTH, IntPtr.Zero, IntPtr.Zero, SMTO_ABORTIFHUNG, ms, out var lenResult) == IntPtr.Zero) return null;
+            var len = (int)Math.Min(lenResult.ToInt64(), MaxChars);
+            if (len <= 0) return null;
+            var buf = new char[len + 1];
+            if (SendMessageTimeoutW(hwnd, WM_GETTEXT, (IntPtr)buf.Length, buf, SMTO_ABORTIFHUNG, ms, out var copied) == IntPtr.Zero) return null;
+            var n = (int)Math.Clamp(copied.ToInt64(), 0, len);
+            return n > 0 ? new string(buf, 0, n) : null;
+        }
     }
 
     private static string? ImagePath(uint pid)

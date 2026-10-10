@@ -6,12 +6,21 @@ namespace Ivy.App.Core;
 /// </summary>
 public interface IUiDispatcher
 {
-    void Post(Action action);
+    /// <summary>
+    /// Run <paramref name="action"/> on the UI thread. False when the dispatcher refused it
+    /// (DispatcherQueue.TryEnqueue returned false, e.g. while shutting down): the action will never run, so a
+    /// caller that set a "scheduled" flag must clear it.
+    /// </summary>
+    bool Post(Action action);
 }
 
 /// <summary>Runs the action inline. Used by tests and anywhere there is no UI thread.</summary>
 public sealed class ImmediateDispatcher : IUiDispatcher
 {
     public static readonly ImmediateDispatcher Instance = new();
-    public void Post(Action action) => action();
+    public bool Post(Action action)
+    {
+        action();
+        return true;
+    }
 }

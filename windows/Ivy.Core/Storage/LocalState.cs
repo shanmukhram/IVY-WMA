@@ -32,6 +32,7 @@ public sealed class CollectorStateStore
     /// <summary>Ensure a row exists (default enabled).</summary>
     public void Register(string name, bool enabled = true)
     {
+        using var guard = IvyUiThread.Write("CollectorStateStore.Register");
         using var c = _db.Open();
         using var cmd = c.CreateCommand();
         cmd.CommandText = "INSERT OR IGNORE INTO collector_state(name, enabled) VALUES ($n, $e)";
@@ -42,6 +43,7 @@ public sealed class CollectorStateStore
 
     public void SetEnabled(string name, bool enabled)
     {
+        using var guard = IvyUiThread.Write("CollectorStateStore.SetEnabled");
         using var c = _db.Open();
         using var cmd = c.CreateCommand();
         cmd.CommandText = "INSERT INTO collector_state(name, enabled) VALUES ($n, $e) ON CONFLICT(name) DO UPDATE SET enabled = excluded.enabled";
@@ -53,6 +55,7 @@ public sealed class CollectorStateStore
     /// <summary>Record a successful run and (optionally) advance the cursor.</summary>
     public void RecordRun(string name, DateTimeOffset at, string? cursor = null)
     {
+        using var guard = IvyUiThread.Write("CollectorStateStore.RecordRun");
         using var c = _db.Open();
         using var cmd = c.CreateCommand();
         cmd.CommandText = """
@@ -75,6 +78,7 @@ public sealed class CollectorStateStore
     /// <summary>Set (or clear, with null) the import progress reported for <paramref name="name"/>.</summary>
     public void SetImport(string name, ImportProgress? import)
     {
+        using var guard = IvyUiThread.Write("CollectorStateStore.SetImport");
         using var c = _db.Open();
         using var cmd = c.CreateCommand();
         cmd.CommandText = """

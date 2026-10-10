@@ -112,6 +112,7 @@ public sealed class UploadQueue
         if (lane is not (NormalLane or BulkLane)) throw new ArgumentOutOfRangeException(nameof(lane));
         var ids = new List<string>(files.Count);
         var now = IvyTime.Now(_time);
+        using (IvyUiThread.Write("UploadQueue.Enqueue"))
         using (var c = _db.Open())
         using (var tx = c.BeginTransaction())
         {

@@ -26,16 +26,42 @@ public sealed class TempDir : IDisposable
     }
 }
 
+/// <summary>Which thread ran each side effect (the off-UI-thread tests).</summary>
+public sealed class ThreadLog
+{
+    public ConcurrentQueue<(string Op, int Thread)> Calls { get; } = new();
+    public void Record(string op) => Calls.Enqueue((op, Environment.CurrentManagedThreadId));
+}
+
 public sealed class FakeAgent : IAgentView
 {
+    private bool _uploadsPaused;
+    private long _bandwidth;
+    public ThreadLog Threads { get; } = new();
     public bool IsPaired { get; set; }
     public string? DeviceFingerprint { get; set; }
     public string? MacFingerprint { get; set; }
     public Func<string, PairingResult>? OnPair { get; set; }
     public List<ActivityEntry> History { get; } = new();
     public AgentSnapshot NextSnapshot { get; set; } = new();
-    public bool UploadsPaused { get; set; }
-    public long BandwidthBytesPerSecond { get; set; }
+    public bool UploadsPaused
+    {
+        get => _uploadsPaused;
+        set
+        {
+            Threads.Record("agent.UploadsPaused");
+            _uploadsPaused = value;
+        }
+    }
+    public long BandwidthBytesPerSecond
+    {
+        get => _bandwidth;
+        set
+        {
+            Threads.Record("agent.BandwidthBytesPerSecond");
+            _bandwidth = value;
+        }
+    }
     public int SyncCalls { get; private set; }
     public Exception? SyncError { get; set; }
     public Dictionary<string, string> Settings { get; } = new();
@@ -64,7 +90,11 @@ public sealed class FakeAgent : IAgentView
     }
 
     public string? GetSetting(string key) => Settings.TryGetValue(key, out var v) ? v : null;
-    public void SetSetting(string key, string value) => Settings[key] = value;
+    public void SetSetting(string key, string value)
+    {
+        Threads.Record("agent.SetSetting");
+        Settings[key] = value;
+    }
 
     public void RaiseActivity(ActivityEntry e) => ActivityAppended?.Invoke(this, e);
     public void RaiseProgress(UploadProgress p) => UploadProgress?.Invoke(this, p);
@@ -80,22 +110,26 @@ public sealed class FakeHost : ICollectorHostView
     public FileImportProgress? FileImport { get; set; }
     public int Starts { get; private set; }
     public bool Disposed { get; private set; }
+    public ThreadLog Threads { get; } = new();
 
     public IReadOnlyList<CollectorInfo> Collectors() => Infos.ToList();
     public Task SetEnabledAsync(string name, bool enabled)
     {
+        Threads.Record("host.SetEnabledAsync");
         EnabledCalls.Add((name, enabled));
         return Task.CompletedTask;
     }
 
     public Task PauseAsync()
     {
+        Threads.Record("host.PauseAsync");
         Paused = true;
         return Task.CompletedTask;
     }
 
     public Task ResumeAsync()
     {
+        Threads.Record("host.ResumeAsync");
         Paused = false;
         return Task.CompletedTask;
     }
@@ -104,6 +138,7 @@ public sealed class FakeHost : ICollectorHostView
 
     public Task ApplySettingsAsync(CollectorSettings settings)
     {
+        Threads.Record("host.ApplySettingsAsync");
         Applied.Add(settings);
         Settings = settings;
         return Task.CompletedTask;
@@ -111,6 +146,7 @@ public sealed class FakeHost : ICollectorHostView
 
     public Task StartAsync(CancellationToken ct = default)
     {
+        Threads.Record("host.StartAsync");
         Starts++;
         return Task.CompletedTask;
     }
@@ -136,10 +172,19 @@ public sealed class FakeHost : ICollectorHostView
 
 public sealed class FakeStartup : IStartupRegistration
 {
+    public ThreadLog Threads { get; } = new();
     public string? Command { get; set; }
     public string? RegisteredCommand() => Command;
-    public void Register(string command) => Command = command;
-    public void Unregister() => Command = null;
+    public void Register(string command)
+    {
+        Threads.Record("startup.Register");
+        Command = command;
+    }
+    public void Unregister()
+    {
+        Threads.Record("startup.Unregister");
+        Command = null;
+    }
 }
 
 /// <summary>In-memory up/cmd buckets for driving a real <see cref="VaultAgent"/>.</summary>

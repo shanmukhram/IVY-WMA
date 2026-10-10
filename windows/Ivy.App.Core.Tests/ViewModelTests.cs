@@ -81,10 +81,13 @@ public class MainViewModelTests
         var vm = Create();
         await vm.StartAsync();
         vm.IsRunning = false;
+        Assert.Equal("Paused", vm.RunStateText); // shown at once; the writes follow off the UI thread
+        await vm.LastHostWork;
         Assert.True(_agent.UploadsPaused);
         Assert.True(_host.Paused);
         Assert.Equal("Paused", vm.RunStateText);
         vm.TogglePause();
+        await vm.LastHostWork;
         Assert.False(_agent.UploadsPaused);
         Assert.False(_host.Paused);
         Assert.Equal("Running", vm.RunStateText);
@@ -203,6 +206,7 @@ public class MainViewModelTests
         await vm.RefreshAsync();
         Assert.Empty(_host.EnabledCalls);
         vm.Collectors.Single(c => c.Name == "usage").Enabled = false;
+        await vm.LastHostWork;
         Assert.Equal(new[] { ("usage", false) }, _host.EnabledCalls);
     }
 
@@ -229,6 +233,7 @@ public class MainViewModelTests
         await vm.StartAsync();
         Assert.StartsWith("Collector host: ", vm.HostErrorText);
         vm.IsRunning = false;
+        await vm.LastHostWork;
         Assert.True(_agent.UploadsPaused);
         Assert.Equal("Collector host: boom", vm.HostErrorText);
         vm.Settings.WindowTitleCapture = false;
@@ -287,6 +292,7 @@ public class MainViewModelTests
         Assert.True(vm.Settings.RunAtLogin);
         Assert.Equal(StartupCommand.Build(Exe), _startup.Command);
         vm.Settings.RunAtLogin = false;
+        await vm.Settings.LastWork;
         Assert.Null(_startup.Command);
         vm.Settings.EnableRunAtLoginByDefault(); // decision recorded: no-op
         Assert.Null(_startup.Command);
@@ -300,13 +306,16 @@ public class MainViewModelTests
         await vm.StartAsync();
         _nextPick = @"E:\Photos";
         Assert.True(await vm.Settings.IndexedRoots.PickAndAddAsync());
+        await vm.Settings.LastApply;
         Assert.Equal(new[] { @"E:\Photos" }, _host.Settings.IndexedRoots);
         _nextPick = null; // dialog cancelled
         Assert.False(await vm.Settings.IndexedRoots.PickAndAddAsync());
         _nextPick = @"C:\Users\b\Pictures\Screenshots";
         await vm.Settings.ScreenshotRoots.PickAndAddAsync();
+        await vm.Settings.LastApply;
         vm.Settings.TitleExclusions.NewItem = " 1Password.exe ";
         Assert.True(vm.Settings.TitleExclusions.AddNew());
+        await vm.Settings.LastApply;
         Assert.Equal("", vm.Settings.TitleExclusions.NewItem);
         vm.Settings.WindowTitleCapture = false;
         await vm.Settings.LastApply;
@@ -316,6 +325,7 @@ public class MainViewModelTests
         Assert.Equal(new[] { "1Password.exe" }, last.TitleExclusions);
         Assert.False(last.WindowTitleCapture);
         vm.Settings.IndexedRoots.Remove(@"e:\photos");
+        await vm.Settings.LastApply;
         Assert.Empty(_host.Settings.IndexedRoots);
     }
 
@@ -413,6 +423,7 @@ public class MainViewModelTests
         Assert.Equal("enter whole KB/s (0 = unlimited)", vm.Settings.BandwidthStatus);
         vm.Settings.BandwidthText = "256";
         vm.Settings.ApplyBandwidthCommand.Execute(null);
+        await vm.Settings.LastWork;
         Assert.Equal(256 * 1024, _agent.BandwidthBytesPerSecond);
         Assert.Equal("current: 256.0 KB/s", vm.Settings.BandwidthStatus);
     }
@@ -490,7 +501,11 @@ public class FeedBatchingTests
     private sealed class ManualDispatcher : IUiDispatcher
     {
         public List<Action> Posted { get; } = new();
-        public void Post(Action action) => Posted.Add(action);
+        public bool Post(Action action)
+        {
+            Posted.Add(action);
+            return true;
+        }
     }
 
     [Fact]

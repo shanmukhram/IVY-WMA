@@ -1,4 +1,5 @@
 using Ivy.Core.Agent;
+using Ivy.Core.KeyStore;
 using Ivy.Core.Protocol;
 using Ivy.Core.Storage;
 using Ivy.Core.Upload;
@@ -10,12 +11,17 @@ namespace Ivy.App.Core.Hosting;
 /// device is paired, so progress subscription and the pause/bandwidth settings are (re)attached after
 /// <see cref="PairAsync"/>. Snapshot queries are aggregate SQL against vault-agent.db so the window can
 /// refresh every second even with a large initial-index queue.
+/// The paired state and the fingerprints are cached: <see cref="PairingService.IsPaired"/> reads and DPAPI-decrypts
+/// three files under the key store lock, and the tray menu, Sync now's CanExecute and the window read them from the
+/// UI thread. The cache is filled at construction (startup) and after every pairing attempt.
 /// </summary>
 public sealed class VaultAgentView : IAgentView, IDisposable
 {
     private readonly VaultAgent _agent;
     private Uploader? _attached;
     private readonly object _lock = new();
+    private volatile bool _paired;
+    private volatile PairingState? _state;
 
     public VaultAgentView(VaultAgent agent)
     {
@@ -23,13 +29,22 @@ public sealed class VaultAgentView : IAgentView, IDisposable
         _agent.Activity.Appended += OnAppended;
         _agent.Pairing.DeviceFingerprintAvailable += OnFingerprint;
         Attach();
+        RefreshPairedState();
     }
 
     public VaultAgent Agent => _agent;
 
-    public bool IsPaired => _agent.Pairing.IsPaired;
-    public string? DeviceFingerprint => _agent.PairingState?.DeviceFingerprint ?? _agent.Keys.LoadPairingState()?.DeviceFingerprint;
-    public string? MacFingerprint => _agent.PairingState?.MacFingerprint ?? _agent.Keys.LoadPairingState()?.MacFingerprint;
+    /// <summary>Cached; see the class summary. Cheap and safe on the UI thread.</summary>
+    public bool IsPaired => _paired;
+    public string? DeviceFingerprint => _agent.PairingState?.DeviceFingerprint ?? _state?.DeviceFingerprint;
+    public string? MacFingerprint => _agent.PairingState?.MacFingerprint ?? _state?.MacFingerprint;
+
+    /// <summary>Re-read the key store (worker thread or startup only): the paired flag and the stored fingerprints.</summary>
+    public void RefreshPairedState()
+    {
+        _state = _agent.PairingState ?? _agent.Keys.LoadPairingState();
+        _paired = _agent.Pairing.IsPaired;
+    }
 
     public event EventHandler<string>? DeviceFingerprintAvailable;
     public event EventHandler<ActivityEntry>? ActivityAppended;
@@ -37,9 +52,16 @@ public sealed class VaultAgentView : IAgentView, IDisposable
 
     public async Task<PairingResult> PairAsync(string pairingString, CancellationToken ct = default)
     {
-        var r = await _agent.PairAsync(pairingString, ct).ConfigureAwait(false);
-        Attach();
-        return r;
+        try
+        {
+            var r = await _agent.PairAsync(pairingString, ct).ConfigureAwait(false);
+            Attach();
+            return r;
+        }
+        finally
+        {
+            RefreshPairedState(); // the pairing view model calls this on the thread pool
+        }
     }
 
     public IReadOnlyList<ActivityEntry> RecentActivity(int limit) => _agent.Activity.Recent(limit);

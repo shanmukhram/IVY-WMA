@@ -47,6 +47,7 @@ public sealed class ActivityLog
     {
         var ts = IvyTime.Now(_time);
         long id;
+        using (IvyUiThread.Write("ActivityLog.Append"))
         using (var c = _db.Open())
         using (var cmd = c.CreateCommand())
         {

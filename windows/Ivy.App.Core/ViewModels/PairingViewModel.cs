@@ -1,3 +1,4 @@
+using Ivy.App.Core.Diagnostics;
 using Ivy.App.Core.Hosting;
 using Ivy.Core.Protocol;
 
@@ -74,13 +75,17 @@ public sealed class PairingViewModel : ObservableObject
             Status = "Paste the pairing string first.";
             return;
         }
-        IsBusy = true;
-        Raise(nameof(CanEdit));
-        PairCommand.RaiseCanExecuteChanged();
-        Status = "Pairing: fetching the bootstrap from the cmd bucket and sending this device's key to the Mac...";
+        using (UiBreadcrumb.Enter("Pairing submit"))
+        {
+            IsBusy = true;
+            Raise(nameof(CanEdit));
+            PairCommand.RaiseCanExecuteChanged();
+            Status = "Pairing: fetching the bootstrap from the cmd bucket and sending this device's key to the Mac...";
+        }
         try
         {
             var r = await Task.Run(() => _agent.PairAsync(code));
+            using var crumb = UiBreadcrumb.Enter("Pairing result");
             DeviceFingerprint = r.DeviceFingerprint;
             MacFingerprint = r.MacFingerprint;
             Completed = true;

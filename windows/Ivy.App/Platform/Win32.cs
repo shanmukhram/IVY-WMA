@@ -2,10 +2,17 @@ using System.Runtime.InteropServices;
 
 namespace Ivy.App.Platform;
 
-/// <summary>The few Win32 calls the shell needs: tray icon, popup menu, foreground activation.</summary>
+/// <summary>
+/// The few Win32 calls the shell needs: tray icon (with its own message loop), popup menu, foreground
+/// activation, window/session event logging and the hang watchdog's minidump.
+/// </summary>
 internal static class Win32
 {
     public const uint WM_NULL = 0x0000;
+    public const uint WM_CLOSE = 0x0010;
+    public const uint WM_DISPLAYCHANGE = 0x007E;
+    public const uint WM_WTSSESSION_CHANGE = 0x02B1;
+    public const uint WM_DPICHANGED = 0x02E0;
     public const uint WM_APP = 0x8000;
     public const uint WM_LBUTTONUP = 0x0202;
     public const uint WM_LBUTTONDBLCLK = 0x0203;
@@ -79,6 +86,63 @@ internal static class Win32
         public int X;
         public int Y;
     }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct MSG
+    {
+        public IntPtr hwnd;
+        public uint message;
+        public IntPtr wParam;
+        public IntPtr lParam;
+        public uint time;
+        public POINT pt;
+        public uint lPrivate;
+    }
+
+    public delegate IntPtr SubclassProc(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam, UIntPtr idSubclass, UIntPtr refData);
+
+    // ---- message loop (tray thread) ----
+
+    /// <summary>Returns -1 on error, 0 on WM_QUIT.</summary>
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern int GetMessageW(out MSG msg, IntPtr hWnd, uint filterMin, uint filterMax);
+
+    [DllImport("user32.dll")]
+    public static extern bool TranslateMessage(ref MSG msg);
+
+    [DllImport("user32.dll")]
+    public static extern IntPtr DispatchMessageW(ref MSG msg);
+
+    [DllImport("user32.dll")]
+    public static extern void PostQuitMessage(int exitCode);
+
+    // ---- window/session events of the main window ----
+
+    [DllImport("comctl32.dll", SetLastError = true)]
+    public static extern bool SetWindowSubclass(IntPtr hWnd, SubclassProc proc, UIntPtr idSubclass, UIntPtr refData);
+
+    [DllImport("comctl32.dll", SetLastError = true)]
+    public static extern bool RemoveWindowSubclass(IntPtr hWnd, SubclassProc proc, UIntPtr idSubclass);
+
+    [DllImport("comctl32.dll")]
+    public static extern IntPtr DefSubclassProc(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
+
+    public const uint NOTIFY_FOR_THIS_SESSION = 0;
+
+    [DllImport("wtsapi32.dll", SetLastError = true)]
+    public static extern bool WTSRegisterSessionNotification(IntPtr hWnd, uint flags);
+
+    [DllImport("wtsapi32.dll", SetLastError = true)]
+    public static extern bool WTSUnRegisterSessionNotification(IntPtr hWnd);
+
+    // ---- hang dump ----
+
+    public const uint MiniDumpWithFullMemoryInfo = 0x00000800;
+    public const uint MiniDumpWithThreadInfo = 0x00001000;
+
+    [DllImport("dbghelp.dll", SetLastError = true)]
+    public static extern bool MiniDumpWriteDump(IntPtr process, uint processId, Microsoft.Win32.SafeHandles.SafeFileHandle file, uint dumpType,
+        IntPtr exceptionParam, IntPtr userStreamParam, IntPtr callbackParam);
 
     [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     public static extern ushort RegisterClassExW(ref WNDCLASSEXW wc);

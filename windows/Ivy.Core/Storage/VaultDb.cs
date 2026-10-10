@@ -176,6 +176,7 @@ public sealed class VaultDb : IDisposable
 
     public void SetSetting(string key, string value)
     {
+        using var guard = IvyUiThread.Write("VaultDb.SetSetting");
         using var c = Open();
         using var cmd = c.CreateCommand();
         cmd.CommandText = "INSERT INTO agent_settings(key, value) VALUES ($k, $v) ON CONFLICT(key) DO UPDATE SET value = excluded.value";

@@ -1,4 +1,5 @@
 using System.Globalization;
+using Ivy.App.Core.Diagnostics;
 using Ivy.App.Core.Hosting;
 using Ivy.Core.Policy;
 
@@ -8,7 +9,8 @@ namespace Ivy.App.Core.ViewModels;
 /// Capture and network settings (the only settings Windows has, PRD "App UI"): indexed roots, screenshot
 /// roots, window-title capture and its exclusion list, the media policy (PLAN decision 8: auto-upload of images
 /// and documents, their size caps and extension lists), bandwidth cap, run at login. Capture settings are
-/// applied to the collector host immediately on every change (the caps when Apply is pressed).
+/// applied to the collector host immediately on every change (the caps when Apply is pressed). Applying
+/// (collector settings, bandwidth, run at login) runs on the thread pool: each one writes SQLite or the registry.
 /// </summary>
 public sealed class SettingsViewModel : ObservableObject
 {
@@ -17,6 +19,7 @@ public sealed class SettingsViewModel : ObservableObject
     private readonly IAgentView _agent;
     private readonly IStartupRegistration _startup;
     private readonly string _exePath;
+    private readonly BackgroundWork _work = new();
     private bool _windowTitleCapture = true;
     private bool _loading;
     private string _bandwidthText = "0";
@@ -105,19 +108,36 @@ public sealed class SettingsViewModel : ObservableObject
         set
         {
             if (_runAtLogin == value) return;
-            try
+            using var crumb = UiBreadcrumb.Enter("RunAtLogin");
+            _runAtLogin = value;
+            Raise();
+            LastWork = SetRunAtLoginAsync(value);
+        }
+    }
+
+    /// <summary>Completes when the most recent run-at-login or bandwidth change has been applied (tests, shell).</summary>
+    public Task LastWork { get; private set; } = Task.CompletedTask;
+
+    private async Task SetRunAtLoginAsync(bool value)
+    {
+        try
+        {
+            await _work.Run(() =>
             {
                 if (value) _startup.Register(StartupCommand.Build(_exePath));
                 else _startup.Unregister();
                 _agent.SetSetting(RunAtLoginDecidedKey, "1");
-                _runAtLogin = value;
-                SettingsError = "";
-            }
-            catch (Exception e)
+            });
+            SettingsError = "";
+        }
+        catch (Exception e)
+        {
+            SettingsError = "Run at login: " + e.Message;
+            if (_runAtLogin == value)
             {
-                SettingsError = "Run at login: " + e.Message;
+                _runAtLogin = !value; // the registry did not change: show what is really there
+                Raise(nameof(RunAtLogin));
             }
-            Raise();
         }
     }
 
@@ -197,9 +217,14 @@ public sealed class SettingsViewModel : ObservableObject
             BandwidthStatus = "enter whole KB/s (0 = unlimited)";
             return;
         }
+        LastWork = ApplyBandwidthAsync(v.Value);
+    }
+
+    private async Task ApplyBandwidthAsync(long bytesPerSecond)
+    {
         try
         {
-            _agent.BandwidthBytesPerSecond = v.Value;
+            await _work.Run(() => { _agent.BandwidthBytesPerSecond = bytesPerSecond; }); // persisted by the uploader
             LoadBandwidth();
         }
         catch (Exception e)
@@ -262,14 +287,16 @@ public sealed class SettingsViewModel : ObservableObject
     private void Apply()
     {
         if (_loading) return;
+        using var crumb = UiBreadcrumb.Enter("Settings.Apply");
         LastApply = ApplyAsync(Current());
     }
 
+    /// <summary>The snapshot is taken on the UI thread; the host diff, SQLite writes and collector restarts run on the pool.</summary>
     private async Task ApplyAsync(CollectorSettings settings)
     {
         try
         {
-            await _host.ApplySettingsAsync(settings);
+            await _work.Run(() => _host.ApplySettingsAsync(settings));
             SettingsError = "";
         }
         catch (Exception e)
