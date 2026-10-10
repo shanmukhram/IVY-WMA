@@ -1,6 +1,6 @@
 {
  "schema": 1,
- "generatedAt": "2026-10-10T08:26:26.483Z",
+ "generatedAt": "2026-10-10T10:07:45.573Z",
  "lineVersion": "unknown",
  "locations": [
   {
@@ -10,8 +10,8 @@
    "files": [
     {
      "relativePath": "LINE.ini",
-     "size": 3090,
-     "mtime": "2026-10-06T15:40:14.369Z",
+     "size": 3053,
+     "mtime": "2026-10-10T08:54:34.417Z",
      "head16Hex": null,
      "kind": "Json",
      "looksEncrypted": false,
@@ -19,9 +19,29 @@
      "note": "head16Hex removed from the committed copy (text content)"
     },
     {
+     "relativePath": "Sticker/10306/9/animation/27533208.png",
+     "size": 163083,
+     "mtime": "2026-10-10T08:54:17.221Z",
+     "head16Hex": "89504e470d0a1a0a0000000d49484452",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
+     "relativePath": "Sticker/10570/7/animation/29682576.png",
+     "size": 201350,
+     "mtime": "2026-10-10T08:54:17.206Z",
+     "head16Hex": "89504e470d0a1a0a0000000d49484452",
+     "kind": "Binary",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": null
+    },
+    {
      "relativePath": "_qt_dt_connection_admin",
      "size": 36,
-     "mtime": "2026-10-06T15:35:12.921Z",
+     "mtime": "2026-10-10T08:53:21.782Z",
      "head16Hex": null,
      "kind": "Text",
      "looksEncrypted": false,
@@ -31,7 +51,7 @@
     {
      "relativePath": "advertisement/cc475325499f9a96254fda282dc4d8f6/advertisement0.dat",
      "size": 29008,
-     "mtime": "2026-10-06T02:11:48.904Z",
+     "mtime": "2026-10-10T08:54:05.426Z",
      "head16Hex": "c445826583d55d8d03dcef78ee2c480f",
      "kind": "Binary",
      "looksEncrypted": false,
@@ -41,7 +61,7 @@
     {
      "relativePath": "advertisement/cc475325499f9a96254fda282dc4d8f6/advertisement1.dat",
      "size": 224,
-     "mtime": "2026-10-06T02:11:47.634Z",
+     "mtime": "2026-10-10T08:54:04.278Z",
      "head16Hex": "90b33d72f5504fb74f70e1ee53b9dc95",
      "kind": "Binary",
      "looksEncrypted": false,
@@ -50,9 +70,9 @@
     },
     {
      "relativePath": "db/AutoSuggest/qwcc68c86ea190f10a6b78361790f878.edb",
-     "size": 10133504,
-     "mtime": "2026-10-06T04:44:54.296Z",
-     "head16Hex": "ea8ac8444445429ab659d033d2477758",
+     "size": 10387456,
+     "mtime": "2026-10-10T09:57:06.583Z",
+     "head16Hex": "ea8ac8444445429a1972086bf5ce8b69",
      "kind": "Binary",
      "looksEncrypted": true,
      "tables": null,
@@ -135,9 +155,9 @@
     },
     {
      "relativePath": "db/qw475325499f9a96254fda282dc4d8f6.edb",
-     "size": 516096,
-     "mtime": "2026-10-06T00:31:45.718Z",
-     "head16Hex": "ea8ac8444445429a9f268eec10e1061c",
+     "size": 532480,
+     "mtime": "2026-10-10T09:36:18.683Z",
+     "head16Hex": "ea8ac8444445429ae80eb8f8c5b2d507",
      "kind": "Binary",
      "looksEncrypted": true,
      "tables": null,
@@ -146,8 +166,8 @@
     {
      "relativePath": "db/qw475325499f9a96254fda282dc4d8f6.edb-shm",
      "size": 32768,
-     "mtime": "2026-10-06T00:25:36.102Z",
-     "head16Hex": "18e22d00000000009800000001000010",
+     "mtime": "2026-10-10T08:54:00.358Z",
+     "head16Hex": "18e22d00000000001600000001000010",
      "kind": "SqliteSidecar",
      "looksEncrypted": false,
      "tables": null,
@@ -156,8 +176,8 @@
     {
      "relativePath": "db/qw475325499f9a96254fda282dc4d8f6.edb-wal",
      "size": 4144752,
-     "mtime": "2026-10-06T06:28:49.974Z",
-     "head16Hex": "377f0682002de2180000100000000001",
+     "mtime": "2026-10-10T10:03:48.275Z",
+     "head16Hex": "377f0682002de2180000100000000002",
      "kind": "SqliteSidecar",
      "looksEncrypted": false,
      "tables": null,
@@ -166,7 +186,7 @@
     {
      "relativePath": "installLang.ini",
      "size": 42,
-     "mtime": "2026-10-06T15:35:12.847Z",
+     "mtime": "2026-10-10T08:53:21.693Z",
      "head16Hex": null,
      "kind": "Json",
      "looksEncrypted": false,
@@ -174,9 +194,9 @@
      "note": "head16Hex removed from the committed copy (text content)"
     },
     {
-     "relativePath": "plugin/LineCall/1.0.0.913/.sentry-native/62a33f3b-469f-4779-5cd7-26d49d826718.run.lock",
+     "relativePath": "plugin/LineCall/1.0.0.913/.sentry-native/87bbd4b9-0f3b-4e23-0fc6-535690fbf4ac.run.lock",
      "size": 0,
-     "mtime": "2026-10-06T00:25:56.972Z",
+     "mtime": "2026-10-10T08:54:04.186Z",
      "head16Hex": "",
      "kind": "Empty",
      "looksEncrypted": false,
@@ -184,9 +204,9 @@
      "note": null
     },
     {
-     "relativePath": "plugin/LineCall/1.0.0.913/.sentry-native/62a33f3b-469f-4779-5cd7-26d49d826718.run/session.json",
+     "relativePath": "plugin/LineCall/1.0.0.913/.sentry-native/87bbd4b9-0f3b-4e23-0fc6-535690fbf4ac.run/session.json",
      "size": 217,
-     "mtime": "2026-10-06T00:25:56.972Z",
+     "mtime": "2026-10-10T08:54:04.186Z",
      "head16Hex": null,
      "kind": "Json",
      "looksEncrypted": false,
@@ -1196,7 +1216,7 @@
     {
      "relativePath": "plugin/LineCall/1.0.0.913/steplog.log",
      "size": 197,
-     "mtime": "2026-10-06T00:25:57.128Z",
+     "mtime": "2026-10-10T08:54:04.450Z",
      "head16Hex": "2d696e69740d0a2d696e697420646f6e",
      "kind": "LevelDb",
      "looksEncrypted": false,
@@ -1234,9 +1254,9 @@
      "note": null
     },
     {
-     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/.sentry-native/07c5db48-d28d-47c8-f902-e9b42e0b76bc.run.lock",
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/.sentry-native/47c90b7d-6d18-4edc-a593-707c83e9dbe4.run.lock",
      "size": 0,
-     "mtime": "2026-10-06T00:25:49.566Z",
+     "mtime": "2026-10-10T08:54:03.455Z",
      "head16Hex": "",
      "kind": "Empty",
      "looksEncrypted": false,
@@ -1244,9 +1264,9 @@
      "note": null
     },
     {
-     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/.sentry-native/07c5db48-d28d-47c8-f902-e9b42e0b76bc.run/session.json",
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/.sentry-native/47c90b7d-6d18-4edc-a593-707c83e9dbe4.run/session.json",
      "size": 219,
-     "mtime": "2026-10-06T00:25:49.566Z",
+     "mtime": "2026-10-10T08:54:03.455Z",
      "head16Hex": null,
      "kind": "Json",
      "looksEncrypted": false,
@@ -1254,9 +1274,9 @@
      "note": "head16Hex removed from the committed copy (text content)"
     },
     {
-     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/.sentry-native/3b0c277d-26ef-458a-42e1-08763e8f140c.run.lock",
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/.sentry-native/90ea5622-82a9-4018-bfd2-2482e7a51e23.run.lock",
      "size": 0,
-     "mtime": "2026-10-06T00:25:49.566Z",
+     "mtime": "2026-10-10T08:54:03.455Z",
      "head16Hex": "",
      "kind": "Empty",
      "looksEncrypted": false,
@@ -1264,9 +1284,9 @@
      "note": null
     },
     {
-     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/.sentry-native/3b0c277d-26ef-458a-42e1-08763e8f140c.run/session.json",
+     "relativePath": "plugin/LineMediaPlayer/1.2.0.657/.sentry-native/90ea5622-82a9-4018-bfd2-2482e7a51e23.run/session.json",
      "size": 219,
-     "mtime": "2026-10-06T00:25:49.494Z",
+     "mtime": "2026-10-10T08:54:03.455Z",
      "head16Hex": null,
      "kind": "Json",
      "looksEncrypted": false,
@@ -1616,7 +1636,7 @@
     {
      "relativePath": "plugin/LineMediaPlayer/1.2.0.657/StepLog",
      "size": 131,
-     "mtime": "2026-10-06T00:25:49.643Z",
+     "mtime": "2026-10-10T08:54:03.640Z",
      "head16Hex": null,
      "kind": "Text",
      "looksEncrypted": false,
@@ -2576,7 +2596,7 @@
     {
      "relativePath": "plugin/LineMediaPlayer/setting.ini",
      "size": 158,
-     "mtime": "2026-10-06T00:25:49.942Z",
+     "mtime": "2026-10-10T08:54:04.055Z",
      "head16Hex": null,
      "kind": "Json",
      "looksEncrypted": false,
@@ -2586,7 +2606,7 @@
     {
      "relativePath": "plugin/plugin.bin",
      "size": 13696,
-     "mtime": "2026-10-06T00:25:55.856Z",
+     "mtime": "2026-10-10T08:54:02.631Z",
      "head16Hex": "9a9ed3dc946d1b6d2626115aa449e53e",
      "kind": "Binary",
      "looksEncrypted": false,
@@ -2596,8 +2616,8 @@
     {
      "relativePath": "qci_3.bin",
      "size": 3636,
-     "mtime": "2026-10-06T04:44:54.080Z",
-     "head16Hex": "02a967ee88247030c8aff93733fdaaa5",
+     "mtime": "2026-10-10T08:54:04.147Z",
+     "head16Hex": "02a967ee88247030c8affa3c31fea1a5",
      "kind": "Binary",
      "looksEncrypted": false,
      "tables": null,
@@ -2627,7 +2647,7 @@
   }
  ],
  "summary": {
-  "totalFiles": 258,
+  "totalFiles": 260,
   "databases": 6,
   "readable": 1
  }
