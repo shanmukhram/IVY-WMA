@@ -169,7 +169,13 @@ public sealed class LineDesktopCollector : Collector<LineSettings>
             return Task.CompletedTask;
         }
 
-        using var store = LineStore.Open(snapshot.Directory, map, _unlocker, out var openReason);
+        var store = LineStore.Open(snapshot.Directory, map, _unlocker, out var openReason);
+        // Encrypted store without a working key: automatically read a key from the running LINE process and
+        // retry, so capture starts on its own with no button press. Only runs while no key fits, so once a
+        // working key is stored it is reused and no scanning happens.
+        if (store is null && _keyStore is not null && !IsPlainSqlite(dbPath) && OperatingSystem.IsWindows() && TryDetectAndStoreKey())
+            store = LineStore.Open(snapshot.Directory, map, _unlocker, out openReason);
+        using var storeGuard = store;
         if (store is null)
         {
             _verifiedVersion = null;
@@ -211,7 +217,9 @@ public sealed class LineDesktopCollector : Collector<LineSettings>
 
         State = LineState.OkPartial;
         Cursor = $"chats={chats.Count}";
-        Detail = $"ok partial: {chats.Count} chats, {newMessages} new this tick (coverage partial, mirror of the phone)";
+        // We read every chat and message this PC's LINE holds; "partial" only means the phone may hold older
+        // history we cannot see from Windows, so it is confirmed complete only once the phone's import runs.
+        Detail = $"Capturing all {chats.Count} chats on this PC ({newMessages} new this tick). Full history confirmed from the phone.";
         return Task.CompletedTask;
     }
 

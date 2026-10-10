@@ -95,7 +95,7 @@
                 <StackPanel Spacing="12">
                     <TextBlock Text="LINE key" Style="{StaticResource BodyStrongTextBlockStyle}" />
                     <TextBlock Style="{StaticResource SecondaryTextStyle}" TextWrapping="Wrap"
-                               Text="LINE encrypts its chat store with a 32-character key that is not saved to disk. Enter it once to read your LINE messages on this PC. It is stored with DPAPI and never uploaded." />
+                               Text="IVY reads your LINE messages on this PC automatically once LINE is open and signed in. If it needs a hand, press Detect from LINE, or paste the key. It is kept on this PC (DPAPI) and never uploaded." />
                     <InfoBar IsOpen="{x:Bind ViewModel.Conversation.LineHasKey, Mode=OneWay}" IsClosable="False"
                              Severity="Success" Message="A LINE key is set." />
                     <StackPanel Orientation="Horizontal" Spacing="8">
