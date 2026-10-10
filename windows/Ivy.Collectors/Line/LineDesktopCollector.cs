@@ -127,8 +127,9 @@ public sealed class LineDesktopCollector : Collector<LineSettings>
         {
             _verifiedVersion = null;
             var reason = openReason ?? "the LINE store could not be read";
-            // Tell the encrypted case apart for the UI state; both are red with the reason (WL3).
-            State = reason.StartsWith("store is encrypted", StringComparison.Ordinal) ? LineState.EncryptedStore : LineState.UnverifiedMap;
+            // Tell the encrypted case apart for the UI state from the file's own header, not the reason text:
+            // a store whose header is not "SQLite format 3" is encrypted; otherwise the map did not verify (WL3).
+            State = IsPlainSqlite(dbPath) ? LineState.UnverifiedMap : LineState.EncryptedStore;
             SetError(reason);
             return Task.CompletedTask;
         }
@@ -252,5 +253,20 @@ public sealed class LineDesktopCollector : Collector<LineSettings>
     {
         var chars = version.Select(c => char.IsLetterOrDigit(c) || c is '.' or '-' or '_' ? c : '_').ToArray();
         return new string(chars);
+    }
+
+    // A plain SQLite file starts with the 16-byte text "SQLite format 3\0". Anything else at a store that
+    // could not be opened is treated as an encrypted store for the UI state.
+    private static readonly byte[] SqliteMagic = System.Text.Encoding.ASCII.GetBytes("SQLite format 3\0");
+
+    private static bool IsPlainSqlite(string path)
+    {
+        try
+        {
+            using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            Span<byte> head = stackalloc byte[16];
+            return fs.Read(head) == 16 && head.SequenceEqual(SqliteMagic);
+        }
+        catch { return false; }
     }
 }

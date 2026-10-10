@@ -97,6 +97,15 @@ public sealed record LineStoreMap
     public required string DbFilePattern { get; init; }
 
     public required LineKeyStrategy KeyStrategy { get; init; }
+
+    /// <summary>
+    /// The fixed leading bytes (hex) of this version's encrypted store, as seen by the probe. The real LINE
+    /// for Windows store shares a fixed magic across all its <c>.edb</c> files, so a container format with a
+    /// header rather than a per-file-random scheme. Null for a plain-SQLite map. Used only to recognise the
+    /// store and report precisely; it is not a key.
+    /// </summary>
+    public string? EncryptedHeaderMagicHex { get; init; }
+
     public required LineMessageColumns Messages { get; init; }
     public required LineChatColumns Chats { get; init; }
     public LineNameTables? Names { get; init; }
@@ -109,12 +118,15 @@ public sealed record LineStoreMap
     /// </summary>
     public static LineStoreMap ShippedDefault { get; } = new()
     {
-        Version = "26.3",
+        Version = "26.5",
         Verified = false,
         DbFilePattern = "*.edb",
-        // Reported encrypted (wxSQLite3 AES-128-CBC). With no unlocker shipped, an encrypted store yields an
-        // honest red state; a plain store (older builds) is detected by its header at runtime and read.
+        // The store is a container with a fixed magic (probe report docs/reports/line-probe-26.5-windows.json)
+        // whose WAL sidecar carries the standard SQLite WAL magic, so SQLite pages under a page cipher. With no
+        // key available on disk, an encrypted store yields an honest state and the full history comes from the
+        // phone; a plain store (older builds) is detected by its header at runtime and read.
         KeyStrategy = LineKeyStrategy.EncryptedWxSqlite3Aes128Cbc,
+        EncryptedHeaderMagicHex = "ea8ac8444445429a",
         Messages = new LineMessageColumns
         {
             Table = "_message",

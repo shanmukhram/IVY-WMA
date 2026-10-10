@@ -50,6 +50,6 @@ public sealed class NotImplementedUnlocker : ILineStoreUnlocker
 
     public LineUnlockResult TryOpen(string dbPath, LineStoreMap map) =>
         LineUnlockResult.Failed(
-            $"store is encrypted ({map.KeyStrategy}); key derivation for LINE version {map.Version} is not implemented. " +
-            "Run the probe on the PC and send the report so the unlocker can be written.");
+            $"LINE {map.Version} store is encrypted and no key is available on this PC, so Windows captures no " +
+            "LINE messages. Complete LINE history comes from the phone. See docs/internals/line-collector.md.");
 }

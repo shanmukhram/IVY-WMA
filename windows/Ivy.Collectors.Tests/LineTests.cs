@@ -310,8 +310,8 @@ public class LineCollectorTests : IDisposable
         await line.TickAsync(default);
 
         Assert.Equal(LineState.EncryptedStore, line.State);
-        Assert.Contains("store is encrypted", line.LastError!);
-        Assert.Contains("not implemented", line.LastError!);
+        Assert.Contains("is encrypted", line.LastError!);
+        Assert.Contains("phone", line.LastError!);
         Assert.Empty(Batches());
     }
 
@@ -370,6 +370,25 @@ public class LineCollectorTests : IDisposable
         Assert.Equal(LineState.NotInstalled, line.State);
         Assert.Null(line.LastError);
         Assert.Empty(Batches());
+    }
+
+    [Fact]
+    public void Shipped_map_records_the_real_store_magic_and_version()
+    {
+        var map = LineStoreMap.ShippedDefault;
+        Assert.Equal("26.5", map.Version);
+        Assert.Equal("ea8ac8444445429a", map.EncryptedHeaderMagicHex);
+        Assert.False(map.Verified);
+    }
+
+    [Fact]
+    public void Not_implemented_unlocker_reports_an_honest_reason_and_points_to_the_phone()
+    {
+        var result = NotImplementedUnlocker.Instance.TryOpen("ignored.edb", LineStoreMap.ShippedDefault);
+        Assert.False(result.Ok);
+        Assert.Null(result.Connection);
+        Assert.Contains("phone", result.Reason);
+        Assert.Contains("no LINE messages", result.Reason);
     }
 
     private static int CountMessages(IReadOnlyList<CapturedRecord> batches) =>
