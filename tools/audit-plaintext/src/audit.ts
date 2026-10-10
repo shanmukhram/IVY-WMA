@@ -38,8 +38,17 @@ export interface AuditReport {
   generatedAt: string;
   pass: boolean;
   totalHits: number;
+  /** All items, full and sampled. */
   itemsScanned: number;
+  /** Bytes actually read, full and sampled. */
   bytesScanned: number;
+  /** Items read in full. */
+  fullItems: number;
+  fullBytes: number;
+  /** Objects above sampling.sizeThreshold, read as ranges only. */
+  sampledItems: number;
+  sampledBytes: number;
+  sampling: { sizeThreshold: number; windowsPerSample: number; windowSize: number };
   items: ScannedItem[];
   errors: string[];
 }
@@ -70,6 +79,9 @@ export async function runAudit(o: AuditOptions): Promise<AuditReport> {
   }
 
   const totalHits = items.reduce((n, i) => n + i.hits.length, 0);
+  const full = items.filter((i) => !i.sampled);
+  const sampled = items.filter((i) => i.sampled);
+  const sumBytes = (xs: ScannedItem[]) => xs.reduce((n, i) => n + i.scannedBytes, 0);
   return {
     generatedAt: new Date().toISOString(),
     // an unreadable source is a failure: we cannot claim zero plaintext about what we could not read
@@ -77,6 +89,12 @@ export async function runAudit(o: AuditOptions): Promise<AuditReport> {
     totalHits,
     itemsScanned: items.length,
     bytesScanned: items.reduce((n, i) => n + i.scannedBytes, 0),
+    fullItems: full.length,
+    fullBytes: sumBytes(full),
+    sampledItems: sampled.length,
+    sampledBytes: sumBytes(sampled),
+    // windows per sampled object = the first window plus windowsPerLarge random ones (see auditBucket)
+    sampling: { sizeThreshold: o.sizeThreshold ?? 8 * MiB, windowsPerSample: (o.windowsPerLarge ?? 2) + 1, windowSize: o.windowSize ?? MiB },
     items,
     errors,
   };
@@ -195,10 +213,16 @@ function auditDir(dir: string, base: ScanOptions): ScannedItem[] {
   return out;
 }
 
+const fmtBytes = (n: number) =>
+  n >= MiB ? `${+(n / MiB).toFixed(1)} MiB` : n >= 1024 ? `${+(n / 1024).toFixed(1)} KiB` : `${n} bytes`;
+
 export function formatSummary(r: AuditReport): string {
   const lines: string[] = [];
   lines.push(`IVY zero-plaintext audit  ${r.generatedAt}`);
-  lines.push(`Scanned ${r.itemsScanned} item(s), ${r.bytesScanned} bytes.`);
+  const sampledDetail = r.sampledItems
+    ? ` (${r.sampling.windowsPerSample} x ${fmtBytes(r.sampling.windowSize)} ranges each, ${fmtBytes(r.sampledBytes)})`
+    : "";
+  lines.push(`Scanned ${r.fullItems} items in full (${fmtBytes(r.fullBytes)}); sampled ${r.sampledItems} objects above ${fmtBytes(r.sampling.sizeThreshold)}${sampledDetail}.`);
   for (const i of r.items) {
     if (i.hits.length || i.error) {
       lines.push(`  FAIL ${i.name}${i.sampled ? " (sampled)" : ""}${i.error ? "  ERROR " + i.error : ""}`);

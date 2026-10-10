@@ -172,7 +172,7 @@ The design is deliberately plain (PLAN decision 5): dark background, 1px borders
 
 - [ ] All four rows appear.
 - [ ] Usage turns green within about 30 s, showing the time of its last capture.
-- [ ] Notifications is red with a reason if the notification database is not readable. That is expected without elevation.
+- [ ] Notifications turns green: on current Windows 11 builds the notification database is readable by a standard user. Red with a reason means the snapshot copy failed.
 - [ ] Turning a row off makes it grey and stops it. Restart the app and it is still off.
 
 **Folders and index**

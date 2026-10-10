@@ -134,7 +134,7 @@ windows/
 **Notifications:**
 - **Snapshot read:** each poll copies `wpndatabase.db`, `-wal` and `-shm` to a private temp directory using shared-read streams. It retries until the three files' sizes and mtimes match before and after the copy, then queries the copy (the WAL is applied) and deletes it.
 - **Cursor:** the highest `Notification.Id` read, persisted after every row. Only `Type = 'toast'` rows are emitted. The toast XML is parsed with DTDs prohibited.
-- **Access:** on most Windows 11 builds the database is readable by the signed-in user. If the platform service holds it without sharing, or the ACLs deny the account, the app has to run elevated (PRD WC5).
+- **Access:** on current Windows 11 builds (verified on 24H2) `wpndatabase.db` is usually readable by a standard user via the snapshot copy; the collector reports red with a reason only when the copy fails.
 - **Unreadable database:** the collector goes to the `Error` state with the reason, for example "access denied reading …\wpndatabase.db (run elevated?)", "not found" or "could not be queried". It emits nothing and keeps retrying each poll. It never reports a healthy state it does not have.
 
 **Collector-owned tables** (created additively in `vault-agent.db`; metadata only): `file_tombstones`, `file_thumbs`, `screenshot_seen`, `screenshot_files`.

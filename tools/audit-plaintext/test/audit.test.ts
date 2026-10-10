@@ -60,6 +60,10 @@ describe("audit against s3-mock", () => {
     expect(r.pass).toBe(true);
     expect(r.totalHits).toBe(0);
     expect(r.itemsScanned).toBe(5);
+    expect(r.fullItems).toBe(5);
+    expect(r.sampledItems).toBe(0);
+    expect(formatSummary(r)).toContain("Scanned 5 items in full");
+    expect(formatSummary(r)).toContain("sampled 0 objects above 8 MiB");
   });
 
   it("fails on one deliberately plaintext object among random ones", async () => {
@@ -83,6 +87,11 @@ describe("audit against s3-mock", () => {
     expect(r.items.every((i) => i.sampled)).toBe(true);
     expect(r.items.every((i) => i.scannedBytes < 300_000)).toBe(true);
     expect(r.items.filter((i) => i.hits.length).map((i) => i.name)).toEqual(["big/leak.pdf"]);
+    expect(r.sampledItems).toBe(2);
+    expect(r.fullItems).toBe(0);
+    expect(r.sampledBytes).toBe(r.bytesScanned);
+    expect(r.sampling).toEqual({ sizeThreshold: 1000, windowsPerSample: 3, windowSize: 64 * 1024 });
+    expect(formatSummary(r)).toContain("sampled 2 objects above 1000 bytes (3 x 64 KiB ranges each");
   });
 
   it("reports an unreadable bucket as failure, not a silent pass", async () => {
