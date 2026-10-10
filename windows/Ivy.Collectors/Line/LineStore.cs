@@ -301,17 +301,20 @@ public sealed class LineStore : IDisposable
     internal static string? FindDb(string dir, string pattern)
     {
         if (!Directory.Exists(dir)) return null;
-        string? best = null;
-        long bestSize = -1;
+        string? withWal = null; long withWalSize = -1;   // the live message store has a -wal sidecar
+        string? anyMatch = null; long anySize = -1;        // fallback: the largest match
         foreach (var f in Directory.EnumerateFiles(dir, "*", SearchOption.AllDirectories))
         {
             var name = Path.GetFileName(f);
             if (name.EndsWith("-wal", StringComparison.OrdinalIgnoreCase) || name.EndsWith("-shm", StringComparison.OrdinalIgnoreCase)) continue;
             if (!Common.Glob.ToRegex(pattern).IsMatch(name)) continue;
             var size = new FileInfo(f).Length;
-            if (size > bestSize) { bestSize = size; best = f; } // the live chat store is the largest match
+            if (size > anySize) { anySize = size; anyMatch = f; }
+            // Among several candidates (album_, chatStats_, keep_, AutoSuggest...), the one with a -wal
+            // sidecar is the active chat store, not merely the largest file.
+            if (File.Exists(f + "-wal") && size > withWalSize) { withWalSize = size; withWal = f; }
         }
-        return best;
+        return withWal ?? anyMatch;
     }
 
     public void Dispose()

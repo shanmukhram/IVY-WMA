@@ -391,6 +391,20 @@ public class LineCollectorTests : IDisposable
         Assert.Contains("no LINE messages", result.Reason);
     }
 
+    [Fact]
+    public void FindDb_prefers_the_store_that_has_a_wal_sidecar_over_a_larger_one()
+    {
+        var dir = _dir.Sub("find-db");
+        Directory.CreateDirectory(dir);
+        // A large decoy with no sidecar (like AutoSuggest), and a smaller store that has a -wal (the chat store).
+        File.WriteAllBytes(Path.Combine(dir, "AutoSuggest.edb"), new byte[10_000_000]);
+        var store = Path.Combine(dir, "qwdeadbeef.edb");
+        File.WriteAllBytes(store, new byte[500_000]);
+        File.WriteAllBytes(store + "-wal", new byte[4_000_000]);
+
+        Assert.Equal(store, LineStore.FindDb(dir, "*.edb"));
+    }
+
     private static int CountMessages(IReadOnlyList<CapturedRecord> batches) =>
         batches.Sum(b => b.Root.GetProperty("messages").GetArrayLength());
 }
