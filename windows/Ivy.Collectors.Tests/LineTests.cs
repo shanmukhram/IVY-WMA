@@ -405,6 +405,60 @@ public class LineCollectorTests : IDisposable
         Assert.Equal(store, LineStore.FindDb(dir, "*.edb"));
     }
 
+    private static readonly byte[] LineKey = System.Text.Encoding.ASCII.GetBytes("0123456789abcdef0123456789abcdef");
+
+    // Encrypt the fixture store in place with the wxSQLite3 scheme, as LINE for Windows stores it.
+    private void EncryptStoreInPlace(string dbPath)
+    {
+        SqliteConnection.ClearAllPools();
+        var plain = File.ReadAllBytes(dbPath);
+        var pageSize = (plain[16] << 8) | (plain[17] << 16);
+        var baseKey = LineWxCipher.DeriveKey(LineKey);
+        File.WriteAllBytes(dbPath, LineWxCipher.Encrypt(plain, baseKey, pageSize));
+    }
+
+    [Fact]
+    public async Task Decrypts_an_encrypted_store_with_the_key_and_reads_messages()
+    {
+        Seed(c =>
+        {
+            LineFixture.Chat(c, "c1", updated: 100);
+            LineFixture.Message(c, "m1", "c1", "uA", 1_700_000_000_000, "hello from LINE");
+            LineFixture.Message(c, "m2", "c1", "uB", 1_700_000_050_000, "second message");
+        });
+        EncryptStoreInPlace(_dbPath);
+
+        var line = new LineDesktopCollector(_env.Context, new LineSettings(),
+            roots: new[] { new LineProbeRoot("test", _dataFolder) },
+            reportDir: _dir.Sub("rep"), tempRoot: _dir.Sub("tmp"),
+            keyStore: new InMemoryLineKeyStore(LineKey));
+        await line.StartAsync(default);
+        await line.TickAsync(default);
+
+        Assert.Equal(LineState.OkPartial, line.State);
+        Assert.True(line.HasKey);
+        Assert.Equal(2, CountMessages(Batches()));
+    }
+
+    [Fact]
+    public async Task A_wrong_line_key_is_red_and_captures_nothing()
+    {
+        Seed(c => { LineFixture.Chat(c, "c1"); LineFixture.Message(c, "m1", "c1", "uA", 1, "x"); });
+        EncryptStoreInPlace(_dbPath);
+
+        var wrong = System.Text.Encoding.ASCII.GetBytes("ffffffffffffffffffffffffffffffff");
+        var line = new LineDesktopCollector(_env.Context, new LineSettings(),
+            roots: new[] { new LineProbeRoot("test", _dataFolder) },
+            reportDir: _dir.Sub("rep2"), tempRoot: _dir.Sub("tmp2"),
+            keyStore: new InMemoryLineKeyStore(wrong));
+        await line.StartAsync(default);
+        await line.TickAsync(default);
+
+        Assert.Equal(LineState.EncryptedStore, line.State);
+        Assert.Contains("does not fit", line.LastError);
+        Assert.Empty(Batches());
+    }
+
     private static int CountMessages(IReadOnlyList<CapturedRecord> batches) =>
         batches.Sum(b => b.Root.GetProperty("messages").GetArrayLength());
 }

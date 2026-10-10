@@ -43,6 +43,8 @@ public sealed class LineDesktopCollector : Collector<LineSettings>
     private Dictionary<string, long> _cursors = new(StringComparer.Ordinal);
     private string? _verifiedVersion;
 
+    private readonly ILineKeyStore? _keyStore;
+
     public LineDesktopCollector(
         CollectorContext context,
         LineSettings? settings = null,
@@ -50,11 +52,14 @@ public sealed class LineDesktopCollector : Collector<LineSettings>
         ILineStoreUnlocker? unlocker = null,
         Func<string, LineStoreMap>? mapFor = null,
         string? reportDir = null,
-        string? tempRoot = null)
+        string? tempRoot = null,
+        ILineKeyStore? keyStore = null)
         : base(CollectorNames.Line, context, settings)
     {
         _rootsOverride = roots;
-        _unlocker = unlocker ?? NotImplementedUnlocker.Instance;
+        _keyStore = keyStore;
+        // With a key store, decrypt via the real wxSQLite3 scheme once a key is set; otherwise stay honest.
+        _unlocker = unlocker ?? (keyStore is not null ? new KeyedLineUnlocker(keyStore) : NotImplementedUnlocker.Instance);
         _mapFor = mapFor ?? (_ => LineStoreMap.ShippedDefault);
         _reportDir = reportDir ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "IVY");
         _tempRoot = tempRoot ?? Path.Combine(Path.GetTempPath(), "ivy-line");
@@ -67,6 +72,15 @@ public sealed class LineDesktopCollector : Collector<LineSettings>
 
     /// <summary>Path of the last probe report written, surfaced in the UI with a button to open it.</summary>
     public string? LastReportPath { get; private set; }
+
+    /// <summary>Whether a LINE key is set (UI: show "key set" vs the entry field). Only when a key store is wired.</summary>
+    public bool HasKey => _keyStore?.HasKey ?? false;
+
+    /// <summary>Store the LINE key (entered once in the app, kept in DPAPI, never uploaded — WX2).</summary>
+    public void SetKey(ReadOnlySpan<byte> passphrase) => _keyStore?.StoreKey(passphrase);
+
+    /// <summary>Forget the stored LINE key.</summary>
+    public void ClearKey() => _keyStore?.Clear();
 
     protected override void Validate(LineSettings s)
     {
