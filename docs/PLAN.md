@@ -68,3 +68,15 @@ Phases 2–4 are broken down when Phase 1 reaches gate G1.
 | 2.4 | Web UI served by the service + Electron shell: lock screen, search, timeline, conversations/notifications/media/files views, coverage, devices and pairing (QR), settings, recovery bin. Minimal and functional. | Opus | 2.1 |
 | 2.5 | Gate G1 script: Windows ↔ Mac over the mock and over real R2; zero-plaintext audit; reboot-mid-queue | Opus | 2.1, 2.4 |
 | 2.6 | Activity Vault read-only import (S7) and AI layer (A1–A4, cloud switch) | Opus | 2.4 |
+
+## Android phase tasks (PRD Part 3; starts after gate G1 closes)
+
+| # | Task | Model | Depends on |
+| --- | --- | --- | --- |
+| 3.1 | Toolchain on the Mac: JDK 17, Android SDK command-line tools, Gradle wrapper; JVM unit tests runnable here | fast | — |
+| 3.2 | `android/` app skeleton (Kotlin, min SDK 26, target current): protocol port validated against docs/test-vectors byte-for-byte (X25519, AES-GCM, chunked, pairing string decode, bootstrap unseal), Keystore-backed device key, SQLite queue with two-speed policy (small records any network; bulk WiFi + charging), resumable chunked uploads with manifests, cmd-bucket polling (5 min, connectivity change, manual), pairing by QR scan or code, foreground service with persistent notification, boot receiver, battery-optimisation helper | Opus | 3.1 |
+| 3.3 | Non-root collectors: NotificationListenerService (segregated per app, retained after dismissal), call log, UsageStatsManager usage, media/document index across user storage with MediaStore enrichment, device report | Opus | 3.2 |
+| 3.4 | Android app UI (minimal): pairing screen with QR scanner, collector rows with toggles and status, policy settings, live activity feed, queue state, footer | Opus | 3.2 |
+| 3.5 | Root adapters in priority order, each with atomic db+wal+shm snapshot, per-version source map verification (AC2a), in-memory keys only (AC2c), per-app cursors, manifests: LINE first, then Telegram (secret chats and anything the Windows session cannot serve), then WhatsApp, then SMS/MMS; contacts spine (AC2d); Instagram where stable; Snapchat notification-only | Opus | 3.3 |
+| 3.6 | Mac: Android committers exercised end to end (android_notification, call, message_batch per platform), conversation search, attachment chips, coverage per app, G2 and G3 gate scripts | Opus | 3.3, 3.5 |
+| 3.7 | On-device verification prompts for the phone (first run, pairing by QR, 7-day soak, battery) | — | 3.4 |
