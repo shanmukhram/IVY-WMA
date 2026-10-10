@@ -47,7 +47,9 @@ public sealed record TgMessage(
     string? MediaKind = null,
     bool Deleted = false,
     DateTimeOffset? DeletedAt = null,
-    IReadOnlyList<TgAttachment>? Attachments = null)
+    IReadOnlyList<TgAttachment>? Attachments = null,
+    bool FromMe = false,
+    string? SenderName = null)
 {
     public IReadOnlyList<TgAttachment> Files => Attachments ?? Array.Empty<TgAttachment>();
 }

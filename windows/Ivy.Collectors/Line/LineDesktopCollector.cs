@@ -199,7 +199,7 @@ public sealed class LineDesktopCollector : Collector<LineSettings>
             var cursor = _cursors.GetValueOrDefault(chat.ChatId, 0L);
             while (true)
             {
-                var page = store.ReadMessages(chat.ChatId, cursor, Settings.BatchSize);
+                var page = store.ReadMessages(chat, cursor, Settings.BatchSize);
                 if (page.Messages.Count > 0)
                 {
                     EmitBatch(sink, map, chat, page);

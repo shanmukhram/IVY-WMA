@@ -128,7 +128,7 @@ public sealed class WTelegramClientAdapter : ITelegramClient
 
         var messages = new List<TgMessage>(result.Messages.Length);
         foreach (var mb in result.Messages)
-            if (TelegramTypeMapper.MapMessage(mb) is { } m) messages.Add(m);
+            if (TelegramTypeMapper.MapMessage(mb, UsersOf(result)) is { } m) messages.Add(m);
 
         var hasMore = result.Messages.Length >= limit && result.Messages.Length > 0;
         return new TgHistoryPage(messages, hasMore);
@@ -257,6 +257,12 @@ public sealed class WTelegramClientAdapter : ITelegramClient
         e.Code is 401 or 406 ||
         e.Message.Contains("AUTH_KEY", StringComparison.Ordinal) ||
         e.Message is "SESSION_REVOKED" or "SESSION_EXPIRED" or "USER_DEACTIVATED" or "USER_DEACTIVATED_BAN";
+
+    private static IReadOnlyDictionary<long, User> UsersOf(Messages_MessagesBase r) => r switch
+    {
+        Messages_Messages m => m.users,
+        _ => new Dictionary<long, User>(),
+    };
 
     private static InputPeer? InputPeerFor(Peer peer, IReadOnlyDictionary<long, User> users, IReadOnlyDictionary<long, ChatBase> chats) => peer switch
     {

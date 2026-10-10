@@ -74,11 +74,12 @@ export type PayloadKind =
   | "photo"
   | "attachment"
   | "media"
-  | "document";
+  | "document"
+  | "avatar";
 
 /** Every `payloadKind` a receiver accepts (PROTOCOL.md §2.2). */
 export const PAYLOAD_KINDS: readonly PayloadKind[] = [
-  "file_original", "screenshot", "thumbnail", "photo", "attachment", "media", "document",
+  "file_original", "screenshot", "thumbnail", "photo", "attachment", "media", "document", "avatar",
 ];
 
 export const MAGIC = utf8("IVY1");

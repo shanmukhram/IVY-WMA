@@ -144,8 +144,10 @@ public sealed class LineStore : IDisposable
     }
 
     /// <summary>A page of messages for <paramref name="chatId"/> with <c>rowid &gt; afterRowId</c> (the per-chat cursor).</summary>
-    public LineMessagePage ReadMessages(string chatId, long afterRowId, int limit)
+    public LineMessagePage ReadMessages(LineChat chat, long afterRowId, int limit)
     {
+        var chatId = chat.ChatId;
+        var isDm = chat.ConvKind == "dm";
         EnsureNames();
         var m = _map.Messages;
         var sb = new StringBuilder();
@@ -176,10 +178,18 @@ public sealed class LineStore : IDisposable
                 var text = r.IsDBNull(4) ? "" : Convert.ToString(r.GetValue(4), CultureInfo.InvariantCulture) ?? "";
                 long? contentType = typeOrdinal >= 0 && !r.IsDBNull(typeOrdinal) ? Convert.ToInt64(r.GetValue(typeOrdinal), CultureInfo.InvariantCulture) : null;
                 var meta = metaOrdinal >= 0 && !r.IsDBNull(metaOrdinal) ? Convert.ToString(r.GetValue(metaOrdinal), CultureInfo.InvariantCulture) : null;
+                // In a 1:1 chat the chatId is the peer's mid: a message whose sender is not that peer is mine
+                // (own messages carry my own mid or an empty sender). Groups need the own mid, which we may not
+                // have, so fromMe stays unknown there rather than guessed.
+                bool? fromMe = isDm ? senderMid != chatId : (bool?)null;
+                var resolved = senderMid.Length > 0 && _names!.TryGetValue(senderMid, out var nv) ? nv.Item1 : null;
+                var senderName = fromMe == true ? "You" : resolved;
                 messages.Add(new ChatMessage
                 {
                     MsgId = msgId,
-                    Sender = ResolveSender(senderMid),
+                    Sender = senderMid,                 // stable platform id (merge key)
+                    FromMe = fromMe,
+                    SenderName = string.IsNullOrEmpty(senderName) ? null : senderName,
                     SentAt = IvyTime.Format(sentAt ?? DateTimeOffset.UnixEpoch),
                     Text = text,
                     SourceStatus = MessageSourceStatus.Live,

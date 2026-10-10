@@ -206,7 +206,8 @@ public class LineCollectorTests : IDisposable
         Assert.Equal(2, msgs.GetArrayLength());
         var first = msgs[0];
         Assert.Equal("m1", first.GetProperty("msgId").GetString());
-        Assert.Equal("Alice Chen", first.GetProperty("sender").GetString()); // resolved via _contact
+        Assert.Equal("uALICE", first.GetProperty("sender").GetString());        // stable id
+        Assert.Equal("Alice Chen", first.GetProperty("senderName").GetString()); // resolved via _contact
         Assert.Equal("2025-10-09T08:53:20.000Z", first.GetProperty("sentAt").GetString());
         var media = msgs[1];
         Assert.Equal("image", media.GetProperty("mediaKind").GetString());
@@ -457,6 +458,30 @@ public class LineCollectorTests : IDisposable
         Assert.Equal(LineState.EncryptedStore, line.State);
         Assert.Contains("does not fit", line.LastError);
         Assert.Empty(Batches());
+    }
+
+    [Fact]
+    public async Task Dm_marks_my_messages_from_me_and_resolves_sender_names()
+    {
+        Seed(c =>
+        {
+            LineFixture.Contact(c, "uBOB", "Bob");          // the peer
+            LineFixture.Chat(c, "uBOB");                     // a 1:1 chat keyed by the peer mid
+            LineFixture.Message(c, "m1", "uBOB", "uBOB", 1_760_000_000_000, "hi from Bob"); // peer -> theirs
+            LineFixture.Message(c, "m2", "uBOB", "uME", 1_760_000_100_000, "hi from me");    // me -> mine
+        });
+
+        var line = NewCollector();
+        await line.StartAsync(default);
+        await line.TickAsync(default);
+
+        var dm = Batches().Single(b => b.Root.GetProperty("convKey").GetString() == "uBOB");
+        var msgs = dm.Root.GetProperty("messages");
+        var theirs = msgs[0]; var mine = msgs[1];
+        Assert.False(theirs.GetProperty("fromMe").GetBoolean());
+        Assert.Equal("Bob", theirs.GetProperty("senderName").GetString());
+        Assert.True(mine.GetProperty("fromMe").GetBoolean());
+        Assert.Equal("You", mine.GetProperty("senderName").GetString());
     }
 
     private static int CountMessages(IReadOnlyList<CapturedRecord> batches) =>

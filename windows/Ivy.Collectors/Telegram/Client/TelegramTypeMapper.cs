@@ -61,7 +61,7 @@ public static class TelegramTypeMapper
     }
 
     /// <summary>Map one history/update message. Returns null for empties; service messages become text-less entries.</summary>
-    public static TgMessage? MapMessage(MessageBase messageBase)
+    public static TgMessage? MapMessage(MessageBase messageBase, IReadOnlyDictionary<long, User>? users = null)
     {
         if (messageBase is MessageEmpty) return null;
         if (messageBase is not Message m)
@@ -69,6 +69,8 @@ public static class TelegramTypeMapper
             // MessageService (joins, title changes, ...): keep the slot so ids/cursors stay dense, no body.
             return new TgMessage(messageBase.ID, SenderOf(messageBase.From, messageBase.Peer), AsUtc(messageBase.Date), "");
         }
+        var fromMe = m.flags.HasFlag(Message.Flags.out_);
+        var senderName = ResolveSenderName(m.from_id, users);
 
         var attachments = MapMedia(m.media, m.id);
         return new TgMessage(
@@ -82,7 +84,15 @@ public static class TelegramTypeMapper
             MediaKind: MediaKind(m.media),
             Deleted: false,
             DeletedAt: null,
-            Attachments: attachments);
+            Attachments: attachments,
+            FromMe: fromMe,
+            SenderName: senderName);
+    }
+
+    private static string? ResolveSenderName(Peer? from, IReadOnlyDictionary<long, User>? users)
+    {
+        if (from is PeerUser pu && users is not null && users.TryGetValue(pu.user_id, out var u)) return DisplayName(u);
+        return null;
     }
 
     private static string SenderOf(Peer? from, Peer? peer)

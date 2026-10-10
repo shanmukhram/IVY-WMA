@@ -320,6 +320,8 @@ public sealed class TelegramCollector : Collector<TelegramSettings>
             {
                 MsgId = m.MsgId.ToString(System.Globalization.CultureInfo.InvariantCulture),
                 Sender = m.Sender,
+                FromMe = m.FromMe,
+                SenderName = m.FromMe ? "You" : (string.IsNullOrEmpty(m.SenderName) ? null : m.SenderName),
                 SentAt = IvyTime.Format(m.SentAt),
                 Text = m.Text,
                 ReplyTo = m.ReplyTo?.ToString(System.Globalization.CultureInfo.InvariantCulture),

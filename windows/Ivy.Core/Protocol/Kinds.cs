@@ -33,6 +33,8 @@ public static class PayloadKinds
     public const string Media = "media";
     /// <summary>A document original uploaded by the device's media policy (PLAN decision 8), linked from <c>file_meta.originalBlobOid</c>.</summary>
     public const string Document = "document";
+    /// <summary>A chat or contact profile image, linked from ChatMeta.avatarBlobOid.</summary>
+    public const string Avatar = "avatar";
 }
 
 public static class Kinds

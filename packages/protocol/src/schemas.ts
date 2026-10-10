@@ -132,6 +132,10 @@ export const Message = z.object({
    */
   msgId: z.string().min(1),
   sender: z.string(),
+  /** true when the account's own user sent this; the UI uses it for the bubble side, not a name guess */
+  fromMe: z.boolean().optional(),
+  /** the sender's resolved human display name; `sender` stays the stable platform id (used for merge) */
+  senderName: z.string().min(1).optional(),
   sentAt: ts,
   text: z.string(),
   replyTo: z.string().optional(),
@@ -163,6 +167,8 @@ export const ChatMeta = z.object({
   participantCount: z.number().int().nonnegative().optional(),
   /** the chat type as the platform names it (private, group, supergroup, channel, secret, ...) */
   chatType: z.string().min(1).optional(),
+  /** the chat/peer profile image, uploaded as a chunked blob with payloadKind "avatar" */
+  avatarBlobOid: z.string().min(1).optional(),
 });
 
 export const MessageBatchRecord = z.object({

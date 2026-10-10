@@ -233,6 +233,10 @@ public sealed record ChatMessage
     /// </summary>
     [JsonPropertyName("msgId")] public required string MsgId { get; init; }
     [JsonPropertyName("sender")] public required string Sender { get; init; }
+    /// <summary>True when the account's own user sent this message (drives the bubble side on the Mac).</summary>
+    [JsonPropertyName("fromMe")] public bool? FromMe { get; init; }
+    /// <summary>The sender's resolved human display name; <see cref="Sender"/> stays the stable platform id.</summary>
+    [JsonPropertyName("senderName")] public string? SenderName { get; init; }
     /// <summary>The source's own send time (ISO-8601).</summary>
     [JsonPropertyName("sentAt")] public required string SentAt { get; init; }
     [JsonPropertyName("text")] public required string Text { get; init; }
@@ -266,6 +270,8 @@ public sealed record ChatMeta
     [JsonPropertyName("participantCount")] public int? ParticipantCount { get; init; }
     /// <summary>The chat type in the platform's own words (<c>private</c>, <c>group</c>, <c>supergroup</c>, <c>channel</c>, <c>secret</c>, ...).</summary>
     [JsonPropertyName("chatType")] public string? ChatType { get; init; }
+    /// <summary>The chat/peer profile image, uploaded as a chunked blob (payloadKind <c>avatar</c>).</summary>
+    [JsonPropertyName("avatarBlobOid")] public string? AvatarBlobOid { get; init; }
 }
 
 /// <summary><c>message_batch</c> (C1-C10, WT1-WT4, WL1-WL3, WX1): messages of one conversation from one capture source.</summary>
