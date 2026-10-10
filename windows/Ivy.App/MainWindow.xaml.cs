@@ -53,6 +53,10 @@ public sealed partial class MainWindow : Window
     private void PauseScroll_Changed(object sender, RoutedEventArgs e) =>
         ViewModel.Feed.ScrollPaused = PauseScrollBox.IsChecked == true;
 
+    // PasswordBox.Password is not a bindable dependency property; mirror it into the view model here.
+    private void TelegramPasscode_Changed(object sender, RoutedEventArgs e) =>
+        ViewModel.Conversation.PasscodeText = TelegramPasscodeBox.Password;
+
     private async Task PickInto(StringListViewModel list)
     {
         try { await list.PickAndAddAsync(); }

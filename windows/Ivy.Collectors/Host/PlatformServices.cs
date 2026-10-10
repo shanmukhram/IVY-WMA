@@ -25,6 +25,19 @@ public static class PlatformServices
         return null;
     }
 
+    /// <summary>
+    /// The production Telegram client factory, used when running on Windows and Telegram Desktop's public
+    /// <c>api_id</c>/<c>api_hash</c> have been configured (<see cref="Telegram.Client.TelegramApiCredentials.DesktopDefault"/>).
+    /// Off Windows, or before the credentials are set, returns null so the collector reports "not configured"
+    /// and tests keep driving the scripted fake.
+    /// </summary>
+    public static Telegram.ITelegramClientFactory? CreateTelegramClientFactory(Func<Telegram.Client.ITelegramSessionProtector?>? protector = null)
+    {
+        if (!OperatingSystem.IsWindows()) return null;
+        if (Telegram.Client.TelegramApiCredentials.DesktopDefault is not { } creds) return null;
+        return new Telegram.Client.WTelegramClientFactory(creds, protector);
+    }
+
     /// <summary>True when this assembly was built with the Win32 implementations.</summary>
     public static bool HasWindowsImplementations =>
 #if WINDOWS

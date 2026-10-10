@@ -437,6 +437,11 @@ public class MainViewModelTests
         public CollectorSettings GetSettings() => new();
         public Task ApplySettingsAsync(CollectorSettings settings) => Task.FromException(new ArgumentException("roots: not a folder"));
         public Task StartAsync(CancellationToken ct = default) => Task.CompletedTask;
+        public Task ApplyTelegramPasscodeAsync(string passcode) => Task.CompletedTask;
+        public bool TelegramIncludeChannels => true;
+        public Task SetTelegramIncludeChannelsAsync(bool include) => Task.CompletedTask;
+        public Task RunLineProbeAsync() => Task.CompletedTask;
+        public string? LineReportPath => null;
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 }

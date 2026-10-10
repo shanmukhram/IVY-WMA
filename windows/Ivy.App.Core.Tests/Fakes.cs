@@ -120,6 +120,18 @@ public sealed class FakeHost : ICollectorHostView
         Disposed = true;
         return ValueTask.CompletedTask;
     }
+
+    // Conversation controls (task 1.13 part 2).
+    public List<string> Passcodes { get; } = new();
+    public bool IncludeChannels { get; set; } = true;
+    public int ProbeRuns { get; private set; }
+    public string? ReportPath { get; set; }
+
+    public Task ApplyTelegramPasscodeAsync(string passcode) { Passcodes.Add(passcode); return Task.CompletedTask; }
+    public bool TelegramIncludeChannels => IncludeChannels;
+    public Task SetTelegramIncludeChannelsAsync(bool include) { IncludeChannels = include; return Task.CompletedTask; }
+    public Task RunLineProbeAsync() { ProbeRuns++; ReportPath ??= @"C:\IVY\line-probe-26.3.json"; return Task.CompletedTask; }
+    public string? LineReportPath => ReportPath;
 }
 
 public sealed class FakeStartup : IStartupRegistration

@@ -75,6 +75,19 @@ public sealed class TelegramCollector : Collector<TelegramSettings>
     public DateTimeOffset? FloodWaitUntil => _floodUntil;
     public TelegramStore Store => _store;
 
+    /// <summary>True when a Telegram Desktop local passcode has been stored (so the UI knows it is set, WX2).</summary>
+    public bool HasPasscode => _passcode.HasPasscode;
+
+    /// <summary>
+    /// Store the Telegram Desktop local passcode (entered once in the IVY window) and drop the connection so the
+    /// next tick re-resolves tdata with it. The caller zeroes <paramref name="passcode"/> after this returns.
+    /// </summary>
+    public void SetPasscode(ReadOnlySpan<byte> passcode)
+    {
+        _passcode.StorePasscode(passcode);
+        ResetConnection();
+    }
+
     protected override void Validate(TelegramSettings s)
     {
         if (s.HistoryPageSize is < 1 or > 100) throw new ArgumentException("historyPageSize must be between 1 and 100");

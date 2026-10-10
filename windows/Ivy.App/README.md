@@ -99,12 +99,13 @@ The design is deliberately plain (PLAN decision 5): dark background, 1px borders
 - **Header**
   - **Running/Paused** switch. It pauses both capture (every collector) and uploads. The uploader persists the pause, and capture is re-synced to it on start.
   - Error lines from the collector host or from settings, if any.
-- **Collectors**: one row each for files, screenshots, app usage and notifications. Each row has:
+- **Collectors**: one row each for files, screenshots, app usage, notifications, LINE and Telegram. Each row has:
   - an on/off switch;
   - last capture: the newer of the collector's own time and the last `queued` entry in the activity log;
   - last upload: the last `uploaded` entry for that collector;
   - queue depth and bytes;
   - a status dot and text, plus the collector's detail line (scan progress, fallbacks).
+- **Conversation capture** (Telegram and LINE): each shows the collector's own status/detail line (per-chat progress, honest states). Telegram: an **Include channels** toggle (groups and DMs are always captured), and — only when the row reports **needs passcode** — a passcode box and **Apply** that stores the Telegram Desktop local passcode via DPAPI and reconnects. LINE: **Run probe** (one-shot) and **Open report** (opens the probe JSON in the default app via ShellExecute), with the report path shown.
 - **Initial file index**: files scanned / estimated, and bytes queued by the files collector.
 - **Upload queue**
   - pending objects and bytes, and the retrying count;
@@ -171,7 +172,7 @@ The design is deliberately plain (PLAN decision 5): dark background, 1px borders
 
 **Collectors**
 
-- [ ] All four rows appear.
+- [ ] All six rows appear (files, screenshots, app usage, notifications, LINE, Telegram).
 - [ ] Usage turns green within about 30 s, showing the time of its last capture.
 - [ ] Notifications turns green: on current Windows 11 builds the notification database is readable by a standard user. Red with a reason means the snapshot copy failed.
 - [ ] Turning a row off makes it grey and stops it. Restart the app and it is still off.
@@ -224,6 +225,28 @@ The design is deliberately plain (PLAN decision 5): dark background, 1px borders
 - [ ] A cap of `256` KB/s with a few hundred MB of photos: queue bytes stop growing at about 1 GB of originals waiting ("originals waiting for the uploader" in the detail), and the disk does not fill. Pause, then quit and restart: the counts are the same afterwards, and uploads resume where they stopped.
 - [ ] A `collector_config` from the Mac with `{"documentCapMB": 2, "documentExtensions": ["pdf","txt"]}` takes effect at once: a `config` line appears and the rescan starts. The panel shows the new values after the app restarts (it loads settings at start), and they survive the restart.
 - [ ] If files in a OneDrive folder are cloud-only, check whether uploading their originals downloads them. If it does, decide whether to exclude OneDrive or accept it.
+
+**Conversation capture (Telegram and LINE) — third run**
+
+This is the first run with the real Telegram adapter wired (`WTelegramClientAdapter` over the WTelegramClient package) and with `TelegramApiCredentials.DesktopDefault` set to Telegram Desktop's own public `api_id`/`api_hash`. Telegram Desktop must already be signed in on this PC. See `windows/README.md` (Telegram section) for what each state means.
+
+Telegram:
+
+- [ ] The Telegram row and the **Conversation capture → Telegram** panel show a status line. With the credentials unset it reads **not configured**; once set it moves to connecting, then **ok** with per-chat progress ("chats done/total, N messages").
+- [ ] If Telegram Desktop has a **local passcode**: the row reads **needs passcode** and the passcode box appears. Type it and press **Apply**. The feed shows a `config`/reconnect line, `telegram-passcode.bin` exists under `%LOCALAPPDATA%\IVY\keys\`, and the row clears to **ok** on the next tick. The passcode is never in the logs or the queue.
+- [ ] In Telegram (phone or desktop): **Settings → Devices / Active sessions** shows **no new session** for IVY — it rides the existing Telegram Desktop session. A new/unknown session means the api_id/api_hash or device string is wrong; stop and fix before capturing.
+- [ ] Backfill progress climbs across ticks (chats done/total and message count rise); the import bar reflects it. Edits and deletions picked up live show as updated/`deleted_at_source` entries.
+- [ ] Toggle **Include channels** off: broadcast channels drop out of capture; groups and DMs keep going. Toggle it back on and they return. The setting survives a restart.
+- [ ] A secret chat is reported **phone-only** in the detail and produces **no** records.
+- [ ] Attachments: an image and a PDF under the caps upload as `photo`/`document` blobs; a video stays metadata-only until a `file_request` from the (fake) Mac fetches it as `attachment`.
+- [ ] On the fake Mac (`tools/fake-mac`), pick one Telegram chat and confirm its `message_batch` records decrypt and the messages read correctly, with `sourceSession = windows:telegram-desktop` and `coverage = complete`.
+- [ ] `FLOOD_WAIT` (if hit during the first big backfill) shows "flood-wait until T" and the row resumes on its own after that time.
+
+LINE:
+
+- [ ] Press **Run probe** in the LINE panel. The detail shows "Probe complete: N files, M databases, K readable" and the report path appears. `%LOCALAPPDATA%\IVY\line-probe-<version>.json` exists.
+- [ ] Press **Open report**: the JSON opens in the default app. Its summary matches the detail line, and it lists the LINE data locations with per-file kinds (no message content).
+- [ ] The row's state is one of the honest states (`ok partial`, `probe needed`, `store not found`, `unverified map`, `encrypted store`, `LINE not installed`) with its reason — nothing is captured unless the map verifies, and Windows coverage is always `partial`.
 
 **Quit**
 

@@ -65,11 +65,11 @@ public partial class App : Application
             }, keys, loggers: _loggers);
             await _agent.StartAsync();
             _view = new VaultAgentView(_agent);
-            _host = CollectorHostAdapter.Create(_agent, _loggers);
+            _host = CollectorHostAdapter.Create(_agent, _loggers, AppPaths.KeysDirectory);
 
             var picker = new FolderPickerService(() => _window?.Hwnd ?? IntPtr.Zero);
             _vm = new MainViewModel(_view, _host, new DispatcherQueueUiDispatcher(_dispatcher), new RegistryStartupRegistration(),
-                picker.PickAsync, AppPaths.ExePath, AppPaths.Version);
+                picker.PickAsync, AppPaths.ExePath, AppPaths.Version, openFile: OpenInShell);
             _window = new MainWindow(_vm);
             _window.AppWindow.Closing += OnWindowClosing;
 
@@ -114,6 +114,13 @@ public partial class App : Application
             TrayMenuItem.Separator,
             new TrayMenuItem("Quit", () => _dispatcher?.TryEnqueue(() => _ = QuitAsync())),
         };
+    }
+
+    /// <summary>Open a file (the LINE probe report) in its default app via ShellExecute.</summary>
+    private void OpenInShell(string path)
+    {
+        try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(path) { UseShellExecute = true }); }
+        catch (Exception e) { _log?.LogWarning(e, "opening {Path} failed", path); }
     }
 
     private void ShowWindow()

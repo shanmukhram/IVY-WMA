@@ -1,8 +1,11 @@
+using System.Text;
 using System.Text.Json;
 using Ivy.App.Core.Hosting;
 using Ivy.Collectors.Files;
 using Ivy.Collectors.Host;
+using Ivy.Collectors.Line;
 using Ivy.Collectors.Screenshots;
+using Ivy.Collectors.Telegram;
 using Ivy.Collectors.Usage;
 using Ivy.Core.Agent;
 using Ivy.Core.Records;
@@ -30,9 +33,22 @@ public sealed class CollectorHostAdapter : ICollectorHostView
 
     public CollectorHostAdapter(CollectorHost host) => _host = host;
 
-    /// <summary>Build the four Windows collectors over the agent and register them as its rescan/collector_config handlers.</summary>
-    public static ICollectorHostView Create(VaultAgent agent, ILoggerFactory? loggers) =>
-        new CollectorHostAdapter(CollectorHost.CreateFor(agent, new CollectorHostOptions { Loggers = loggers }));
+    /// <summary>Build the Windows collectors over the agent and register them as its rescan/collector_config handlers.</summary>
+    public static ICollectorHostView Create(VaultAgent agent, ILoggerFactory? loggers, string? keysDirectory = null)
+    {
+        Ivy.Collectors.Telegram.ITelegramPasscodeStore? passcode = null;
+        Func<Ivy.Collectors.Telegram.Client.ITelegramSessionProtector?>? protector = null;
+        // The passcode and the running Telegram session stay on the PC, DPAPI-protected (WX2).
+        if (keysDirectory is not null && OperatingSystem.IsWindows())
+        {
+            passcode = new Ivy.Collectors.Telegram.DpapiTelegramPasscodeStore(keysDirectory);
+            protector = () => OperatingSystem.IsWindows()
+                ? new Ivy.Collectors.Telegram.Client.DpapiSessionProtector(keysDirectory)
+                : null;
+        }
+        var options = new CollectorHostOptions { Loggers = loggers, TelegramPasscodeStore = passcode, TelegramSessionProtector = protector };
+        return new CollectorHostAdapter(CollectorHost.CreateFor(agent, options));
+    }
 
     public CollectorHost Host => _host;
 
@@ -135,6 +151,38 @@ public sealed class CollectorHostAdapter : ICollectorHostView
     private static bool Same(IReadOnlyList<string> a, IReadOnlyList<string> b) => a.SequenceEqual(b, StringComparer.Ordinal);
 
     public Task StartAsync(CancellationToken ct = default) => _host.StartAsync(ct);
+
+    // ---- conversation controls (task 1.13 part 2) -------------------------------------------------
+
+    private const string Telegram = "telegram";
+    private const string Line = "line";
+
+    public async Task ApplyTelegramPasscodeAsync(string passcode)
+    {
+        var bytes = Encoding.UTF8.GetBytes(passcode);
+        try { _host.Get<TelegramCollector>().SetPasscode(bytes); }
+        finally { System.Security.Cryptography.CryptographicOperations.ZeroMemory(bytes); }
+        // Restart so the next tick re-resolves tdata with the passcode immediately.
+        await _host.StopCollectorAsync(Telegram);
+        await _host.StartCollectorAsync(Telegram);
+    }
+
+    public bool TelegramIncludeChannels => _host.Get<TelegramCollector>().Settings.IncludeChannels;
+
+    public async Task SetTelegramIncludeChannelsAsync(bool include)
+    {
+        if (include == TelegramIncludeChannels) return;
+        await UpdateAsync(Telegram, new() { ["includeChannels"] = JsonSerializer.SerializeToElement(include) });
+    }
+
+    public async Task RunLineProbeAsync()
+    {
+        // One-shot: the collector clears runProbe after it runs. Tick once so the report is produced now.
+        await UpdateAsync(Line, new() { ["runProbe"] = JsonSerializer.SerializeToElement(true) });
+        await _host.TickNowAsync(Line);
+    }
+
+    public string? LineReportPath => (_host.Find(Line) as LineDesktopCollector)?.LastReportPath;
 
     public ValueTask DisposeAsync() => _host.DisposeAsync();
 }

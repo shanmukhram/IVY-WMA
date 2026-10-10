@@ -143,6 +143,40 @@
                             </StackPanel>
                         </Border>
 
+                        <!-- Conversation capture: Telegram (WT) and LINE (WL) -->
+                        <Border BorderBrush="{StaticResource IvyBorder}" BorderThickness="1" Background="{StaticResource IvyPanel}" Padding="12">
+                            <StackPanel Spacing="8">
+                                <TextBlock Text="Conversation capture" FontWeight="SemiBold" />
+
+                                <TextBlock Text="Telegram" Foreground="{StaticResource IvyMuted}" />
+                                <TextBlock Text="{x:Bind ViewModel.Conversation.TelegramStatusText, Mode=OneWay}" TextWrapping="Wrap"
+                                           FontFamily="{StaticResource IvyMono}" />
+                                <ToggleSwitch Header="Include channels (groups and DMs are always captured)"
+                                              IsOn="{x:Bind ViewModel.Conversation.IncludeChannels, Mode=TwoWay}" />
+                                <StackPanel Orientation="Horizontal" Spacing="8"
+                                            Visibility="{x:Bind ViewModel.Conversation.TelegramNeedsPasscode, Mode=OneWay}">
+                                    <PasswordBox x:Name="TelegramPasscodeBox" Width="220"
+                                                 Header="Telegram Desktop local passcode"
+                                                 PasswordChanged="TelegramPasscode_Changed"
+                                                 BorderBrush="{StaticResource IvyBorder}" BorderThickness="1" />
+                                    <Button Content="Apply" VerticalAlignment="Bottom"
+                                            Command="{x:Bind ViewModel.Conversation.ApplyPasscodeCommand}" />
+                                </StackPanel>
+                                <TextBlock Text="{x:Bind ViewModel.Conversation.PasscodeStatusText, Mode=OneWay}"
+                                           FontFamily="{StaticResource IvyMono}" TextWrapping="Wrap" />
+
+                                <TextBlock Text="LINE" Foreground="{StaticResource IvyMuted}" Margin="0,8,0,0" />
+                                <TextBlock Text="{x:Bind ViewModel.Conversation.LineStatusText, Mode=OneWay}" TextWrapping="Wrap"
+                                           FontFamily="{StaticResource IvyMono}" />
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <Button Content="Run probe" Command="{x:Bind ViewModel.Conversation.RunProbeCommand}" />
+                                    <Button Content="Open report" Command="{x:Bind ViewModel.Conversation.OpenReportCommand}" />
+                                </StackPanel>
+                                <TextBlock Text="{x:Bind ViewModel.Conversation.ReportPathText, Mode=OneWay}"
+                                           FontFamily="{StaticResource IvyMono}" TextWrapping="Wrap" IsTextSelectionEnabled="True" />
+                            </StackPanel>
+                        </Border>
+
                         <!-- Initial file index -->
                         <Border BorderBrush="{StaticResource IvyBorder}" BorderThickness="1" Background="{StaticResource IvyPanel}" Padding="12">
                             <StackPanel Spacing="6">

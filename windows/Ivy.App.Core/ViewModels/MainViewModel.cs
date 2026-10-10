@@ -41,7 +41,7 @@ public sealed class MainViewModel : ObservableObject
     private string _hostError = "";
 
     public MainViewModel(IAgentView agent, ICollectorHostView host, IUiDispatcher ui, IStartupRegistration startup,
-        Func<Task<string?>> pickFolder, string exePath, string appVersion, TimeProvider? time = null)
+        Func<Task<string?>> pickFolder, string exePath, string appVersion, TimeProvider? time = null, Action<string>? openFile = null)
     {
         _agent = agent;
         _host = host;
@@ -51,6 +51,7 @@ public sealed class MainViewModel : ObservableObject
         VersionText = "IVY for Windows " + appVersion;
         Pairing = new PairingViewModel(agent, ui);
         Settings = new SettingsViewModel(host, agent, startup, exePath, pickFolder);
+        Conversation = new ConversationViewModel(host, openFile);
         foreach (var n in CollectorNames.All) Collectors.Add(new CollectorRowViewModel(n, SetCollectorEnabled));
         SyncNowCommand = new AsyncRelayCommand(SyncNowAsync, () => _agent.IsPaired);
         Pairing.Paired += (_, _) => OnPaired();
@@ -61,6 +62,7 @@ public sealed class MainViewModel : ObservableObject
     public string VersionText { get; }
     public PairingViewModel Pairing { get; }
     public SettingsViewModel Settings { get; }
+    public ConversationViewModel Conversation { get; }
     public ActivityFeed Feed { get; } = new();
     public ObservableCollection<CollectorRowViewModel> Collectors { get; } = new();
     public AsyncRelayCommand SyncNowCommand { get; }
@@ -189,6 +191,7 @@ public sealed class MainViewModel : ObservableObject
         foreach (var info in infos)
             if (!Collectors.Any(r => r.Name == info.Name)) Collectors.Add(new CollectorRowViewModel(info.Name, SetCollectorEnabled));
         foreach (var row in Collectors) row.Update(byName.GetValueOrDefault(row.Name), snap, paused, now);
+        Conversation.Update(byName.GetValueOrDefault(CollectorNames.Telegram), byName.GetValueOrDefault(CollectorNames.Line));
 
         PendingObjectsText = Fmt.Count(snap.PendingObjects);
         PendingBytesText = Fmt.Bytes(snap.PendingBytes);

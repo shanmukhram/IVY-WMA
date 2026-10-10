@@ -30,6 +30,10 @@ public sealed class CollectorHostOptions
     public IThumbnailGenerator? Thumbnails { get; init; }
     /// <summary>Null = no Telegram MTProto client (the collector reports "not configured"); tests inject a fake, the app the real adapter.</summary>
     public Telegram.ITelegramClientFactory? TelegramClientFactory { get; init; }
+    /// <summary>Null = in-memory passcode (tests, non-Windows); the app supplies the DPAPI store so the passcode persists (WX2).</summary>
+    public Telegram.ITelegramPasscodeStore? TelegramPasscodeStore { get; init; }
+    /// <summary>Where the real client persists its running session bytes (DPAPI keys dir); null = memory only.</summary>
+    public Func<Telegram.Client.ITelegramSessionProtector?>? TelegramSessionProtector { get; init; }
     /// <summary>False: do not fall back to platform implementations for null services (tests).</summary>
     public bool UsePlatformDefaults { get; init; } = true;
     public TimeProvider? Time { get; init; }
@@ -78,6 +82,7 @@ public sealed class CollectorHost : IRescanHandler, ICollectorConfigHandler, IAs
         var usn = o.UsnJournal ?? (o.UsePlatformDefaults ? PlatformServices.CreateUsnJournal() : null);
         var probe = o.ForegroundProbe ?? (o.UsePlatformDefaults ? PlatformServices.CreateForegroundProbe() : null);
         var thumbs = o.Thumbnails ?? ThumbnailGenerator.CreateDefault();
+        var telegram = o.TelegramClientFactory ?? (o.UsePlatformDefaults ? PlatformServices.CreateTelegramClientFactory(o.TelegramSessionProtector) : null);
         return new CollectorHost(context, new CollectorBase[]
         {
             new FileIndexCollector(context, fs, changes, usn, thumbs),
@@ -85,7 +90,7 @@ public sealed class CollectorHost : IRescanHandler, ICollectorConfigHandler, IAs
             new UsageCollector(context, probe),
             new NotificationCollector(context, o.NotificationReader),
             new LineDesktopCollector(context),
-            new Telegram.TelegramCollector(context, clientFactory: o.TelegramClientFactory),
+            new Telegram.TelegramCollector(context, clientFactory: telegram, passcode: o.TelegramPasscodeStore),
         });
     }
 

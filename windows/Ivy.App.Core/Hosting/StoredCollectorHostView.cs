@@ -68,6 +68,14 @@ public sealed class StoredCollectorHostView : ICollectorHostView
     }
 
     public Task StartAsync(CancellationToken ct = default) => Task.CompletedTask;
+
+    // No live collectors here, so the conversation controls are inert (the window hides them when not paired).
+    public Task ApplyTelegramPasscodeAsync(string passcode) => Task.CompletedTask;
+    public bool TelegramIncludeChannels => true;
+    public Task SetTelegramIncludeChannelsAsync(bool include) => Task.CompletedTask;
+    public Task RunLineProbeAsync() => Task.CompletedTask;
+    public string? LineReportPath => null;
+
     public ValueTask DisposeAsync() => ValueTask.CompletedTask;
 
     internal static DateTimeOffset? ParseOrNull(string? s)

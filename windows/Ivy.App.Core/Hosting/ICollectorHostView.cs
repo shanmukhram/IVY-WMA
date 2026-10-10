@@ -70,4 +70,20 @@ public interface ICollectorHostView : IAsyncDisposable
 
     /// <summary>Start collectors. Called at startup when already paired, and right after pairing.</summary>
     Task StartAsync(CancellationToken ct = default);
+
+    /// <summary>
+    /// Store the Telegram Desktop local passcode (DPAPI, WX2) and reconnect, so a "needs passcode" row can be
+    /// cleared from the window. The bytes are zeroed by the implementation after use.
+    /// </summary>
+    Task ApplyTelegramPasscodeAsync(string passcode);
+
+    /// <summary>Telegram "include channels" toggle (WT1): groups and DMs are always captured.</summary>
+    bool TelegramIncludeChannels { get; }
+    Task SetTelegramIncludeChannelsAsync(bool include);
+
+    /// <summary>Run the LINE store probe once (WL1) and refresh the row; the report path is then in <see cref="LineReportPath"/>.</summary>
+    Task RunLineProbeAsync();
+
+    /// <summary>The last LINE probe report written, or null if none has been produced on this machine.</summary>
+    string? LineReportPath { get; }
 }
