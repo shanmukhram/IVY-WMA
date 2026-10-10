@@ -1,0 +1,160 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Settings, grouped like Windows Settings: Startup, Appearance, Network, Advanced (folders, version, unpair). -->
+<Page
+    x:Class="Ivy.App.Pages.SettingsPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:local="using:Ivy.App"
+    NavigationCacheMode="Required">
+
+    <ScrollViewer>
+        <StackPanel MaxWidth="{StaticResource PageMaxWidth}" Margin="{StaticResource PageMargin}" Spacing="4">
+            <TextBlock Text="Settings" Style="{StaticResource PageTitleStyle}" />
+            <TextBlock Text="Capture settings live on each collector's page. These are for the app itself." Style="{StaticResource PageSubtitleStyle}" />
+
+            <InfoBar IsClosable="False" Severity="Error" Title="Settings"
+                     IsOpen="{x:Bind local:Ui.HasText(ViewModel.Settings.SettingsError), Mode=OneWay}"
+                     Visibility="{x:Bind local:Ui.VisibleIfText(ViewModel.Settings.SettingsError), Mode=OneWay}"
+                     Message="{x:Bind ViewModel.Settings.SettingsError, Mode=OneWay}" />
+
+            <!-- ============ Startup ============ -->
+            <TextBlock Text="Startup" Style="{StaticResource SectionHeaderStyle}" Margin="1,8,0,4" />
+            <Border Style="{StaticResource SettingsRowStyle}">
+                <Grid ColumnSpacing="16">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <FontIcon Glyph="&#xE7E8;" FontSize="16" VerticalAlignment="Center" />
+                    <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                        <TextBlock Text="Run at login" />
+                        <TextBlock Text="Starts in the tray when you sign in. Capture needs no window." Style="{StaticResource SecondaryTextStyle}" />
+                    </StackPanel>
+                    <ToggleSwitch Grid.Column="2" MinWidth="0" OnContent="On" OffContent="Off" AccessKey="G"
+                                  IsOn="{x:Bind ViewModel.Settings.RunAtLogin, Mode=TwoWay}"
+                                  AutomationProperties.Name="Run at login" />
+                </Grid>
+            </Border>
+
+            <!-- ============ Appearance ============ -->
+            <TextBlock Text="Appearance" Style="{StaticResource SectionHeaderStyle}" />
+            <Border Style="{StaticResource SettingsRowStyle}">
+                <Grid ColumnSpacing="16">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <FontIcon Glyph="&#xE790;" FontSize="16" VerticalAlignment="Center" />
+                    <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                        <TextBlock Text="App theme" />
+                        <TextBlock Text="Light or dark, or follow Windows." Style="{StaticResource SecondaryTextStyle}" />
+                    </StackPanel>
+                    <ComboBox Grid.Column="2" MinWidth="200" VerticalAlignment="Center" AccessKey="M"
+                              SelectedIndex="{x:Bind ViewModel.Appearance.ThemeIndex, Mode=TwoWay}"
+                              AutomationProperties.Name="App theme">
+                        <ComboBoxItem Content="Use system setting" />
+                        <ComboBoxItem Content="Light" />
+                        <ComboBoxItem Content="Dark" />
+                    </ComboBox>
+                </Grid>
+            </Border>
+
+            <!-- ============ Network ============ -->
+            <TextBlock Text="Network" Style="{StaticResource SectionHeaderStyle}" />
+            <Border Style="{StaticResource SettingsRowStyle}">
+                <Grid ColumnSpacing="16">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <FontIcon Glyph="&#xE968;" FontSize="16" VerticalAlignment="Center" />
+                    <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                        <TextBlock Text="Upload bandwidth cap" />
+                        <TextBlock Style="{StaticResource SecondaryTextStyle}"><Run Text="KB/s, 0 = unlimited. " /><Run Text="{x:Bind ViewModel.Settings.BandwidthStatus, Mode=OneWay}" /></TextBlock>
+                    </StackPanel>
+                    <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                        <TextBox Width="120" FontFamily="{StaticResource IvyMono}" PlaceholderText="KB/s"
+                                 Text="{x:Bind ViewModel.Settings.BandwidthText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                 AutomationProperties.Name="Bandwidth cap in KB per second, 0 for unlimited" />
+                        <Button Content="Apply" AccessKey="B" Command="{x:Bind ViewModel.Settings.ApplyBandwidthCommand}"
+                                AutomationProperties.Name="Apply bandwidth cap" />
+                    </StackPanel>
+                </Grid>
+            </Border>
+
+            <!-- ============ Advanced ============ -->
+            <TextBlock Text="Advanced" Style="{StaticResource SectionHeaderStyle}" />
+            <Border Style="{StaticResource SettingsRowStyle}">
+                <Grid ColumnSpacing="16">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <FontIcon Glyph="&#xE8B7;" FontSize="16" VerticalAlignment="Center" />
+                    <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                        <TextBlock Text="Data folder" />
+                        <TextBlock Text="{x:Bind ViewModel.Folders.DataDirectory}" Style="{StaticResource MonoValueStyle}" FontSize="12"
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                    </StackPanel>
+                    <Button Grid.Column="2" Content="Open" VerticalAlignment="Center" Command="{x:Bind ViewModel.OpenDataFolderCommand}"
+                            AutomationProperties.Name="Open data folder" />
+                </Grid>
+            </Border>
+            <Border Style="{StaticResource SettingsRowStyle}">
+                <Grid ColumnSpacing="16">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <FontIcon Glyph="&#xE9F9;" FontSize="16" VerticalAlignment="Center" />
+                    <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                        <TextBlock Text="Log folder" />
+                        <TextBlock Text="{x:Bind ViewModel.Folders.LogDirectory}" Style="{StaticResource MonoValueStyle}" FontSize="12"
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                    </StackPanel>
+                    <Button Grid.Column="2" Content="Open" VerticalAlignment="Center" Command="{x:Bind ViewModel.OpenLogFolderCommand}"
+                            AutomationProperties.Name="Open log folder" />
+                </Grid>
+            </Border>
+            <Border Style="{StaticResource SettingsRowStyle}">
+                <Grid ColumnSpacing="16">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <FontIcon Glyph="&#xE946;" FontSize="16" VerticalAlignment="Center" />
+                    <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                        <TextBlock Text="Version" />
+                        <TextBlock Text="{x:Bind ViewModel.VersionText}" Style="{StaticResource SecondaryTextStyle}" IsTextSelectionEnabled="True" />
+                    </StackPanel>
+                </Grid>
+            </Border>
+            <Border Style="{StaticResource SettingsRowStyle}">
+                <Grid ColumnSpacing="16">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <FontIcon Glyph="&#xE71B;" FontSize="16" VerticalAlignment="Center" />
+                    <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                        <TextBlock Text="Unpair this PC" />
+                        <TextBlock Style="{StaticResource SecondaryTextStyle}"
+                                   Text="Forgets this PC's key and tokens. Nothing is captured or uploaded until you pair again; what is already queued stays encrypted on this PC." />
+                        <TextBlock Text="{x:Bind ViewModel.UnpairStatusText, Mode=OneWay}" Style="{StaticResource SecondaryTextStyle}"
+                                   Foreground="{ThemeResource SystemFillColorCriticalBrush}"
+                                   Visibility="{x:Bind local:Ui.VisibleIfText(ViewModel.UnpairStatusText), Mode=OneWay}" />
+                    </StackPanel>
+                    <Button Grid.Column="2" Content="Unpair..." VerticalAlignment="Center" AccessKey="U" Click="Unpair_Click"
+                            IsEnabled="{x:Bind ViewModel.ShowMain, Mode=OneWay}"
+                            AutomationProperties.Name="Unpair this PC" />
+                </Grid>
+            </Border>
+        </StackPanel>
+    </ScrollViewer>
+</Page>

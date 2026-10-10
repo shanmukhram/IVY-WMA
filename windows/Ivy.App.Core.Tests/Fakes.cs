@@ -80,6 +80,17 @@ public sealed class FakeAgent : IAgentView
         return Task.FromResult(r);
     }
 
+    public int Unpairs { get; private set; }
+    public Task UnpairAsync()
+    {
+        Threads.Record("agent.UnpairAsync");
+        Unpairs++;
+        IsPaired = false;
+        DeviceFingerprint = null;
+        MacFingerprint = null;
+        return Task.CompletedTask;
+    }
+
     public IReadOnlyList<ActivityEntry> RecentActivity(int limit) => History.OrderByDescending(e => e.Id).Take(limit).ToList();
     public AgentSnapshot Snapshot() => NextSnapshot;
 

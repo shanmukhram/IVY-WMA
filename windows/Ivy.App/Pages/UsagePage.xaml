@@ -1,0 +1,113 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- App usage collector: status card with its toggle, window-title capture and its exclusion list. -->
+<Page
+    x:Class="Ivy.App.Pages.UsagePage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:local="using:Ivy.App"
+    xmlns:core="using:Ivy.App.Core"
+    NavigationCacheMode="Required">
+
+    <ScrollViewer>
+        <StackPanel MaxWidth="{StaticResource PageMaxWidth}" Margin="{StaticResource PageMargin}" Spacing="8">
+            <Grid ColumnSpacing="16" Margin="0,0,0,12">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <Border Style="{StaticResource GlyphTileStyle}" Width="48" Height="48">
+                    <FontIcon Glyph="&#xE9D2;" FontSize="22" />
+                </Border>
+                <StackPanel Grid.Column="1" Spacing="2">
+                    <TextBlock Text="App usage" Style="{StaticResource TitleTextBlockStyle}" />
+                    <TextBlock Text="{x:Bind ViewModel.UsageRow.Description}" Style="{StaticResource PageSubtitleStyle}" Margin="0" />
+                </StackPanel>
+            </Grid>
+            <InfoBar IsClosable="False"
+                     IsOpen="{x:Bind ViewModel.UsageRow.HasProblem, Mode=OneWay}"
+                     Visibility="{x:Bind ViewModel.UsageRow.HasProblem, Mode=OneWay}"
+                     Severity="{x:Bind local:Ui.Severity(ViewModel.UsageRow.Severity), Mode=OneWay}"
+                     Title="{x:Bind ViewModel.UsageRow.ProblemTitle, Mode=OneWay}"
+                     Message="{x:Bind ViewModel.UsageRow.StatusReason, Mode=OneWay}" />
+            <InfoBar IsClosable="False" Severity="Error" Title="Settings"
+                     IsOpen="{x:Bind local:Ui.HasText(ViewModel.Settings.SettingsError), Mode=OneWay}"
+                     Visibility="{x:Bind local:Ui.VisibleIfText(ViewModel.Settings.SettingsError), Mode=OneWay}"
+                     Message="{x:Bind ViewModel.Settings.SettingsError, Mode=OneWay}" />
+            <Border Style="{StaticResource CardStyle}">
+                <Grid RowSpacing="16">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+                    <Grid ColumnSpacing="8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <Ellipse Width="10" Height="10" VerticalAlignment="Center" Fill="{x:Bind local:Ui.Brush(ViewModel.UsageRow.StatusColor), Mode=OneWay}" />
+                        <TextBlock Grid.Column="1" Text="{x:Bind ViewModel.UsageRow.StatusLabel, Mode=OneWay}" Style="{StaticResource BodyStrongTextBlockStyle}" VerticalAlignment="Center" />
+                        <ToggleSwitch Grid.Column="2" MinWidth="0" OnContent="On" OffContent="Off" AccessKey="N"
+                                      IsOn="{x:Bind ViewModel.UsageRow.Enabled, Mode=TwoWay}"
+                                      AutomationProperties.Name="App usage collector" />
+                    </Grid>
+                    <Grid Grid.Row="1" ColumnSpacing="16" RowSpacing="8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="120" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+                        <TextBlock Grid.Row="0" Text="Status" Style="{StaticResource FieldLabelStyle}" />
+                        <TextBlock Grid.Row="0" Grid.Column="1" Text="{x:Bind ViewModel.UsageRow.StatusReason, Mode=OneWay}" Style="{StaticResource FieldValueStyle}" />
+                        <TextBlock Grid.Row="1" Text="Last capture" Style="{StaticResource FieldLabelStyle}" />
+                        <TextBlock Grid.Row="1" Grid.Column="1" Text="{x:Bind ViewModel.UsageRow.LastCaptureText, Mode=OneWay}" Style="{StaticResource FieldValueStyle}" />
+                        <TextBlock Grid.Row="2" Text="Last upload" Style="{StaticResource FieldLabelStyle}" />
+                        <TextBlock Grid.Row="2" Grid.Column="1" Text="{x:Bind ViewModel.UsageRow.LastUploadText, Mode=OneWay}" Style="{StaticResource FieldValueStyle}" />
+                        <TextBlock Grid.Row="3" Text="Queue" Style="{StaticResource FieldLabelStyle}" />
+                        <TextBlock Grid.Row="3" Grid.Column="1" Text="{x:Bind ViewModel.UsageRow.QueueContributionText, Mode=OneWay}" Style="{StaticResource FieldValueStyle}" />
+                    </Grid>
+                </Grid>
+            </Border>
+            <TextBlock Text="Window titles" Style="{StaticResource SectionHeaderStyle}" />
+            <Border Style="{StaticResource SettingsRowStyle}">
+                <Grid ColumnSpacing="16">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <StackPanel VerticalAlignment="Center">
+                        <TextBlock Text="Capture window titles" />
+                        <TextBlock Text="Off: only the app name is recorded." Style="{StaticResource SecondaryTextStyle}" />
+                    </StackPanel>
+                    <ToggleSwitch Grid.Column="1" MinWidth="0" OnContent="On" OffContent="Off" AccessKey="W"
+                                  IsOn="{x:Bind ViewModel.Settings.WindowTitleCapture, Mode=TwoWay}"
+                                  AutomationProperties.Name="Capture window titles" />
+                </Grid>
+            </Border>
+            <Border Style="{StaticResource CardStyle}">
+                <StackPanel Spacing="12">
+                    <StackPanel>
+                        <TextBlock Text="Never capture titles for" />
+                        <TextBlock Text="An executable name (keepass.exe) or text in the title (InPrivate)." Style="{StaticResource SecondaryTextStyle}" />
+                    </StackPanel>
+                    <ListView x:Name="ExclusionsList" Style="{StaticResource ListBoxStyle}"
+                              ItemsSource="{x:Bind ViewModel.Settings.TitleExclusions.Items}"
+                              AutomationProperties.Name="Title exclusions" />
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <TextBox Width="260" PlaceholderText="e.g. keepass.exe" FontFamily="{StaticResource IvyMono}"
+                                 Text="{x:Bind ViewModel.Settings.TitleExclusions.NewItem, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                 KeyDown="ExclusionBox_KeyDown"
+                                 AutomationProperties.Name="New title exclusion" />
+                        <Button Content="Add" Click="AddExclusion_Click" AutomationProperties.Name="Add title exclusion" />
+                        <Button Content="Remove" Click="RemoveExclusion_Click" AutomationProperties.Name="Remove selected title exclusion" />
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+        </StackPanel>
+    </ScrollViewer>
+</Page>

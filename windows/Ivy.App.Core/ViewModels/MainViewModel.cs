@@ -50,10 +50,12 @@ public sealed class MainViewModel : ObservableObject
     private string _cmdBucket = "";
     private string _fingerprints = "";
     private string _hostError = "";
+    private string _unpairStatus = "";
+    private readonly Action<string>? _openFile;
 
     public MainViewModel(IAgentView agent, ICollectorHostView host, IUiDispatcher ui, IStartupRegistration startup,
         Func<Task<string?>> pickFolder, string exePath, string appVersion, TimeProvider? time = null, Action<string>? openFile = null,
-        ILogger? log = null)
+        ILogger? log = null, AppFolders? folders = null)
     {
         _agent = agent;
         _log = log;
@@ -65,9 +67,21 @@ public sealed class MainViewModel : ObservableObject
         Pairing = new PairingViewModel(agent, ui);
         Settings = new SettingsViewModel(host, agent, startup, exePath, pickFolder);
         Conversation = new ConversationViewModel(host, openFile);
+        _openFile = openFile;
+        var uiState = new UiStateStore(new AgentSettingsAdapter(agent));
+        Navigation = new NavigationViewModel(uiState);
+        Appearance = new AppearanceViewModel(uiState);
+        Folders = folders ?? new AppFolders("", "");
+        OpenDataFolderCommand = new RelayCommand(() => Open(Folders.DataDirectory), () => Folders.DataDirectory.Length > 0);
+        OpenLogFolderCommand = new RelayCommand(() => Open(Folders.LogDirectory), () => Folders.LogDirectory.Length > 0);
+        UnpairCommand = new AsyncRelayCommand(UnpairAsync, () => _agent.IsPaired);
         foreach (var n in CollectorNames.All) Collectors.Add(new CollectorRowViewModel(n, SetCollectorEnabled));
         SyncNowCommand = new AsyncRelayCommand(SyncNowAsync, () => _agent.IsPaired);
-        Pairing.Paired += (_, _) => LastHostWork = OnPairedAsync();
+        Pairing.Paired += (_, _) =>
+        {
+            UnpairCommand.RaiseCanExecuteChanged();
+            LastHostWork = OnPairedAsync();
+        };
         Pairing.Continued += (_, _) => ShowMain = true;
     }
 
@@ -79,6 +93,47 @@ public sealed class MainViewModel : ObservableObject
     public ActivityFeed Feed { get; } = new();
     public ObservableCollection<CollectorRowViewModel> Collectors { get; } = new();
     public AsyncRelayCommand SyncNowCommand { get; }
+
+    // ---- Fluent window (fourth run): navigation, per-page state ------------------------------------------
+
+    /// <summary>Selected page and expanded NavigationView groups (persisted).</summary>
+    public NavigationViewModel Navigation { get; }
+    /// <summary>Theme override (persisted).</summary>
+    public AppearanceViewModel Appearance { get; }
+    /// <summary>Overview page: status card and InfoBars.</summary>
+    public OverviewViewModel Overview { get; } = new();
+    /// <summary>Transfers page: recent commands from the Mac and their outcomes.</summary>
+    public CommandHistory Commands { get; } = new();
+
+    public CollectorRowViewModel FilesRow => Row(CollectorNames.Files);
+    public CollectorRowViewModel ScreenshotsRow => Row(CollectorNames.Screenshots);
+    public CollectorRowViewModel UsageRow => Row(CollectorNames.Usage);
+    public CollectorRowViewModel NotificationsRow => Row(CollectorNames.Notifications);
+    public CollectorRowViewModel TelegramRow => Row(CollectorNames.Telegram);
+    public CollectorRowViewModel LineRow => Row(CollectorNames.Line);
+
+    /// <summary>The Telegram and LINE marks (simple-icons) for the page headers and navigation items.</summary>
+    public BrandGlyph TelegramBrand { get; } = BrandIcons.Telegram;
+    public BrandGlyph LineBrand { get; } = BrandIcons.Line;
+
+    /// <summary>The rows always exist (created for <see cref="CollectorNames.All"/> in the constructor).</summary>
+    private CollectorRowViewModel Row(string name) => Collectors.First(r => r.Name == name);
+
+    /// <summary>Settings > Advanced: where IVY keeps its data and logs.</summary>
+    public AppFolders Folders { get; }
+    public RelayCommand OpenDataFolderCommand { get; }
+    public RelayCommand OpenLogFolderCommand { get; }
+
+    /// <summary>
+    /// Settings > Advanced > Unpair. The shell asks for confirmation first (a ContentDialog), then executes this.
+    /// </summary>
+    public AsyncRelayCommand UnpairCommand { get; }
+    public string UnpairStatusText { get => _unpairStatus; private set => Set(ref _unpairStatus, value); }
+
+    private void Open(string path)
+    {
+        if (path.Length > 0) _openFile?.Invoke(path);
+    }
 
     /// <summary>Paired and past the fingerprint confirmation: show the status panel instead of the pairing panel.</summary>
     public bool ShowMain
@@ -137,7 +192,14 @@ public sealed class MainViewModel : ObservableObject
         _started = true;
         _agent.ActivityAppended += (_, e) => EnqueueFeed(FeedEntry.FromActivity(e));
         _agent.UploadProgress += (_, p) => OnProgress(p);
-        try { Feed.Seed(_agent.RecentActivity(FeedSeedCount)); }
+        Navigation.Load();
+        Appearance.Load();
+        try
+        {
+            var history = _agent.RecentActivity(FeedSeedCount);
+            Feed.Seed(history);
+            Commands.ObserveAll(history.Reverse().Select(FeedEntry.FromActivity));
+        }
         catch (Exception e) { HostErrorText = "Could not read activity_log: " + e.Message; }
 
         if (_agent.IsPaired)
@@ -229,6 +291,7 @@ public sealed class MainViewModel : ObservableObject
             if (!Collectors.Any(r => r.Name == info.Name)) Collectors.Add(new CollectorRowViewModel(info.Name, SetCollectorEnabled));
         foreach (var row in Collectors) row.Update(byName.GetValueOrDefault(row.Name), snap, paused, now);
         Conversation.Update(byName.GetValueOrDefault(CollectorNames.Telegram), byName.GetValueOrDefault(CollectorNames.Line));
+        Overview.Update(snap, Collectors, now);
 
         PendingObjectsText = Fmt.Count(snap.PendingObjects);
         PendingBytesText = Fmt.Bytes(snap.PendingBytes);
@@ -311,6 +374,7 @@ public sealed class MainViewModel : ObservableObject
         using var crumb = UiBreadcrumb.Enter(what);
         var t0 = Stopwatch.GetTimestamp();
         Feed.AddRange(batch);
+        Commands.ObserveAll(batch);
         LogIfSlow(what, t0, SlowUi);
     }
 
@@ -345,6 +409,7 @@ public sealed class MainViewModel : ObservableObject
     private void UpdateRunState()
     {
         RunStateText = _isRunning ? "Running" : "Paused";
+        Overview.SetRunning(_isRunning);
         Raise(nameof(IsRunning));
         Raise(nameof(PauseMenuText));
     }
@@ -401,6 +466,32 @@ public sealed class MainViewModel : ObservableObject
         var d = _agent.DeviceFingerprint;
         var m = _agent.MacFingerprint;
         FingerprintText = d is null && m is null ? "not paired" : "device " + (d ?? "?") + "   mac " + (m ?? "?");
+        Overview.SetFingerprints(d, m);
+    }
+
+    /// <summary>
+    /// Forget the pairing (keys, tokens, pairing state) on the thread pool, then show the pairing page. Collectors keep
+    /// running and idle in "waiting for pairing" (the sink is gone); the encrypted queue is kept for the next pairing.
+    /// </summary>
+    public async Task UnpairAsync()
+    {
+        if (!_agent.IsPaired) return;
+        using (UiBreadcrumb.Enter("Unpair")) UnpairStatusText = "Unpairing...";
+        try
+        {
+            await _work.Run(() => _agent.UnpairAsync());
+        }
+        catch (Exception e)
+        {
+            UnpairStatusText = "Unpair failed: " + e.Message;
+            return;
+        }
+        UnpairStatusText = "";
+        Pairing.Reset();
+        ShowMain = false;
+        SyncNowCommand.RaiseCanExecuteChanged();
+        UnpairCommand.RaiseCanExecuteChanged();
+        UpdateFingerprints();
     }
 
     /// <summary>Stop the collector host (the app disposes the agent afterwards).</summary>

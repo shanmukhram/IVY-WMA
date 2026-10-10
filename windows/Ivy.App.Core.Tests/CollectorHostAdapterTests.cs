@@ -35,6 +35,7 @@ public class CollectorHostAdapterTests : IDisposable
             Assert.Empty(s.IndexedRoots);
             Assert.True(s.WindowTitleCapture);
             Assert.NotEmpty(s.TitleExclusions); // collector defaults (KeePass*, InPrivate, ...)
+            Assert.Contains("node_modules", s.FileExclusions); // files collector defaults (fourth run: editable on the Files page)
 
             await host.ApplySettingsAsync(s with
             {
@@ -42,12 +43,15 @@ public class CollectorHostAdapterTests : IDisposable
                 ScreenshotRoots = new[] { shots },
                 WindowTitleCapture = false,
                 TitleExclusions = new[] { "secret.exe" },
+                FileExclusions = s.FileExclusions.Append("*.iso").ToList(),
             });
             var back = host.GetSettings();
             Assert.Equal(new[] { folder }, back.IndexedRoots);
             Assert.Equal(new[] { shots }, back.ScreenshotRoots);
             Assert.False(back.WindowTitleCapture);
             Assert.Equal(new[] { "secret.exe" }, back.TitleExclusions);
+            Assert.Equal("*.iso", back.FileExclusions[^1]);
+            Assert.Equal(s.FileExclusions.Count + 1, back.FileExclusions.Count);
 
             // media policy (PLAN decision 8) maps onto the files collector's settings
             Assert.True(back.AutoUploadImages);

@@ -18,6 +18,8 @@ public static class ActivityEvents
     public const string CommandCompleted = "command_completed";
     public const string CommandRejected = "command_rejected";
     public const string Paired = "paired";
+    /// <summary>The user unpaired this device from the window (keys forgotten, workers stopped).</summary>
+    public const string Unpaired = "unpaired";
     public const string DeviceReport = "device_report";
     public const string Paused = "paused";
     public const string Resumed = "resumed";

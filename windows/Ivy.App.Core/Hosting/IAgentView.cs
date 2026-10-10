@@ -62,6 +62,12 @@ public interface IAgentView
     /// <summary>Poll commands, send a device report, drain the queue.</summary>
     Task SyncNowAsync(CancellationToken ct = default);
 
+    /// <summary>
+    /// Forget this device's key, tokens and pairing state and stop the workers (Settings > Advanced > Unpair). The
+    /// encrypted queue is kept. Runs on a worker thread (key-store and SQLite writes).
+    /// </summary>
+    Task UnpairAsync();
+
     string? GetSetting(string key);
     void SetSetting(string key, string value);
 }

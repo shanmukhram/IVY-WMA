@@ -18,7 +18,7 @@ namespace Ivy.App.Hosting;
 /// <summary>
 /// The one place that knows Ivy.Collectors' API: adapts <see cref="CollectorHost"/> to the window's
 /// <see cref="ICollectorHostView"/>. Capture settings map onto the collectors' own settings objects:
-/// indexed roots = <c>files.roots</c>, screenshot roots = <c>screenshots.roots</c>, window titles =
+/// indexed roots = <c>files.roots</c>, file exclusions = <c>files.exclusions</c>, screenshot roots = <c>screenshots.roots</c>, window titles =
 /// <c>usage.captureTitles</c> and <c>usage.titleExclusions</c>, media policy (PLAN decision 8) =
 /// <c>files.autoUploadImages</c>, <c>imageCapMB</c>, <c>autoUploadDocuments</c>, <c>documentCapMB</c>,
 /// <c>imageExtensions</c>, <c>documentExtensions</c>. Only collectors whose values changed are updated, because the
@@ -111,6 +111,7 @@ public sealed class CollectorHostAdapter : ICollectorHostView
         {
             IndexedRoots = files.Roots.ToList(),
             ScreenshotRoots = shots.Roots.ToList(),
+            FileExclusions = files.Exclusions.ToList(),
             WindowTitleCapture = usage.CaptureTitles,
             TitleExclusions = usage.TitleExclusions.ToList(),
             AutoUploadImages = files.AutoUploadImages,
@@ -127,6 +128,7 @@ public sealed class CollectorHostAdapter : ICollectorHostView
         var current = GetSettings();
         var files = new Dictionary<string, JsonElement>();
         if (!Same(current.IndexedRoots, settings.IndexedRoots)) files["roots"] = JsonSerializer.SerializeToElement(settings.IndexedRoots);
+        if (!Same(current.FileExclusions, settings.FileExclusions)) files["exclusions"] = JsonSerializer.SerializeToElement(settings.FileExclusions);
         if (current.AutoUploadImages != settings.AutoUploadImages) files["autoUploadImages"] = JsonSerializer.SerializeToElement(settings.AutoUploadImages);
         if (current.ImageCapMB != settings.ImageCapMB) files["imageCapMB"] = JsonSerializer.SerializeToElement(settings.ImageCapMB);
         if (current.AutoUploadDocuments != settings.AutoUploadDocuments) files["autoUploadDocuments"] = JsonSerializer.SerializeToElement(settings.AutoUploadDocuments);

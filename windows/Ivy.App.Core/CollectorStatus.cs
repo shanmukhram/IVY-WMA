@@ -3,6 +3,9 @@ namespace Ivy.App.Core;
 /// <summary>Status dot: green working, amber stale (no run in more than two intervals, or not running), red error, grey off.</summary>
 public enum CollectorStatus { Off, Paused, Ok, Stale, Error }
 
+/// <summary>InfoBar severity without a WinUI reference; the values equal <c>InfoBarSeverity</c>'s (the shell casts).</summary>
+public enum UiSeverity { Informational = 0, Success = 1, Warning = 2, Error = 3 }
+
 public static class CollectorNames
 {
     public const string Files = "files";
@@ -24,6 +27,28 @@ public static class CollectorNames
         Line => "LINE",
         Telegram => "Telegram",
         _ => name,
+    };
+
+    /// <summary>Page subtitle: what the collector captures, in one sentence (mirrors the Mac's Windows group).</summary>
+    public static string Describe(string name) => name switch
+    {
+        Files => "Indexes your folders with thumbnails. Images and documents under the size caps upload in full; other originals on request.",
+        Screenshots => "Uploads new screenshots so the Mac can read their text.",
+        Usage => "Records which app is in front, with window titles when title capture is on.",
+        Notifications => "Copies Windows notifications as they were shown: partial records, not conversations.",
+        Line => "Reads what LINE for Windows has synced to this PC. Always partial: the phone holds the full history.",
+        Telegram => "Pulls complete cloud history through the Telegram Desktop session on this PC.",
+        _ => "",
+    };
+
+    /// <summary>Segoe Fluent Icons glyph (Folder, Camera, AreaChart, Ringer, ChatBubbles).</summary>
+    public static string Glyph(string name) => name switch
+    {
+        Files => "\uE8B7",
+        Screenshots => "\uE722",
+        Usage => "\uE9D2",
+        Notifications => "\uEA8F",
+        _ => "\uE8F2",
     };
 
     /// <summary>
@@ -66,6 +91,50 @@ public static class StatusRules
         if (interval < MinStaleInterval) interval = MinStaleInterval;
         if (now - lastRunAt.Value > interval * 2) return (CollectorStatus.Stale, "stale");
         return (CollectorStatus.Ok, "ok");
+    }
+
+    /// <summary>Short status for tiles and headers.</summary>
+    public static string Label(CollectorStatus s) => s switch
+    {
+        CollectorStatus.Ok => "Working",
+        CollectorStatus.Paused => "Paused",
+        CollectorStatus.Stale => "Needs attention",
+        CollectorStatus.Error => "Error",
+        _ => "Off",
+    };
+
+    public static UiSeverity Severity(CollectorStatus s) => s switch
+    {
+        CollectorStatus.Ok => UiSeverity.Success,
+        CollectorStatus.Stale => UiSeverity.Warning,
+        CollectorStatus.Error => UiSeverity.Error,
+        _ => UiSeverity.Informational,
+    };
+
+    /// <summary>The "status with reason" sentence. <paramref name="ruleText"/> is <see cref="Evaluate"/>'s text.</summary>
+    public static string Reason(CollectorStatus s, string ruleText, string? lastError, string? detail, bool missing)
+    {
+        if (missing) return "Not available in this build.";
+        var d = string.IsNullOrWhiteSpace(detail) ? "" : " " + Sentence(detail!);
+        return s switch
+        {
+            CollectorStatus.Off => "Turned off. Nothing is captured.",
+            CollectorStatus.Paused => "IVY is paused. Resume on the Overview page or from the tray.",
+            CollectorStatus.Error => Sentence(lastError ?? "unknown error"),
+            CollectorStatus.Stale when ruleText == "not running" => "Not running." + d,
+            CollectorStatus.Stale when ruleText == "no run yet" => "Started, but has not run yet." + d,
+            CollectorStatus.Stale => "No run for more than two intervals." + d,
+            _ => d.Length > 0 ? d.TrimStart() : "Capturing.",
+        };
+    }
+
+    /// <summary>Capitalised and ending with a full stop.</summary>
+    internal static string Sentence(string text)
+    {
+        var t = text.Trim();
+        if (t.Length == 0) return t;
+        t = char.ToUpperInvariant(t[0]) + t[1..];
+        return t.EndsWith('.') || t.EndsWith(')') || t.EndsWith('?') ? t : t + ".";
     }
 
     public static string Color(CollectorStatus s) => s switch

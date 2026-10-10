@@ -4,12 +4,13 @@ The visible Windows companion (PRD Part 1 "App UI", WP1 to WP3, WU5; PLAN task 1
 
 The shell is WinUI 3 on the Windows App SDK 1.6. It is unpackaged (no MSIX) and self-contained, so the Windows App SDK runtime does not need a separate install. Most of the logic lives in `windows/Ivy.App.Core`, a plain `net8.0` library with xunit tests that also run on macOS: view models, formatting, the activity-feed buffer, status-dot rules, settings binding and the run-at-login rules. This project is the thin Windows-only part: XAML, the tray icon, the registry, the folder dialog and single-instance handling.
 
-> **Nothing in this project has been compiled or run yet.** It was written on macOS, where the XAML compiler cannot run. Here is what was checked there:
-> - every C# file here was type-checked against the real Windows App SDK 1.6 reference assemblies, with warnings as errors, using stand-ins for the XAML-generated partials;
-> - `dotnet restore` of this project succeeds;
+> **The fourth-run UI (Fluent redesign) has not been compiled or run yet.** It was written on macOS, where the XAML compiler cannot run. Here is what was checked there:
+> - every C# file here was type-checked against the real Windows App SDK 1.6 reference assemblies, with warnings as errors, using stand-ins for the XAML-generated partials (`InitializeComponent`, `x:Name` fields);
+> - every XAML file parses as XML, and every `{x:Bind}` path, function binding (`local:Ui.*`), TwoWay target and event handler was turned into C# by a script and compiled in that same type-check, so a misspelt path, a missing setter, a wrong target type or a handler with the wrong signature fails there;
+> - every `StaticResource`/`ThemeResource` key is either defined in `App.xaml` or a WinUI built-in (listed by the script and checked by hand);
 > - `CollectorHostAdapter.cs` is linked into `Ivy.App.Core.Tests` and tested against the real `CollectorHost`.
 >
-> The XAML was reviewed by hand only. Use the checklist at the end on the first Windows build.
+> What only the XAML compiler and a real run can find is in "Fourth run: UI" at the end.
 
 ## Build and run on Windows 11
 
@@ -75,13 +76,21 @@ windows/
     Hosting/VaultAgentView.cs     the real IAgentView over VaultAgent (aggregate SQL, re-attaches to the uploader after pairing)
     Hosting/ICollectorHostView.cs what the window needs from the collector host (CollectorInfo, CollectorSettings, FileImportProgress)
     Hosting/StoredCollectorHostView.cs  fallback host view without live collectors (rows from collector_state, settings in agent_settings)
-    ViewModels/                   MainViewModel, PairingViewModel, CollectorRowViewModel, SettingsViewModel, StringListViewModel, commands
+    BrandIcons.cs                 Telegram/LINE marks from simple-icons (CC0), embedded as Resources/brand-icons.json; initials-tile fallback
+    CommandHistory.cs             recent commands from the Mac and their outcomes (Transfers page), from the poller's activity lines
+    ConversationProgress.cs       Telegram per-chat progress and the LINE probe summary, parsed from the collectors' detail lines
+    PairingErrors.cs              pairing failures as an inline message plus a fix hint
+    ViewModels/                   MainViewModel, PairingViewModel, CollectorRowViewModel, SettingsViewModel, StringListViewModel, commands,
+                                  NavigationViewModel (NavPages tags, selected page, expanded groups, theme override; persisted),
+                                  OverviewViewModel (status card, bucket reachability, InfoBars)
   Ivy.App.Core.Tests/             xunit (includes CollectorHostAdapter.cs from Ivy.App, linked, against the real CollectorHost)
   Ivy.App/                        net8.0-windows10.0.19041.0, WinUI 3, Windows only
     Program.cs                    Main: single instance via AppInstance (second launch redirects and exits)
     App.xaml(.cs)                 composition root: VaultAgent + CollectorHost + window + tray; hide-to-tray; Quit
-    MainWindow.xaml(.cs)          pairing panel and status window
-    Ui.cs                         x:Bind helper (status colour to brush)
+    MainWindow.xaml(.cs)          Mica window, custom title bar, pairing page, NavigationView shell (keeps it in step with NavigationViewModel)
+    Pages/                        one Page per navigation item: Overview, Files, Screenshots, Usage, Notifications, Telegram, LINE,
+                                  Transfers, Settings, Activity (cached; the MainViewModel is the navigation parameter)
+    Ui.cs                         x:Bind helpers (brushes, InfoBar severity, visibility) and the brand PathIcon/initials-tile builders
     Hosting/CollectorHostAdapter.cs   the only file that knows Ivy.Collectors' API
     Platform/TrayIcon.cs          Shell_NotifyIcon tray icon and native popup menu (Open / Pause / Sync now / Quit)
     Platform/StartupRegistration.cs   HKCU Run key
@@ -94,36 +103,27 @@ The tray icon is native `Shell_NotifyIcon` rather than H.NotifyIcon. That remove
 
 ## What the window shows
 
-The design is deliberately plain (PLAN decision 5): dark background, 1px borders, one green accent, and Consolas for timestamps, keys and fingerprints.
+Fourth run (PLAN decision 5, revised): a native Windows 11 app in the style of Microsoft's own inbox apps. One window on **Mica**, light and dark following Windows with a manual override, the system accent colour, Segoe UI Variable through the WinUI type ramp, rounded WinUI controls, 4/8-point spacing, no gradients. Problems show as **InfoBars** at the top of the page they concern; the only dialog is the Unpair confirmation. Cascadia Mono (Consolas fallback) for fingerprints, object keys and timestamps.
 
-- **Header**
-  - **Running/Paused** switch. It pauses both capture (every collector) and uploads. The uploader persists the pause, and capture is re-synced to it on start.
-  - Error lines from the collector host or from settings, if any.
-- **Collectors**: one row each for files, screenshots, app usage, notifications, LINE and Telegram. Each row has:
-  - an on/off switch;
-  - last capture: the newer of the collector's own time and the last `queued` entry in the activity log;
-  - last upload: the last `uploaded` entry for that collector;
-  - queue depth and bytes;
-  - a status dot and text, plus the collector's detail line (scan progress, fallbacks).
-- **Conversation capture** (Telegram and LINE): each shows the collector's own status/detail line (per-chat progress, honest states). Telegram: an **Include channels** toggle (groups and DMs are always captured), and — only when the row reports **needs passcode** — a passcode box and **Apply** that stores the Telegram Desktop local passcode via DPAPI and reconnects. LINE: **Run probe** (one-shot) and **Open report** (opens the probe JSON in the default app via ShellExecute), with the report path shown.
-- **Initial file index**: files scanned / estimated, and bytes queued by the files collector.
-- **Upload queue**
-  - pending objects and bytes, and the retrying count;
-  - the current upload with per-object progress;
-  - the bandwidth cap (KB/s, 0 = unlimited) with **Apply**;
-  - **Sync now**: poll commands, send a device report, drain the queue.
-- **Folder lists**: indexed folders and drives (folder dialog, add/remove) and screenshot folders.
-- **Originals uploaded from indexed folders** (PLAN decision 8): **Upload images** and **Upload documents** switches, the two size caps (MB) with **Apply**, and the image and document extension lists (add/remove, entered without the dot).
-- **App usage**: the window-title capture switch and the title exclusion list.
-- **Startup**: the run-at-login switch.
-- **Activity feed** (right-hand side)
-  - every `activity_log` entry plus "upload_started" from the uploader, newest first, last 500;
-  - **Pause scroll** freezes the list and counts what arrived meanwhile.
-- **Footer**
-  - **up bucket**: the last successful put, and the last failure if it is newer;
-  - **cmd bucket**: the last successful list and the last error;
-  - the device and Mac fingerprints;
-  - the app version.
+- **Title bar**: custom (48 px, drag region) with the app icon and "IVY"; caption buttons are system-drawn and recoloured for the theme. The window title stays `IVY` (the usage collector recognises its own window by it).
+- **Pairing page** (full window until paired): a centred card with the pairing-string box and **Pair**. Errors appear inline under the box with a fix hint (expired, already used, wrong device type, not an IVY string, version mismatch, bucket unreachable). After pairing, both fingerprints in monospace and **Continue**.
+- **Navigation** (NavigationView, left pane): Overview; Collectors (Files, Screenshots, App usage, Notifications); Conversations (Telegram, LINE, with their brand marks); Transfers; Settings; and Activity in the footer. The pane footer shows "Running · N queued". The selected page and the expanded groups are remembered (`agent_settings` key `app.ui.navigation`).
+- **Overview**
+  - InfoBars: bucket unreachable or command poll failing (with **Retry now**), collectors that need attention, collector-host and settings errors.
+  - Status card: paired-to-Mac fingerprint, this device's fingerprint, last successful upload, last command poll, bucket state (dot and words), queue size, and the **Running/Paused** switch with a sentence saying what it means.
+  - Collector tiles (dot, name, status, last capture); each opens its page.
+  - Live activity feed (newest first, last 500, **Pause scroll**).
+- **Collector pages** (Files, Screenshots, App usage, Notifications): a status card with the on/off switch in its header, the status with its reason, last capture, last upload and the collector's share of the queue; an InfoBar when it is in error or stale. Then that collector's settings:
+  - Files: initial index progress, indexed folders and drives (**Add folder...**, **Remove**), exclusions (globs, add/remove; `files.exclusions`), the media policy switches and size caps, and the extension lists in an Expander.
+  - Screenshots: the watched folders.
+  - App usage: the window-title switch and the title exclusion list.
+  - Notifications: the database state line and what it means.
+- **Telegram**: status with reason; the passcode box only when Telegram Desktop is locked (stored with DPAPI); per-chat progress (chats complete of total, messages so far) with a progress bar; **Include channels**; the secret-chats-are-phone-only note with the count.
+- **LINE**: status with reason; the "always partial from Windows" note; **Run probe** and **Open report** with the probe summary and report path.
+- **Transfers**: objects waiting, encrypted size, retrying; **Sync now**; the current upload with per-object progress; the bandwidth cap with **Apply**; recent commands from the Mac (file requests, rescans, collector settings, rejected commands) with their outcome.
+- **Settings**: Startup (run at login), Appearance (System / Light / Dark), Network (bandwidth cap), Advanced (data folder and log folder with **Open**, version, **Unpair...** with confirmation). Unpair forgets the device key, tokens and pairing state, stops the uploader, poller and reporter, and returns to the pairing page; the encrypted queue is kept for the next pairing and collectors idle until then.
+- **Activity**: the full live feed at window height.
+- **Keyboard and accessibility**: everything is reachable with Tab in visual order, WinUI's focus rectangles are unchanged, access keys (press Alt) on navigation items and primary actions (O, L, V, T, S, A in the pane; R run/pause, Y sync now, D add folder, B apply bandwidth, K apply caps, U unpair/unlock, P pair or pause scroll, C continue), and every icon-only or composite button has an `AutomationProperties.Name`. Decorative brand badges are hidden from UI Automation.
 
 ## Hang diagnostics
 
@@ -294,3 +294,62 @@ LINE:
 **Privacy**
 
 - [ ] `%LOCALAPPDATA%\IVY\logs\*.log` contains object keys, sizes and errors only, with no file contents or window titles.
+
+## Fourth run: UI (Fluent redesign; nothing here has been executed)
+
+The earlier checklists still apply to behaviour; this one covers the new window. Build with `dotnet build windows/Ivy.Windows.sln -c Release` first.
+
+**Build**
+
+- [ ] No XAML compile errors. The likeliest, if any, and their fixes:
+  - `x:DataType="core:FeedEntry"` and `core:CommandItem` in DataTemplates (`FeedEntry` is a positional record): make it a plain class if the compiler objects.
+  - `ContentControl Content="{x:Bind local:Ui.BrandBadge(ViewModel.TelegramBrand, 40)}"` on the Telegram and LINE pages: if a function binding returning an element is refused, set the badge in the page's code-behind after `InitializeComponent()` instead.
+  - `ToolTipService.ToolTip="{x:Bind StatusReason, Mode=OneWay}"` on the Overview tiles: drop the tooltip if attached-property x:Bind is refused there.
+  - `UpdateSourceTrigger=PropertyChanged` on TwoWay TextBox bindings: drop the trigger (Apply buttons still read the text).
+  - `ListBoxStyle` in `App.xaml` has no `BasedOn`; if the folder/extension lists lose their Fluent look, add `BasedOn="{StaticResource DefaultListViewStyle}"`.
+- [ ] The concurrent Windows verification branch's compile fixes in `MainWindow.xaml(.cs)` are superseded by this rewrite; carry over any fix that still applies (for example to `App.xaml.cs` or the tray).
+
+**Every page renders**
+
+- [ ] Unpaired start: only the pairing card shows, centred, on Mica. Tab reaches the box, **Pair**, then (after pairing) **Continue**; Alt shows the P and C access keys.
+- [ ] Paste a bad string, press Pair: a red line under the box says what is wrong and a grey line says how to fix it; no dialog. Try an expired string, a used string and random text: each gives its own message. Pull the network cable and pair: "Could not reach the IVY bucket."
+- [ ] Pair for real: both fingerprints appear in Cascadia Mono; Continue opens the navigation shell on Overview.
+- [ ] Overview, Files, Screenshots, App usage, Notifications, Telegram, LINE, Transfers, Settings and Activity each open from the pane, with a title, no clipped text at 1200 x 840 and at 150% scaling, and no horizontal scroll bar.
+- [ ] Collector tiles on Overview show a dot, the name, status and last capture; clicking a tile opens that collector's page and selects it in the pane.
+- [ ] Telegram and LINE show their brand marks (blue plane, green LINE bubble) in the pane and as the page badge, crisp at 100% and 150%.
+
+**Mica and theme**
+
+- [ ] The window background is Mica (the desktop wallpaper tints it); the content area is the slightly raised layer with a rounded top-left corner, like Windows Settings.
+- [ ] Windows Settings > Personalization > Colors, switch Light/Dark: IVY follows live, including the caption buttons.
+- [ ] Settings > Appearance > Light and > Dark override it at once (caption buttons too) and survive a restart; "Use system setting" follows Windows again.
+- [ ] Change the Windows accent colour: switches, the Pair/Sync/Run probe buttons, the progress bars and the feed's event column use it. No green from the old palette anywhere.
+
+**NavigationView groups**
+
+- [ ] Collectors and Conversations expand and collapse by click and by keyboard (arrow keys, Enter); clicking a group header does not change the page.
+- [ ] Collapse Conversations, select Files, quit from the tray and start again: IVY opens on Files with Conversations still collapsed (`agent_settings` key `app.ui.navigation`).
+- [ ] Selecting a page inside a collapsed group (for example from an Overview tile) expands that group.
+
+**All actions still work** (same behaviour as before, new places)
+
+- [ ] Overview: Running/Paused switch pauses capture and uploads (tray says Resume; tiles say Paused); the bucket InfoBar appears with the network unplugged and **Retry now** runs Sync now; it disappears after reconnecting.
+- [ ] Files: Add folder (folder dialog), Remove, exclusions add (also with Enter) and remove (`*.iso` added there stops new ISOs being indexed), Upload images/documents switches, size caps with Apply (bad value shows the hint), extension lists in the Expander.
+- [ ] Screenshots: add/remove folders. App usage: title switch and exclusions. Notifications: the database line shows "last notification id N".
+- [ ] Each collector page's switch turns the collector off (grey dot, "Off", reason "Turned off") and on again; an error shows an InfoBar with the reason.
+- [ ] Telegram: with a local passcode set in Telegram Desktop the warning InfoBar shows the passcode box; Unlock (or Enter) applies it and the box clears. Progress shows "N of M chats complete" with a bar and "messages so far". Include channels toggles.
+- [ ] LINE: Run probe updates the summary and report path; Open report opens the JSON.
+- [ ] Transfers: pending numbers move; a large upload shows the progress bar; bandwidth Apply shows "current: 256.0 KB/s"; Sync now shows "last sync now: ... ok"; a file request from the (fake) Mac appears under recent commands as "File request" with "Uploaded to the Mac" (or "File not found").
+- [ ] Settings: Run at login toggles the Run key; data and log folder **Open** buttons open Explorer there; the version reads "IVY for Windows 0.1.0".
+- [ ] Settings > **Unpair...**: the dialog defaults to Cancel; Unpair returns to the pairing card, the tray menu greys out Pause and Sync now, `reg`/files: `%LOCALAPPDATA%\IVY\keys` no longer holds the pairing, the feed shows `unpaired`. Pair again with a fresh string: capture and uploads resume, including what was queued before.
+- [ ] Activity: the full-height feed; Pause scroll here and on Overview stay in step.
+
+**Keyboard and accessibility**
+
+- [ ] Tab order follows the visual order on every page; the focus rectangle is always visible; Alt shows access keys on the pane items and primary buttons.
+- [ ] Narrator reads every icon button and switch by name (Add folder, Remove selected folder, Pause scroll, Capture and upload, Files collector...), and skips the decorative brand badges.
+- [ ] Accessibility Insights FastPass on Overview, Files and Settings: no failures.
+
+**Tray still works**
+
+- [ ] Left-click opens the window on the last page; right-click shows Open / Pause / Sync now / Quit; the tooltip reads "IVY: Running, N queued"; closing the window hides it to the tray; Quit exits within 15 s.

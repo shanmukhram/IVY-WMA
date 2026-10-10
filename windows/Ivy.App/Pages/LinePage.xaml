@@ -1,0 +1,94 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- LINE: status with reason, the always-partial coverage note, Run probe / Open report and the probe summary. -->
+<Page
+    x:Class="Ivy.App.Pages.LinePage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:local="using:Ivy.App"
+    xmlns:core="using:Ivy.App.Core"
+    NavigationCacheMode="Required">
+
+    <ScrollViewer>
+        <StackPanel MaxWidth="{StaticResource PageMaxWidth}" Margin="{StaticResource PageMargin}" Spacing="8">
+            <Grid ColumnSpacing="16" Margin="0,0,0,12">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <!-- simple-icons mark, or the initials tile when the resource has no path for it (Ui.BrandBadge). -->
+                <ContentControl Width="48" Height="48" IsTabStop="False" VerticalAlignment="Top"
+                                HorizontalContentAlignment="Center" VerticalContentAlignment="Center"
+                                Content="{x:Bind local:Ui.BrandBadge(ViewModel.LineBrand, 40)}" />
+                <StackPanel Grid.Column="1" Spacing="2">
+                    <TextBlock Text="LINE" Style="{StaticResource TitleTextBlockStyle}" />
+                    <TextBlock Text="{x:Bind ViewModel.LineRow.Description}" Style="{StaticResource PageSubtitleStyle}" Margin="0" />
+                </StackPanel>
+            </Grid>
+            <InfoBar IsClosable="False"
+                     IsOpen="{x:Bind ViewModel.LineRow.HasProblem, Mode=OneWay}"
+                     Visibility="{x:Bind ViewModel.LineRow.HasProblem, Mode=OneWay}"
+                     Severity="{x:Bind local:Ui.Severity(ViewModel.LineRow.Severity), Mode=OneWay}"
+                     Title="{x:Bind ViewModel.LineRow.ProblemTitle, Mode=OneWay}"
+                     Message="{x:Bind ViewModel.LineRow.StatusReason, Mode=OneWay}" />
+            <InfoBar IsOpen="True" IsClosable="False" Severity="Informational" Title="Partial coverage"
+                     Message="{x:Bind ViewModel.Conversation.LineCoverageText}" />
+
+            <Border Style="{StaticResource CardStyle}">
+                <Grid RowSpacing="16">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+                    <Grid ColumnSpacing="8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <Ellipse Width="10" Height="10" VerticalAlignment="Center" Fill="{x:Bind local:Ui.Brush(ViewModel.LineRow.StatusColor), Mode=OneWay}" />
+                        <TextBlock Grid.Column="1" Text="{x:Bind ViewModel.LineRow.StatusLabel, Mode=OneWay}" Style="{StaticResource BodyStrongTextBlockStyle}" VerticalAlignment="Center" />
+                        <ToggleSwitch Grid.Column="2" MinWidth="0" OnContent="On" OffContent="Off" AccessKey="N"
+                                      IsOn="{x:Bind ViewModel.LineRow.Enabled, Mode=TwoWay}"
+                                      AutomationProperties.Name="LINE collector" />
+                    </Grid>
+                    <Grid Grid.Row="1" ColumnSpacing="16" RowSpacing="8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="120" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+                        <TextBlock Grid.Row="0" Text="Status" Style="{StaticResource FieldLabelStyle}" />
+                        <TextBlock Grid.Row="0" Grid.Column="1" Text="{x:Bind ViewModel.LineRow.StatusReason, Mode=OneWay}" Style="{StaticResource FieldValueStyle}" />
+                        <TextBlock Grid.Row="1" Text="Last capture" Style="{StaticResource FieldLabelStyle}" />
+                        <TextBlock Grid.Row="1" Grid.Column="1" Text="{x:Bind ViewModel.LineRow.LastCaptureText, Mode=OneWay}" Style="{StaticResource FieldValueStyle}" />
+                        <TextBlock Grid.Row="2" Text="Last upload" Style="{StaticResource FieldLabelStyle}" />
+                        <TextBlock Grid.Row="2" Grid.Column="1" Text="{x:Bind ViewModel.LineRow.LastUploadText, Mode=OneWay}" Style="{StaticResource FieldValueStyle}" />
+                        <TextBlock Grid.Row="3" Text="Queue" Style="{StaticResource FieldLabelStyle}" />
+                        <TextBlock Grid.Row="3" Grid.Column="1" Text="{x:Bind ViewModel.LineRow.QueueContributionText, Mode=OneWay}" Style="{StaticResource FieldValueStyle}" />
+                    </Grid>
+                </Grid>
+            </Border>
+            <TextBlock Text="Store probe" Style="{StaticResource SectionHeaderStyle}" />
+            <Border Style="{StaticResource CardStyle}">
+                <StackPanel Spacing="12">
+                    <TextBlock Style="{StaticResource SecondaryTextStyle}"
+                               Text="The probe lists LINE for Windows' data files (names, sizes, formats; never message content) so the reader can be checked against this LINE version." />
+                    <TextBlock Text="{x:Bind ViewModel.Conversation.LineProbeSummary, Mode=OneWay}" Style="{StaticResource BodyStrongTextBlockStyle}" TextWrapping="Wrap" />
+                    <TextBlock Text="{x:Bind ViewModel.Conversation.ReportPathText, Mode=OneWay}" Style="{StaticResource MonoValueStyle}" FontSize="12"
+                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <Button Content="Run probe" Style="{StaticResource AccentButtonStyle}" AccessKey="R"
+                                Command="{x:Bind ViewModel.Conversation.RunProbeCommand}" />
+                        <Button Content="Open report" AccessKey="E" Command="{x:Bind ViewModel.Conversation.OpenReportCommand}" />
+                    </StackPanel>
+                    <TextBlock Text="{x:Bind ViewModel.Conversation.LineStatusText, Mode=OneWay}" Style="{StaticResource SecondaryTextStyle}" />
+                </StackPanel>
+            </Border>
+        </StackPanel>
+    </ScrollViewer>
+</Page>

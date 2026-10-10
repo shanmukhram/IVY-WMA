@@ -82,7 +82,8 @@ public partial class App : Application
 
             var picker = new FolderPickerService(() => _window?.Hwnd ?? IntPtr.Zero);
             _vm = new MainViewModel(_view, _host, new DispatcherQueueUiDispatcher(_dispatcher), new RegistryStartupRegistration(),
-                picker.PickAsync, AppPaths.ExePath, AppPaths.Version, openFile: OpenInShell, log: _loggers.CreateLogger("Ivy.App.Ui"));
+                picker.PickAsync, AppPaths.ExePath, AppPaths.Version, openFile: OpenInShell, log: _loggers.CreateLogger("Ivy.App.Ui"),
+                folders: new AppFolders(AppPaths.DataDirectory, AppPaths.LogDirectory)); // Settings > Advanced (Open uses ShellExecute)
             _window = new MainWindow(_vm);
             _window.AppWindow.Closing += OnWindowClosing;
             _windowEvents = new WindowEventLog(_window, _window.Hwnd, _log);
@@ -143,7 +144,7 @@ public partial class App : Application
         };
     }
 
-    /// <summary>Open a file (the LINE probe report) in its default app via ShellExecute.</summary>
+    /// <summary>Open a file (the LINE probe report) in its default app, or a folder (Settings > Advanced) in Explorer, via ShellExecute.</summary>
     private void OpenInShell(string path)
     {
         try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(path) { UseShellExecute = true }); }

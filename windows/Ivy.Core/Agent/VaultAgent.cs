@@ -103,6 +103,23 @@ public sealed class VaultAgent : IAsyncDisposable
         return r;
     }
 
+    /// <summary>
+    /// Unpair (Windows app, Settings > Advanced): stop the workers, forget the device key, tokens and pairing state,
+    /// and drop the sink so collectors idle in "waiting for pairing". The queue is kept: it is ciphertext only, sealed
+    /// to the Mac's key, and re-pairing with the same Mac (or one restored from the same passphrase) uploads it.
+    /// </summary>
+    public async Task UnpairAsync()
+    {
+        await StopWorkersAsync().ConfigureAwait(false);
+        Keys.Clear();
+        PairingState = null;
+        Sink = null;
+        Uploader = null;
+        Poller = null;
+        Reporter = null;
+        Activity.Append(null, ActivityEvents.Unpaired);
+    }
+
     private void StartWorkers()
     {
         var state = Keys.LoadPairingState() ?? throw new InvalidOperationException("not paired");
