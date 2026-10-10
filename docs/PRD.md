@@ -60,7 +60,7 @@ R2 tokens are bucket-scoped, so bucket separation is the access control. Four bu
 | ivy-cmd-windows | Mac | Windows | Encrypted commands to Windows |
 | ivy-cmd-android | Mac | Android | Encrypted commands to Android |
 
-Each device holds exactly one write token (its up-bucket) and one read token (its cmd-bucket). The Mac holds read-and-delete on the up-buckets and write on the cmd-buckets. Lifecycle rules expire up-objects after 7 days and cmd-objects after 30, as a backstop; the Mac deletes up-objects on ingest and devices delete cmd-objects on execution.
+Each device holds exactly one write token (its up-bucket) and one read token (its cmd-bucket). The Mac holds read-and-delete on the up-buckets and write on the cmd-buckets. No lifecycle expiry on up-buckets: R2 holds encrypted captures until the Mac commits them, however long the Mac is offline. A 30-day lifecycle rule on cmd-buckets is the backstop for stale commands; the Mac deletes cmd-objects once the device's status report arrives (devices hold read-only cmd tokens). [Amended Oct 10, 2026.]
 
 Encryption is the same hybrid scheme as Session Sync: a fresh AES-256-GCM key per object, wrapped to the recipient's X25519 public key. Device-to-Mac objects are wrapped to the Mac's key; Mac-to-device commands are wrapped to that device's key. Private keys never leave their machine: the Mac's is passphrase-encrypted at rest (Argon2id), Windows' lives in DPAPI, Android's in the Keystore.
 

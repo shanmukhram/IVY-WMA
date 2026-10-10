@@ -157,6 +157,12 @@ export const ManifestRecord = z.object({
   totalChunks: z.number().int().positive(),
   cek: z.string(),
   chunks: z.array(ManifestChunkEntry),
+  /**
+   * Optional: the commandId of the file_request this blob answers. A sender sets it on
+   * originals it uploads for a command, so the Mac can show the transfer before the
+   * command_status arrives. Absent on every other blob.
+   */
+  commandId: z.string().min(1).optional(),
   /** receiver-side resume tracking; indices already committed */
   committedParts: z.array(z.number().int().nonnegative()).optional(),
 });
@@ -207,6 +213,15 @@ export const CollectorState = z.object({
   lastRunAt: ts.optional(),
   cursor: z.string().optional(),
   queueDepth: z.number().int().nonnegative(),
+  /**
+   * Optional import progress of the collector's current (or last) bulk pass: items
+   * expected (`importTotal`) and processed so far (`importDone`). A sender that does not
+   * know a total yet omits `importTotal`.
+   */
+  importTotal: z.number().int().nonnegative().optional(),
+  importDone: z.number().int().nonnegative().optional(),
+  /** which pass the progress belongs to: the first index, live incremental capture, or a rescan */
+  phase: z.enum(["initial", "incremental", "rescan"]).optional(),
 });
 
 export const DeviceReportRecord = z.object({

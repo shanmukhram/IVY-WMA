@@ -228,6 +228,12 @@ export interface ChunkedManifest {
   /** base64 content key used for every chunk */
   cek: string;
   chunks: ManifestChunk[];
+  /**
+   * Optional: the `commandId` of the `file_request` this blob answers (PROTOCOL §2.2).
+   * Lets the receiver show transfer progress for the command before `command_status`
+   * arrives. Omitted from the JSON when absent.
+   */
+  commandId?: string;
 }
 
 export interface EncryptChunkedParams {
@@ -239,6 +245,8 @@ export interface EncryptChunkedParams {
   payloadKind: PayloadKind;
   plaintext: Uint8Array;
   chunkSize: number;
+  /** Optional commandId of the command this blob answers (written into the manifest). */
+  commandId?: string;
   options?: {
     /** TEST ONLY: fixed content key for the whole object. */
     contentKey?: Uint8Array;
@@ -287,8 +295,9 @@ function buildChunkPart(
 
 /** Encrypt a large object as independent chunks plus a binding manifest envelope. */
 export function encryptChunkedObject(params: EncryptChunkedParams): EncryptChunkedResult {
-  const { recipientPublicKey, oid, objectId, payloadKind, plaintext, chunkSize, options } = params;
+  const { recipientPublicKey, oid, objectId, payloadKind, plaintext, chunkSize, commandId, options } = params;
   if (objectId.length !== 16) throw new Error("objectId must be 16 bytes");
+  if (commandId !== undefined && commandId.length === 0) throw new Error("commandId must be non-empty when present");
   if (chunkSize <= 0) throw new Error("chunkSize must be positive");
 
   const cek = options?.contentKey ?? randomBytes(AES_KEY_LEN);
@@ -312,6 +321,8 @@ export function encryptChunkedObject(params: EncryptChunkedParams): EncryptChunk
     totalChunks,
     cek: toBase64(cek),
     chunks,
+    // appended last and only when present, so a manifest without it is byte-identical to before
+    ...(commandId !== undefined ? { commandId } : {}),
   };
 
   const manifestKey = `up/blob/${oid}/manifest`;

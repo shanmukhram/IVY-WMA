@@ -23,7 +23,9 @@ tools/           zero-plaintext audit, honesty/kill tests, gate scripts.
 3. **Build order (Bunny, Oct 10 2026): Windows app first, then the Mac dashboard, then Android.** The shared protocol package and the local S3 mock come first because the Windows app is written and tested against them. Gate G1 is run once the Mac side exists. Nothing sensitive ships until G1 passes.
 4. **Command deletion.** The PRD gives devices a read-only token on their cmd-bucket but also says devices delete commands on execution. R2 has no read-plus-delete scope, so the device token stays read-only (least privilege), the device records executed command ids locally and ignores repeats, and the Mac deletes `cmd/<oid>` when it ingests the matching `command_status`. The 30-day lifecycle rule remains the backstop.
 5. **UI stays minimal (Bunny, Oct 10 2026).** Every UI is functional and useful, not pretty: plain controls, the status and activity data the PRD lists, nothing decorative. Engineering effort goes into the core and background workers: crash safety, resumability, correctness, honest status.
-6. **Model routing confirmed by Bunny:** Fable 5.1 orchestrates and verifies; Opus 5.5 for complex tasks; Sonnet 5.5 for standard tasks; Haiku 5.5 for mechanical chores.
+6. **No expiry on up-buckets (Bunny, Oct 10 2026).** R2 holds encrypted captures for as long as the Mac is offline; nothing is lost if the Mac is away for weeks. Up-objects are deleted only after the Mac commits them. The 7-day lifecycle rule in the PRD is dropped; the 30-day rule on cmd-buckets stays.
+7. **Device-record authentication deferred (Bunny, Oct 10 2026).** Records are accepted when they decrypt and name a paired device; a leaked up-write token could forge records. Accepted for now; a per-object authentication tag derived from the device and Mac keys can be added later as a protocol version bump.
+8. **Model routing confirmed by Bunny:** Fable 5.1 orchestrates and verifies; Opus 5.5 for complex tasks; Sonnet 5.5 for standard tasks; Haiku 5.5 for mechanical chores.
 
 ## Phase 1 tasks
 
