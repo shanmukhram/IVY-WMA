@@ -40,3 +40,18 @@ tools/           zero-plaintext audit, honesty/kill tests, gate scripts.
 | 1.9 | Integration tests: pairing + ingest + retrieval through the mock, reboot-mid-queue, zero-plaintext audit; G1 script | Opus | all |
 
 Phases 2–4 are broken down when Phase 1 reaches gate G1.
+
+## Phase status
+
+- **Windows (done, Oct 10 2026):** built, paired, captured, retrieved on the PC; see `docs/reports/windows-first-run.md`.
+
+## Mac phase tasks
+
+| # | Task | Model | Depends on |
+| --- | --- | --- | --- |
+| 2.1 | `mac/service`: vault.db + FTS5, Argon2id key store with auto-lock, R2 config, pairing issuance, ingest with ledger/quarantine/blob resume, commands, search/timeline/coverage APIs, recovery bin, event stream | Opus | — |
+| 2.2 | `mac/ocr`: Vision OCR + thumbnail helper (Swift) with Node wrapper | Opus | — |
+| 2.3 | Indexer wiring: OCR every ingested image, FTS over ocr_text, media origin hooks | Opus | 2.1, 2.2 |
+| 2.4 | Web UI served by the service + Electron shell: lock screen, search, timeline, conversations/notifications/media/files views, coverage, devices and pairing (QR), settings, recovery bin. Minimal and functional. | Opus | 2.1 |
+| 2.5 | Gate G1 script: Windows ↔ Mac over the mock and over real R2; zero-plaintext audit; reboot-mid-queue | Opus | 2.1, 2.4 |
+| 2.6 | Activity Vault read-only import (S7) and AI layer (A1–A4, cloud switch) | Opus | 2.4 |
