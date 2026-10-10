@@ -62,7 +62,7 @@ Carried over from the first run:
 
 | Item | Result |
 | --- | --- |
-| Bad or expired pairing string refused with a clear message | See Part 2 (tested on the reset, unpaired app). |
+| Bad or expired pairing string refused with a clear message | PASS, tested on the reset, unpaired app in Part 2: "this is not a pairing string" and an `IVYPAIR9.` prefix give "Pairing failed: not an IVY pairing string"; a string with its tail replaced, or one byte flipped inside the payload, gives "Pairing failed: malformed pairing string"; the fake Mac's own string pasted 20 minutes after issue gives "Pairing failed: pairing code expired". The box stayed editable every time, and no device key or pairing file was written (`%LOCALAPPDATA%IVYkeys` was never created). |
 | 150 % display scaling | NOT VERIFIED. Changing the scale factor needs a sign-out on this PC, which would end the session. |
 
 Other observations, not changed:
@@ -77,4 +77,21 @@ No product or test code needed changes in Part 1. This report is the only commit
 
 ## Part 2: gate G1 preparation (PC)
 
-Filled in below after the steps ran.
+All done except that the test folder had to move, see item 2.
+
+1. **Fresh, unpaired PC.** Quit from the tray (exit under 1 s), `%LOCALAPPDATA%IVY` deleted, the `IVY` value under `HKCUSoftwareMicrosoftWindowsCurrentVersionRun` deleted. Verified afterwards: no state directory, no Run value, no `Ivy.App.exe` process. The fake Mac is stopped. The old Windows device still has to be revoked in the real Mac dashboard before the run.
+2. **Test folder and PDF.** `DocumentsIVY-G1` cannot be created from PowerShell on this PC: **Controlled Folder Access** is on (Defender event 1123: "powershell.exe has been blocked from modifying %userprofile%DocumentsIVY-G1"). `cmd.exe` is blocked the same way, and the allowed-app list needs an administrator. Desktop is not protected here, so the file was created with the runbook snippet at
+
+   | | |
+   | --- | --- |
+   | Path | `C:SERSDMINDESKTOPIVY-G1G1-50MB.PDF` |
+   | SIZE | 52 429 198 BYTES (A 398-BYTE PDF FOLLOWED BY 50 MB OF RANDOM PADDING) |
+   | SHA-256 | `C3D5C1CC926F624051D02E7C682B4334B5344CC4363103BA2DE7D3A8E3813C7E` |
+
+   PASS THAT PATH TO THE GATE WITH `--PATH`. THE SAME RESTRICTION WILL HIT THE `REBOOT.NOW` STEP, WHOSE POWERSHELL LINE WRITES 10 MARKER FILES INTO THE INDEXED FOLDER, SO THE INDEXED FOLDER MUST BE OUTSIDE THE PROTECTED SET (OR POWERSHELL MUST BE ALLOWED IN CONTROLLED FOLDER ACCESS, WHICH NEEDS AN ADMINISTRATOR; CLAUDE DOES NOT CHANGE SECURITY SETTINGS). IVY ITSELF ONLY READS INDEXED FILES AND WRITES UNDER `%LOCALAPPDATA%`, WHICH IS NOT PROTECTED.
+3. **BUILD.** `DOTNET BUILD WINDOWS/IVY.WINDOWS.SLN -C RELEASE` REBUILT CLEAN; THE EXE AT `WINDOWSIVY.APPINDRELEASE
+ET8.0-WINDOWS10.0.19041.0WIN-X64IVY.APP.EXE` IS READY AND NOT RUNNING. THE DOCUMENT CAP IS AT ITS DEFAULT (10 MB) ON A FRESH DATA DIRECTORY, SO THE 50 MB PDF WILL BE INDEXED AS METADATA AND UPLOADED ONLY ON REQUEST.
+
+## PART 3: THE GATE RUN
+
+FILLED IN AFTER THE RUN.
