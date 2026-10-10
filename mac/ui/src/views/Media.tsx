@@ -44,7 +44,7 @@ export function MediaView(props: MediaProps = {}) {
   const [picking, setPicking] = useState(false);
   const [sel, setSel] = useState<Set<string>>(new Set());
   const [open, setOpen] = useState<string | null>(null);
-  const [msg, setMsg] = useState<{ text: string; tone?: "ok" | "error" } | null>(null);
+  const [msg, setMsg] = useState<{ text: string; tone?: "ok" | "error"; undo?: Item[] } | null>(null);
   useEffect(() => { if (focus) setOpen(focus); }, [focus]);
   useEffect(() => { setSel(new Set()); }, [kind, device, page]);
 
@@ -62,10 +62,17 @@ export function MediaView(props: MediaProps = {}) {
     setMsg({ tone: errs.length ? "error" : "ok", text: `Requested ${asked} original(s)${have ? `; ${have} already on this Mac` : ""}${cannot ? `; ${cannot} without a device path` : ""}.${errs.length ? ` Failed: ${errs[0]}` : ""} Originals arrive when the device is online.` });
   };
   const toBin = async (list: Item[]) => {
-    let n = 0; const errs: string[] = [];
-    for (const it of list) { try { await api.del(`/api/items/${it.type}/${it.id}`); n++; } catch (e) { errs.push(errText(e)); } }
-    setMsg({ tone: errs.length ? "error" : "ok", text: `Moved ${n} item(s) to the recovery bin.${errs.length ? ` Failed: ${errs[0]}` : ""}` });
+    const done: Item[] = []; const errs: string[] = [];
+    for (const it of list) { try { await api.del(`/api/items/${it.type}/${it.id}`); done.push(it); } catch (e) { errs.push(errText(e)); } }
+    setMsg({ tone: errs.length ? "error" : "ok", text: `Moved ${done.length} item(s) to the recovery bin.${errs.length ? ` Failed: ${errs[0]}` : ""}`, undo: done.length ? done : undefined });
     setSel(new Set()); setOpen(null); r.reload();
+  };
+
+  const undo = async (list: Item[]) => {
+    const errs: string[] = [];
+    for (const it of list) { try { await api.post(`/api/bin/${it.type}/${it.id}/restore`, {}); } catch (e) { errs.push(errText(e)); } }
+    setMsg({ tone: errs.length ? "error" : "ok", text: errs.length ? `Restore failed: ${errs[0]}` : `Restored ${list.length} item(s).` });
+    r.reload();
   };
 
   const idx = open ? items.findIndex((i) => i.id === open) : -1;
@@ -74,7 +81,7 @@ export function MediaView(props: MediaProps = {}) {
   return (
     <div className={props.embedded ? "" : "full"} style={props.embedded ? undefined : { display: "block" }}>
       <div className="media-toolbar" style={props.embedded ? { position: "static", padding: "0 0 12px", background: "none", border: 0, backdropFilter: "none" } : undefined}>
-        {!props.embedded && <h1 style={{ fontSize: "var(--text-xl)", marginRight: 8 }}>Media</h1>}
+        {!props.embedded && <h1>Media</h1>}
         {!props.kind && <Segmented label="Kind" value={kind} onChange={(v) => set({ kind: v, page: 1 })} options={[["", "All"], ["screenshot", "Screenshots"], ["photo", "Photos"]]} />}
         {!props.device && (
           <select className="select" aria-label="Device" value={device} onChange={(e) => set({ device: e.target.value, page: 1 })}>
@@ -86,15 +93,15 @@ export function MediaView(props: MediaProps = {}) {
         <button className="btn" aria-pressed={picking} onClick={() => { setPicking((v) => !v); setSel(new Set()); }}>{picking ? "Done" : "Select"}</button>
       </div>
       <ErrorLine error={r.error} />
-      {msg && <div style={{ padding: props.embedded ? "0 0 12px" : "12px 32px 0" }}><Notice tone={msg.tone} role="status">{msg.text}</Notice></div>}
+      {msg && <div style={{ padding: props.embedded ? "0 0 12px" : "12px 32px 0" }}><Notice tone={msg.tone} role="status">{msg.text}{msg.undo && <> <button className="btn btn-plain btn-sm" onClick={() => void undo(msg.undo!)}>Undo</button></>}</Notice></div>}
       {r.data && r.data.total === 0 && (
         <Empty icon="photo" title="No media yet">{props.emptyText ?? "Screenshots and photos appear here as the devices send them. Each one is OCR'd on this Mac so you can search what is written in it."}</Empty>
       )}
       {days.map(([day, its]) => (
         <section key={day} className="media-day" aria-label={day === "unknown" ? "Unknown date" : dayLabel(day)}>
-          <h3 style={props.embedded ? { position: "static", padding: "12px 0 8px", background: "none" } : undefined}>
+          <h2 style={props.embedded ? { position: "static", padding: "12px 0 8px", background: "none" } : undefined}>
             {day === "unknown" ? "Unknown date" : dayLabel(day)}<span className="faint">{its.length}</span>
-          </h3>
+          </h2>
           <div className="media-grid" style={props.embedded ? { padding: "0 0 12px" } : undefined}>
             {its.map((it) => (
               <button key={it.id} className="tile" aria-pressed={picking ? sel.has(it.id) : undefined} title={it.ocrText || "(no OCR text)"}
@@ -160,10 +167,10 @@ function Lightbox({ it, index, count, onPrev, onNext, onClose, onBin, onRequest 
       <aside className="lb-side" aria-label="Media details">
         <div className="stack-sm">
           <div className="row"><Badge tone="blue">{it.type}</Badge>{d.ocrStatus && <Badge>OCR {d.ocrStatus}</Badge>}{!d.original && <Badge tone="amber">original not received</Badge>}</div>
-          <p className="mono small" style={{ overflowWrap: "anywhere" }}>{d.sourcePath ?? it.title ?? it.id}</p>
+          <p className="path small" style={{ overflowWrap: "anywhere" }}>{d.sourcePath ?? it.title ?? it.id}</p>
         </div>
         <section className="stack-sm">
-          <h3>Times</h3>
+          <h2>Times</h2>
           <dl className="kv small">
             <dt>Taken</dt><dd className="tnum">{fmtTime(d.takenAt)}</dd>
             <dt>Saved</dt><dd className="tnum">{fmtTime(d.savedAt)}</dd>
@@ -173,11 +180,11 @@ function Lightbox({ it, index, count, onPrev, onNext, onClose, onBin, onRequest 
           </dl>
         </section>
         <section className="stack-sm">
-          <h3>Text in the image (OCR)</h3>
+          <h2>Text in the image (OCR)</h2>
           <pre className="ocr">{it.ocrText || "(none)"}</pre>
         </section>
         <section className="stack-sm" aria-label="Origin">
-          <h3>Origin</h3>
+          <h2>Origin</h2>
           <ErrorLine error={o.error} />
           {o.data && (o.data.evidenced.length === 0
             ? <p className="small muted">No evidence links this image to a message.</p>

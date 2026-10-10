@@ -7,10 +7,10 @@ import { useMemo, useState } from "react";
 import { useLoad, useEvents, useDebounced } from "../ctx.tsx";
 import { href, navigate, useLocation } from "../router.ts";
 import { TYPE_LABEL, TYPE_PLURAL, hm, localDate, longDate, platformLabel, roleLabel } from "../format.ts";
-import { Icon, TYPE_ICON } from "../components/Icon.tsx";
+import { Icon } from "../components/Icon.tsx";
 import { Link } from "../components/Controls.tsx";
 import { Badge, Empty, ErrorLine, Notice, Pager, Time } from "../components/Feedback.tsx";
-import { recordHref, titleOf, type Item } from "./records.tsx";
+import { RecordIcon, recordHref, titleOf, type Item } from "./records.tsx";
 import { AiDrawer } from "./Ai.tsx";
 
 export interface Gap { deviceId: string; role: string; collector: string; from: string; to: string; reason: string; open: boolean }
@@ -55,7 +55,7 @@ function Event({ it }: { it: Item }) {
   return (
     <li className="tl-ev" data-testid={`item-${it.type}`}>
       <Time at={it.eventTime} field={it.timeField} captured={it.capturedAt} imported={d.importedAt} short />
-      <span className={`ev-icon t-${it.type}`}><Icon name={TYPE_ICON[it.type] ?? "info"} size={12} /></span>
+      <RecordIcon it={it} small />
       <div className="ev-body">
         <span className="ev-title">{titleOf(it)}</span>
         {text && <span className="ev-text">{text}</span>}
@@ -186,7 +186,7 @@ export function TimelineView() {
               )}
               {locations.length > 0 && (
                 <section className="card card-pad" aria-label="Locations" style={{ marginBottom: 12 }}>
-                  <h3 className="small" style={{ marginBottom: 6 }}>Locations</h3>
+                  <h2 className="group-title" style={{ marginLeft: 0 }}>Locations</h2>
                   <ul className="small">{locations.map((i) => <li key={i.id} className="tnum">{hm(i.eventTime)} · {i.detail.location.lat.toFixed(5)}, {i.detail.location.lon.toFixed(5)}</li>)}</ul>
                 </section>
               )}

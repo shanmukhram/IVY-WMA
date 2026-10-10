@@ -6,6 +6,7 @@
 import { createContext, useContext } from "react";
 import { href } from "../router.ts";
 import { Icon, TYPE_ICON } from "../components/Icon.tsx";
+import { AppIcon } from "../components/AppIcon.tsx";
 import { Link } from "../components/Controls.tsx";
 import { Badge, Time } from "../components/Feedback.tsx";
 import { Sheet } from "../components/Overlay.tsx";
@@ -70,7 +71,7 @@ function Badges({ it, devices, hideType }: { it: Item; devices?: DeviceLite[]; h
     <>
       {!hideType && <Badge>{TYPE_LABEL[it.type] ?? it.type}</Badge>}
       {it.type !== "browsing" && <Badge title={it.deviceId ?? undefined}>{deviceName(it.deviceId, devices)}</Badge>}
-      {it.app && <Badge>{it.type === "message" ? platformLabel(it.app) : it.app}</Badge>}
+      {it.app && <Badge><AppIcon app={it.app} size={14} />{it.type === "message" ? platformLabel(it.app) : it.app}</Badge>}
       {d.account && <Badge>{d.account}</Badge>}
       {it.type === "notification" && <Badge tone="amber">preview · partial record</Badge>}
       {it.type === "browsing" && <Badge tone="purple">Activity Vault import</Badge>}
@@ -106,15 +107,25 @@ function Access({ it, inList }: { it: Item; inList?: boolean }) {
   return null;
 }
 
+/** Messages, notifications and Google activity show their app; other records their type glyph. */
+export function RecordIcon({ it, small }: { it: Pick<Item, "type" | "app">; small?: boolean }) {
+  const byApp = (it.type === "message" || it.type === "notification" || it.type === "browsing" || it.type === "usage") && it.app;
+  return (
+    <span className={`${small ? "ev-icon" : "rec-icon"} t-${it.type}`}>
+      {byApp ? <AppIcon app={it.app} size={small ? 16 : 20} /> : <Icon name={TYPE_ICON[it.type] ?? "info"} size={small ? 13 : 16} />}
+    </span>
+  );
+}
+
 export function RecordCard({ it, devices, onBin, inList }: { it: Item; devices?: DeviceLite[]; onBin?: (it: Item) => void; inList?: boolean }) {
   const d = it.detail ?? {};
   const isMedia = it.type === "screenshot" || it.type === "photo";
   return (
     <article className="rec" data-type={it.type} data-testid={`item-${it.type}`} aria-label={`${TYPE_LABEL[it.type] ?? it.type}: ${titleOf(it)}`}>
-      <span className={`rec-icon t-${it.type}`}><Icon name={TYPE_ICON[it.type] ?? "info"} size={15} /></span>
+      <RecordIcon it={it} />
       <div className="rec-main">
         <div className="rec-top">
-          <span className="rec-title">{titleOf(it)}</span>
+          <span className="rec-title" title={titleOf(it)}>{titleOf(it)}</span>
           <span className="rec-time"><Time at={it.eventTime} field={it.timeField} captured={it.capturedAt} imported={d.importedAt} /></span>
         </div>
         {it.snippetHtml != null
@@ -152,8 +163,8 @@ export function RecordSheet({ it, onClose, devices }: { it: Item; onClose: () =>
         {it.deviceId && <><dt>Device</dt><dd>{deviceName(it.deviceId, devices)}</dd></>}
         {d.platform && <><dt>App</dt><dd>{platformLabel(d.platform)}{d.account ? ` · ${d.account}` : ""}</dd></>}
         {Array.isArray(d.sources) && d.sources.length > 0 && <><dt>Sources</dt><dd>{(d.sources as string[]).join(", ")}</dd></>}
-        {d.path && <><dt>Path</dt><dd className="mono">{d.path}</dd></>}
-        {d.sourcePath && <><dt>Path</dt><dd className="mono">{d.sourcePath}</dd></>}
+        {d.path && <><dt>Path</dt><dd className="path">{d.path}</dd></>}
+        {d.sourcePath && <><dt>Path</dt><dd className="path">{d.sourcePath}</dd></>}
       </dl>
       {(it.type === "file" || it.type === "browsing") && <div className="rec-actions"><Access it={it} /></div>}
     </Sheet>

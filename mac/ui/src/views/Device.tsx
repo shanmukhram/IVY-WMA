@@ -5,6 +5,7 @@ import { useLocation } from "../router.ts";
 import { DEVICE_SOURCES, type DeviceSource, type Role } from "../nav.ts";
 import { ago, roleLabel, collectorLabel } from "../format.ts";
 import { Icon } from "../components/Icon.tsx";
+import { SourceTile } from "../components/AppIcon.tsx";
 import { Link } from "../components/Controls.tsx";
 import { Badge, Dot, Empty, ErrorLine, Pager, Progress, Time } from "../components/Feedback.tsx";
 import { FilesView } from "./Files.tsx";
@@ -24,7 +25,7 @@ export function DeviceStatusCard({ d }: { d: any }) {
     <section className="card status-card" aria-label={`${roleLabel(d.role)} status`}>
       <span className="dev-icon"><Icon name={d.role === "windows" ? "laptop" : "phone"} size={24} /></span>
       <div style={{ minWidth: 0 }}>
-        <div className="row"><h3>{roleLabel(d.role)}</h3><Dot s={d.status} label={`${d.role} ${d.status}`} /><span className="small muted">{d.status === "green" ? "Working" : d.status === "amber" ? "Stale" : d.status === "red" ? "Needs attention" : "Off"}</span></div>
+        <div className="row"><h2 className="status-title">{roleLabel(d.role)}</h2><Dot s={d.status} label={`${d.role} ${d.status}`} /><span className="small muted">{d.status === "green" ? "Working" : d.status === "amber" ? "Stale" : d.status === "red" ? "Needs attention" : "Off"}</span></div>
         <div className="stats">
           <span>Fingerprint <b className="fingerprint">{d.fingerprint}</b></span>
           <span>Last seen <b title={d.lastSeen ?? ""}>{ago(d.lastSeen)}</b></span>
@@ -42,7 +43,7 @@ export function DeviceStatusCard({ d }: { d: any }) {
 function CollectorLine({ c }: { c: any }) {
   return (
     <div className="collector" data-testid={`device-collector-${c.name}`}>
-      <div className="c-head"><Dot s={c.status} label={`${c.name} ${c.status}`} /><span className="c-name">{collectorLabel(c.name)}</span>{!c.enabled && <Badge>disabled</Badge>}<span className="spacer" /><span className="small faint">queue {c.queueDepth}</span></div>
+      <div className="c-head"><SourceTile name={c.name} /><Dot s={c.status} label={`${c.name} ${c.status}`} /><span className="c-name">{collectorLabel(c.name)}</span>{!c.enabled && <Badge>disabled</Badge>}<span className="spacer" /><span className="small faint">queue {c.queueDepth}</span></div>
       <span className="c-reason">{c.statusReason} · last run {ago(c.lastRunAt)}</span>
       {c.import && (
         <div className="row small"><Progress value={c.import.percent ?? 0} label={`${c.name} import`} /><span className="tnum faint">{c.import.done ?? c.import.indexed ?? 0}{c.import.total !== null ? ` / ${c.import.total}` : ""} · {String(c.import.state).replace(/_/g, " ")}</span></div>
@@ -109,14 +110,14 @@ export function DeviceView() {
           {devices.map((d) => <DeviceStatusCard key={d.deviceId} d={d} />)}
           {!source && (
             <>
-              <h3 style={{ marginTop: 8 }}>Sources</h3>
+              <h2 className="group-title" style={{ marginTop: 8 }}>Sources</h2>
               <div className="cov-grid">
                 {DEVICE_SOURCES[role].map((s) => {
                   const cs = collectors.filter((c) => (COLLECTOR_NAMES[s.key] ?? [s.key]).includes(c.name));
                   const st = cs[0]?.status as string | undefined;
                   return (
                     <Link key={s.key} to={`/device/${role}/${s.key}`} className="collector" aria-label={`${roleLabel(role)} ${s.label}`} style={{ color: "inherit", textDecoration: "none" }}>
-                      <div className="c-head"><Icon name={s.icon} /><span className="c-name">{s.label}</span><span className="spacer" />{st ? <Dot s={st} label={`${s.label} ${st}`} /> : <span className="small faint">not reported</span>}</div>
+                      <div className="c-head"><SourceTile name={s.view.kind === "chats" ? s.view.platform : s.key} glyph={s.icon} /><span className="c-name">{s.label}</span><span className="spacer" />{st ? <Dot s={st} label={`${s.label} ${st}`} /> : <span className="small faint">not reported</span>}</div>
                       <span className="c-captures">{s.captures}</span>
                       {cs[0] && <span className="c-reason">{cs[0].statusReason} · last run {ago(cs[0].lastRunAt)}</span>}
                     </Link>
@@ -125,7 +126,7 @@ export function DeviceView() {
               </div>
               {collectors.length > 0 && (
                 <>
-                  <h3 style={{ marginTop: 8 }}>Collectors reported by the device</h3>
+                  <h2 className="group-title" style={{ marginTop: 8 }}>Collectors reported by the device</h2>
                   <div className="cov-grid">{collectors.map((c) => <CollectorLine key={c.name} c={c} />)}</div>
                 </>
               )}

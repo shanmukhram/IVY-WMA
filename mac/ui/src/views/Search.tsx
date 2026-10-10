@@ -99,7 +99,7 @@ export function SearchView() {
   const count = (t: string) => res?.counts[t] ? res.counts[t].exact + res.counts[t].fuzzy : 0;
   const groups = (list: Item[]) => byType(list).map(([t, its]) => (
     <section key={t} className="result-group" aria-label={TYPE_PLURAL[t] ?? t}>
-      <h3><Icon name={TYPE_ICON[t] ?? "info"} size={14} />{TYPE_PLURAL[t] ?? t}<span className="faint">{count(t)}</span></h3>
+      <h2><Icon name={TYPE_ICON[t] ?? "info"} size={14} />{TYPE_PLURAL[t] ?? t}<span className="faint">{count(t)}</span></h2>
       {its.map((it) => <RecordCard key={`${it.type}:${it.id}`} it={it} devices={devices} onBin={(x) => void bin(x)} />)}
     </section>
   ));
@@ -174,14 +174,14 @@ export function SearchView() {
               {groups(exact)}
               {fuzzy.length > 0 && (
                 <>
-                  <h3 className="section-divider">Close matches (typo-tolerant), after all exact matches</h3>
+                  <h2 className="section-divider">Close matches (typo-tolerant), after all exact matches</h2>
                   {groups(fuzzy)}
                 </>
               )}
               {res.pages > 1 && <Pager page={res.page} pages={res.pages} total={res.total} onPage={(p) => go({ page: p })} />}
               {res.semantic?.enabled && (
                 <section aria-label="Semantic matches">
-                  <h3 className="section-divider">{res.semantic.label || "Semantic matches"}</h3>
+                  <h2 className="section-divider">{res.semantic.label || "Semantic matches"}</h2>
                   {res.semantic.items.length === 0 ? <p className="muted small">No semantic matches.</p> : (
                     <div className="group">{res.semantic.items.map((s) => (
                       <div key={`${s.type}:${s.id}`} className="list-row">

@@ -6,6 +6,7 @@ import { Icon, type IconName } from "./Icon.tsx";
 
 export type DotColor = "green" | "amber" | "red" | "off";
 export function Dot({ s, label }: { s: DotColor | string; label?: string }) {
+  if (label === "") return <span className={`dot dot-${s}`} aria-hidden="true" />; // described by adjacent text
   return <span className={`dot dot-${s}`} role="img" aria-label={label ?? `status ${s}`} title={label ?? s} />;
 }
 
@@ -26,7 +27,7 @@ export function Empty({ icon = "inbox", title, children, action }: { icon?: Icon
   return (
     <div className="empty" role="note">
       <span className="empty-icon"><Icon name={icon} size={36} /></span>
-      {title && <h3>{title}</h3>}
+      {title && <h2>{title}</h2>}
       {children && <p>{children}</p>}
       {action}
     </div>

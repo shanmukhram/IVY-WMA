@@ -9,6 +9,7 @@ import { useApi, useDebounced, useEvents, useLoad } from "../ctx.tsx";
 import { href, navigate, useLocation } from "../router.ts";
 import { COVERAGE_LABEL, dayKey, dayLabel, fmtTime, friendlyTime, hm, platformLabel, shortWhen, sourceLabel } from "../format.ts";
 import { Avatar } from "../components/Avatar.tsx";
+import { AppIcon } from "../components/AppIcon.tsx";
 import { Icon } from "../components/Icon.tsx";
 import { SearchField } from "../components/Controls.tsx";
 import { Badge, Empty, ErrorLine } from "../components/Feedback.tsx";
@@ -65,7 +66,7 @@ export function ConversationsView(scope: ChatsScope = {}) {
     <div className="panes" style={scope.embedded ? { height: 620, border: "1px solid var(--separator)", borderRadius: 12, overflow: "hidden" } : undefined}>
       <section className="pane pane-list" aria-label="Chats">
         <div className="pane-head" style={{ flexDirection: "column", alignItems: "stretch", gap: 8 }}>
-          <div className="row"><h2 className="ellipsis">{title}</h2><span className="spacer" />{list.data && <span className="small faint">{list.data.total}</span>}</div>
+          <div className="row">{(platform || source) && <AppIcon app={platform ?? ""} size={20} />}<h1 className="ellipsis">{title}</h1><span className="spacer" />{list.data && <span className="small faint">{list.data.total}</span>}</div>
           <SearchField aria-label="Search chats" placeholder="Search chats" value={q} onChange={(e) => setQ(e.target.value)} />
         </div>
         <div className="pane-scroll" style={{ padding: 6 }}>
@@ -83,7 +84,7 @@ export function ConversationsView(scope: ChatsScope = {}) {
               <button key={c.id} className="chat-item" aria-current={c.id === selected ? "true" : undefined} onClick={() => open(c.id)} data-testid="chat-item">
                 <Avatar name={name} size={40} colorKey={`${c.platform}:${c.convKey}`} />
                 <span className="ci-main">
-                  <span className="ci-top"><span className="ci-name">{name}</span><span className="ci-time">{shortWhen(c.lastMessageAt)}</span></span>
+                  <span className="ci-top"><span className="ci-name" title={name}>{name}</span><span className="ci-time">{shortWhen(c.lastMessageAt)}</span></span>
                   <span className="ci-preview">{preview}</span>
                 </span>
               </button>
@@ -137,7 +138,7 @@ function Thread({ id, around }: { id: string; around: string | null }) {
         {conv && <Avatar name={name} size={30} colorKey={`${conv.platform}:${conv.convKey ?? conv.conv_key}`} />}
         <div style={{ minWidth: 0, flex: 1 }}>
           <h2 className="ellipsis" style={{ fontSize: "var(--text-base)" }}>{name}</h2>
-          {conv && <div className="small faint ellipsis">{platformLabel(conv.platform)} · {conv.account} · {conv.kind === "group" ? `group${conv.participantCount ? ` of ${conv.participantCount}` : ""}` : "direct"}</div>}
+          {conv && <div className="small faint ellipsis row" style={{ gap: 4 }}><AppIcon app={conv.platform} size={16} />{platformLabel(conv.platform)} · {conv.account} · {conv.kind === "group" ? `group${conv.participantCount ? ` of ${conv.participantCount}` : ""}` : "direct"}</div>}
         </div>
         {conv && <span data-testid="coverage-sources" title={conv.coverageText}><CoverageBadge coverage={conv.coverage} sources={conv.coverageSources} /></span>}
       </div>
@@ -158,7 +159,7 @@ function Thread({ id, around }: { id: string; around: string | null }) {
             <div key={m.id} style={{ display: "contents" }}>
               {sep}
               <div className={`msg ${mine ? "mine" : "theirs"}${m.id === around ? " hit" : ""}${deleted ? " deleted" : ""}`} data-testid={m.id === around ? "thread-hit" : "message"} data-mine={mine ? "true" : "false"}>
-                {showSender && <span className="sender" style={{ color: "var(--accent)" }}>{m.sender}</span>}
+                {showSender && <span className="sender">{m.sender}</span>}
                 <div className="mb">
                   {m.forwarded_from && <span className="fwd"><Icon name="forward" size={11} /> Forwarded from {m.forwarded_from}</span>}
                   {m.reply_to && <span className="quote" data-testid="reply-quote">{quoted ? <><b>{isMine(quoted.sender, conv?.account ?? "") ? "You" : quoted.sender}</b>{quoted.text || (quoted.media_kind ? `[${quoted.media_kind}]` : "")}</> : "Reply to an earlier message"}</span>}
@@ -203,13 +204,13 @@ function Profile({ id }: { id: string }) {
             <div className="p-head">
               <Avatar name={name} size={72} colorKey={`${c.platform}:${c.convKey}`} />
               <h2>{name}</h2>
-              <span className="small muted">{platformLabel(c.platform)} · {c.kind === "group" ? `group${c.participantCount ? ` · ${c.participantCount} members` : ""}` : "direct chat"}</span>
+              <span className="small muted row" style={{ gap: 4 }}><AppIcon app={c.platform} size={16} />{platformLabel(c.platform)} · {c.kind === "group" ? `group${c.participantCount ? ` · ${c.participantCount} members` : ""}` : "direct chat"}</span>
               <CoverageBadge coverage={c.coverage} sources={c.coverageSources} />
             </div>
             <div>
-              <h4 className="group-title">Details</h4>
+              <h2 className="group-title">Details</h2>
               <div className="group">
-                <div className="group-row"><span className="row-label muted">Platform</span><span>{platformLabel(c.platform)}</span></div>
+                <div className="group-row"><span className="row-label muted">Platform</span><span className="row" style={{ gap: 6 }}><AppIcon app={c.platform} size={16} />{platformLabel(c.platform)}</span></div>
                 <div className="group-row"><span className="row-label muted">Account</span><span className="ellipsis">{c.account}</span></div>
                 {c.chatType && <div className="group-row"><span className="row-label muted">Chat type</span><span>{c.chatType}</span></div>}
                 <div className="group-row"><span className="row-label muted">Messages</span><span className="tnum">{d.messages}</span></div>
@@ -222,12 +223,12 @@ function Profile({ id }: { id: string }) {
               </div>
             </div>
             <div>
-              <h4 className="group-title">Coverage per source</h4>
+              <h2 className="group-title">Coverage per source</h2>
               <div className="group" aria-label="Coverage per source">
                 {(d.sources as any[]).length === 0 && <div className="group-row small muted">No source has reported this chat.</div>}
                 {(d.sources as any[]).map((s) => (
                   <div key={s.source} className="group-row" style={{ flexDirection: "column", alignItems: "stretch", gap: 2 }} data-testid="profile-source">
-                    <div className="row"><span style={{ fontWeight: 500, minWidth: 0 }}>{sourceLabel(s.source)}</span><span className="spacer" />{s.coverage ? <Badge tone={covTone(s.coverage)}>{COVERAGE_LABEL[s.coverage] ?? s.coverage}</Badge> : <Badge>no claim</Badge>}</div>
+                    <div className="row"><Icon name={s.source.startsWith("android:") ? "phone" : "laptop"} size={16} /><span style={{ fontWeight: 500, minWidth: 0 }}>{sourceLabel(s.source)}</span><span className="spacer" />{s.coverage ? <Badge tone={covTone(s.coverage)}>{COVERAGE_LABEL[s.coverage] ?? s.coverage}</Badge> : <Badge>no claim</Badge>}</div>
                     <span className="small faint">{s.messages} message(s){s.deletedThere ? ` · ${s.deletedThere} deleted there` : ""}{s.lastSeenAt ? ` · last seen ${shortWhen(s.lastSeenAt)}` : ""}</span>
                   </div>
                 ))}
@@ -235,7 +236,7 @@ function Profile({ id }: { id: string }) {
             </div>
             {(d.senders as any[]).length > 1 && (
               <div>
-                <h4 className="group-title">Most messages from</h4>
+                <h2 className="group-title">Most messages from</h2>
                 <div className="group">{(d.senders as Array<{ sender: string; n: number }>).map((s) => (
                   <div key={s.sender} className="group-row"><Avatar name={s.sender} size={22} /><span className="row-label ellipsis">{isMine(s.sender, c.account) ? `${s.sender} (you)` : s.sender}</span><span className="tnum faint">{s.n}</span></div>
                 ))}</div>

@@ -61,19 +61,19 @@ export function DevicesView() {
         {result && <Notice tone="ok" role="status">{result}</Notice>}
         {d && (
           <section aria-label="This Mac">
-            <h4 className="group-title">This Mac</h4>
+            <h2 className="group-title">This Mac</h2>
             <div className="group"><div className="group-row"><Icon name="shield" /><span className="row-label">Mac fingerprint</span><span className="fingerprint">{d.macFingerprint}</span></div></div>
           </section>
         )}
         <section aria-label="Paired devices">
-          <h4 className="group-title">Paired devices</h4>
+          <h2 className="group-title">Paired devices</h2>
           {d && d.devices.length === 0 && <div className="group"><Empty icon="link" title="No paired devices">Start pairing above: on Windows paste the pairing string, on Android scan the QR code.</Empty></div>}
           {d && d.devices.length > 0 && (
             <div className="group">{d.devices.map((x: any) => (
               <div key={x.id} className="group-row" style={{ alignItems: "flex-start", paddingTop: 12, paddingBottom: 12 }}>
                 <span className="dev-icon" style={{ width: 36, height: 36, borderRadius: 9, background: "var(--fill-2)", display: "flex", alignItems: "center", justifyContent: "center" }}><Icon name={x.role === "windows" ? "laptop" : "phone"} size={18} /></span>
                 <div className="row-label">
-                  <div style={{ fontWeight: 600 }}>{roleLabel(x.role)} <span className="faint mono small">{x.id}</span></div>
+                  <div style={{ fontWeight: 600 }}>{roleLabel(x.role)} <span className="faint hash small">{x.id}</span></div>
                   <div className="fingerprint small">{x.fingerprint}</div>
                   <div className="row-sub">Paired <Time at={x.pairedAt} /> · last seen {ago(x.lastSeen)} · last report {ago(x.lastReportAt)} · app {x.appVersion ?? "—"}</div>
                 </div>
@@ -133,7 +133,7 @@ export function PairingSheet({ p, onCancel }: { p: Pairing; onCancel: () => void
           </div>
           <div className="stack">
             <label className="field"><span className="field-label">Pairing string</span>
-              <textarea readOnly className="textarea mono" rows={6} value={p.pairingString} aria-label="Pairing string" onFocus={(e) => e.currentTarget.select()} />
+              <textarea readOnly className="textarea hash" rows={6} value={p.pairingString} aria-label="Pairing string" onFocus={(e) => e.currentTarget.select()} />
             </label>
             <div className="stack-sm"><span className="small muted">Mac fingerprint</span><span className="fingerprint">{p.macFingerprint}</span></div>
           </div>

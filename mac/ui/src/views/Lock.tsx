@@ -40,7 +40,7 @@ export function TokenScreen({ onDone }: { onDone: () => void }) {
       <form className="auth-card" onSubmit={submit} aria-label="Connect">
         <Mark icon="key" />
         <h1>Connect to IVY</h1>
-        <p className="fine">This browser has no session yet. Paste the token from <span className="mono">data/session.token</span>.</p>
+        <p className="fine">This browser has no session yet. Paste the token from <span className="path">data/session.token</span>.</p>
         <Field label="Session token"><input className="input input-lg" type="password" autoComplete="off" value={token} onChange={(e) => setToken(e.target.value)} autoFocus /></Field>
         <button className="btn btn-primary btn-lg" type="submit" disabled={!token.trim()}>Continue</button>
         {err && <p className="error" role="alert">{err}</p>}
@@ -128,7 +128,7 @@ function SetPassphrase({ status, onDone }: { status: KeystoreStatus; onDone: (c:
         <Field label="Passphrase"><input className="input input-lg" type="password" autoComplete="new-password" value={pass} onChange={(e) => setPass(e.target.value)} autoFocus /></Field>
         <Field label="Repeat passphrase"><input className="input input-lg" type="password" autoComplete="new-password" value={again} onChange={(e) => setAgain(e.target.value)} /></Field>
         <label className="check fine" style={{ textAlign: "left" }}><input type="checkbox" checked={restore} onChange={(e) => setRestore(e.target.checked)} /> Restoring: I have the identity salt from a backup</label>
-        {restore && <Field label="Identity salt (base64, from identity.json)"><input className="input mono" value={salt} onChange={(e) => setSalt(e.target.value)} /></Field>}
+        {restore && <Field label="Identity salt (base64, from identity.json)"><input className="input hash" value={salt} onChange={(e) => setSalt(e.target.value)} /></Field>}
         <div className="salt-note"><Notice tone="warn">{note}</Notice></div>
         <button className="btn btn-primary btn-lg" type="submit" disabled={busy || !pass || !again}>{busy ? "Deriving key…" : "Set passphrase"}</button>
         {err && <p className="error" role="alert">{err}</p>}

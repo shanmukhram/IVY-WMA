@@ -43,23 +43,38 @@ export function buildR2Config(f: Record<string, string>): Record<string, unknown
   return out;
 }
 
-const SECTIONS: Array<{ id: string; label: string; icon: IconName; tint: string }> = [
-  { id: "r2", label: "Cloudflare R2", icon: "cloud", tint: "#f48120" },
-  { id: "lock", label: "Auto-lock", icon: "lock", tint: "#8e8e93" },
-  { id: "bin", label: "Recovery bin", icon: "trash", tint: "#ff3b30" },
-  { id: "passphrase", label: "Passphrase", icon: "key", tint: "#5856d6" },
-  { id: "ai", label: "AI", icon: "sparkles", tint: "#af52de" },
-  { id: "imports", label: "Imports", icon: "download", tint: "#34c759" },
-  { id: "appearance", label: "Appearance", icon: "appearance", tint: "#007aff" },
+const SECTIONS: Array<{ id: string; label: string; icon: IconName; }> = [
+  { id: "r2", label: "Cloudflare R2", icon: "cloud" },
+  { id: "lock", label: "Auto-lock", icon: "lock" },
+  { id: "bin", label: "Recovery bin", icon: "trash" },
+  { id: "passphrase", label: "Passphrase", icon: "key" },
+  { id: "ai", label: "AI", icon: "sparkles" },
+  { id: "imports", label: "Imports", icon: "download" },
+  { id: "appearance", label: "Appearance", icon: "appearance" },
 ];
 
-function Row({ label, sub, children, stacked }: { label: ReactNode; sub?: ReactNode; children?: ReactNode; stacked?: boolean }) {
+function Row({ label, sub, children, stacked, error, errorId }: { label: ReactNode; sub?: ReactNode; children?: ReactNode; stacked?: boolean; error?: string | null; errorId?: string }) {
   return (
     <div className={`group-row${stacked ? " stacked" : ""}`}>
-      <div className="row-label"><div>{label}</div>{sub ? <div className="row-sub">{sub}</div> : null}</div>
+      <div className="row-label">
+        <div>{label}</div>{sub ? <div className="row-sub">{sub}</div> : null}
+        {error && <FieldError id={errorId}>{error}</FieldError>}
+      </div>
       {children !== undefined && <div className="row-control">{children}</div>}
     </div>
   );
+}
+
+/** An inline error next to the field it concerns, announced and linked with aria-describedby. */
+function FieldError({ id, children }: { id?: string; children: ReactNode }) {
+  return <p id={id} className="field-error" role="alert"><Icon name="warn" size={12} />{children}</p>;
+}
+
+/** A whole-number field within [min, max]: the message to show, or null when valid. */
+export function rangeError(v: string, min: number, max: number, what: string): string | null {
+  if (!/^\d+$/.test(v.trim())) return `Enter ${what} as a whole number.`;
+  const n = Number(v);
+  return n < min || n > max ? `Enter ${what} between ${min} and ${max}.` : null;
 }
 
 export function SettingsView() {
@@ -69,10 +84,10 @@ export function SettingsView() {
   return (
     <div className="settings-panes">
       <nav className="settings-list" aria-label="Settings sections">
-        <h2 style={{ fontSize: "var(--text-lg)", padding: "0 10px 12px" }}>Settings</h2>
+        <div className="list-title">Settings</div>
         {SECTIONS.map((s) => (
           <Link key={s.id} to={href("/settings", { section: s.id })} aria-current={s.id === section ? "page" : undefined}>
-            <span className="si" style={{ background: s.tint }}><Icon name={s.icon} size={13} /></span>{s.label}
+            <span className="si"><Icon name={s.icon} size={13} /></span>{s.label}
           </Link>
         ))}
       </nav>
@@ -114,20 +129,32 @@ function R2Settings() {
   const [msg, setMsg] = useState<{ text: string; ok: boolean } | null>(null);
   const [check, setCheck] = useState<any>(null);
   const [busy, setBusy] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [fieldErr, setFieldErr] = useState<{ where: "json" | "tokens"; text: string } | null>(null);
   const c = cur.data?.config;
   const save = async (e: FormEvent) => {
-    e.preventDefault(); setMsg(null);
+    e.preventDefault(); setMsg(null); setFieldErr(null);
+    let body: Record<string, unknown>;
+    // problems with what was typed are shown at the field; problems from the service next to Save
+    try { body = mode === "json" ? JSON.parse(json) : buildR2Config(f); }
+    catch (x) {
+      setFieldErr(mode === "json"
+        ? { where: "json", text: `This is not valid JSON (${(x as Error).message}). Paste the whole r2.json file.` }
+        : { where: "tokens", text: `${(x as Error).message}. Fill in both, or leave both empty.` });
+      return;
+    }
+    setSaving(true);
     try {
-      const body = mode === "json" ? JSON.parse(json) : buildR2Config(f);
       await api.put("/api/r2", body);
       setF({}); setJson(""); setMsg({ ok: true, text: "Saved. Secrets are stored sealed and shown masked from now on." }); cur.reload();
-    } catch (x) { setMsg({ ok: false, text: `Not saved: ${errText(x)}` }); }
+    } catch (x) { setMsg({ ok: false, text: `Not saved: ${errText(x)}. Check the values above and save again.` }); }
+    finally { setSaving(false); }
   };
   const runCheck = async () => {
     setBusy(true); setCheck(null);
     try { setCheck(await api.post("/api/r2/check", {})); } catch (x) { setCheck({ error: errText(x) }); } finally { setBusy(false); }
   };
-  const masked = (path: string) => { const t = getPath(c, path); return t ? <span className="mono">{t.accessKeyId}:{t.secret}</span> : <span>not set</span>; };
+  const masked = (path: string) => { const t = getPath(c, path); return t ? <span className="hash">{t.accessKeyId}:{t.secret}</span> : <span>not set</span>; };
   const input = (k: string, label: string, opts: { secret?: boolean; placeholder?: string } = {}) => (
     <input className="input" type={opts.secret ? "password" : "text"} autoComplete="off" aria-label={label} placeholder={opts.placeholder}
       value={f[k] ?? ""} onChange={(e) => setF({ ...f, [k]: e.target.value })} />
@@ -137,7 +164,7 @@ function R2Settings() {
       <ErrorLine error={cur.error} />
       <div>
         <div className="group">
-          <Row label="Status" sub={cur.data?.configured ? <>Endpoint <span className="mono">{c.endpoint}</span>{c.deviceEndpoint ? <> · device endpoint <span className="mono">{c.deviceEndpoint}</span></> : null}</> : "Not configured: nothing is synced until the tokens are saved."}>
+          <Row label="Status" sub={cur.data?.configured ? <>Endpoint <span className="path">{c.endpoint}</span>{c.deviceEndpoint ? <> · device endpoint <span className="path">{c.deviceEndpoint}</span></> : null}</> : "Not configured: nothing is synced until the tokens are saved."}>
             <Dot s={cur.data?.configured ? "green" : "off"} label={cur.data?.configured ? "configured" : "not configured"} />
             <button type="button" className="btn btn-sm" onClick={() => void runCheck()} disabled={busy || !cur.data?.configured}>{busy ? "Checking…" : "Check connection"}</button>
           </Row>
@@ -147,7 +174,7 @@ function R2Settings() {
           <div className="group" style={{ marginTop: 12 }}>
             <table className="check-table" aria-label="Connection check">
               <thead><tr><th></th><th>Bucket</th><th>Result</th><th>ms</th></tr></thead>
-              <tbody>{check.buckets.map((b: any) => <tr key={b.bucket}><td><Dot s={b.ok ? "green" : "red"} /></td><td className="mono">{b.bucket}</td><td>{b.ok ? "reachable" : `${b.status ?? ""} ${b.error ?? ""}`}</td><td className="tnum">{b.ms}</td></tr>)}</tbody>
+              <tbody>{check.buckets.map((b: any) => <tr key={b.bucket}><td><Dot s={b.ok ? "green" : "red"} /></td><td className="path">{b.bucket}</td><td>{b.ok ? "reachable" : `${b.status ?? ""} ${b.error ?? ""}`}</td><td className="tnum">{b.ms}</td></tr>)}</tbody>
             </table>
           </div>
         )}
@@ -155,11 +182,13 @@ function R2Settings() {
       <form onSubmit={save} className="stack" style={{ gap: 20 }}>
         <div className="row"><Segmented label="Input mode" value={mode} onChange={setMode} options={[["fields", "Fields"], ["json", "Paste r2.json"]]} /></div>
         {mode === "json" ? (
-          <div className="group"><Row stacked label="r2.json"><textarea className="textarea mono" rows={10} value={json} onChange={(e) => setJson(e.target.value)} aria-label="r2.json" style={{ width: "100%" }} /></Row></div>
+          <div className="group"><Row stacked label="r2.json" error={fieldErr?.where === "json" ? fieldErr.text : null} errorId="r2-json-error">
+            <textarea className="textarea" rows={10} value={json} onChange={(e) => setJson(e.target.value)} aria-label="r2.json" style={{ width: "100%" }}
+              aria-invalid={fieldErr?.where === "json" || undefined} aria-describedby={fieldErr?.where === "json" ? "r2-json-error" : undefined} /></Row></div>
         ) : (
           <>
             <div>
-              <h4 className="group-title">Account</h4>
+              <h2 className="group-title">Account</h2>
               <div className="group">
                 <Row label="Account id" sub={c?.accountId ? `current: ${c.accountId}` : undefined}>{input("accountId", "Account id")}</Row>
                 <Row label="Endpoint" sub="instead of the account id">{input("endpoint", "Endpoint (instead of account id)", { placeholder: "https://<account>.r2.cloudflarestorage.com" })}</Row>
@@ -167,15 +196,16 @@ function R2Settings() {
               </div>
             </div>
             <div>
-              <h4 className="group-title">Tokens (accessKeyId:secret)</h4>
+              <h2 className="group-title">Tokens (accessKeyId:secret)</h2>
               <div className="group">
                 {TOKEN_FIELDS.map(([k, label]) => <Row key={k} label={label} sub={<>current: {masked(k)}</>}>{input(k, label, { secret: true })}</Row>)}
               </div>
+              {fieldErr?.where === "tokens" && <div className="group-foot"><FieldError id="r2-tokens-error">{fieldErr.text}</FieldError></div>}
             </div>
           </>
         )}
         <p className="group-foot" style={{ marginTop: -12 }}>Saving replaces the whole R2 configuration: enter every token again.</p>
-        <div className="row"><span className="spacer" />{msg && <span role="status" className={msg.ok ? "ok-text small" : "error small"}>{msg.text}</span>}<button type="submit" className="btn btn-primary">Save R2 configuration</button></div>
+        <div className="row"><span className="spacer" />{msg && <span role={msg.ok ? "status" : "alert"} className={msg.ok ? "ok-text small" : "error small"}>{msg.text}</span>}<button type="submit" className="btn btn-primary" disabled={saving}>{saving ? "Saving…" : "Save R2 configuration"}</button></div>
       </form>
     </section>
   );
@@ -188,16 +218,21 @@ function LockSettings() {
   const [mode, setMode] = useState("ui");
   const [msg, setMsg] = useState<string | null>(null);
   useEffect(() => { if (ks.data) { setMin(String(ks.data.autoLockMinutes ?? "")); setMode(ks.data.autoLockMode ?? "ui"); } }, [ks.data]);
+  const [err, setErr] = useState<string | null>(null);
   const save = async (e: FormEvent) => {
-    e.preventDefault();
+    e.preventDefault(); setMsg(null);
+    const bad = rangeError(min, 0, 1440, "the minutes");
+    setErr(bad);
+    if (bad) return;
     try { await api.put("/api/keystore/settings", { autoLockMinutes: Number(min), ...(ks.data?.autoLockMode !== undefined ? { autoLockMode: mode } : {}) }); setMsg("Saved."); ks.reload(); }
-    catch (x) { setMsg(errText(x)); }
+    catch (x) { setErr(errText(x)); }
   };
   return (
     <form aria-label="Auto-lock" onSubmit={save} className="stack">
       <div className="group">
-        <Row label="Lock after idle" sub="Minutes without activity; 0 = never.">
-          <input className="input" style={{ width: 90 }} type="number" min={0} max={1440} value={min} onChange={(e) => setMin(e.target.value)} aria-label="Lock after idle minutes (0 = never)" /><span className="small muted">min</span>
+        <Row label="Lock after idle" sub="Minutes without activity, 0 to 1440; 0 = never." error={err} errorId="autolock-error">
+          <input className="input" style={{ width: 90 }} type="number" min={0} max={1440} value={min} onChange={(e) => setMin(e.target.value)} aria-label="Lock after idle minutes (0 = never)"
+            onBlur={() => setErr(min === "" ? null : rangeError(min, 0, 1440, "the minutes"))} aria-invalid={!!err || undefined} aria-describedby={err ? "autolock-error" : undefined} /><span className="small muted">min</span>
         </Row>
         {ks.data?.autoLockMode !== undefined && (
           <Row label="Auto-lock does" sub={mode === "ui" ? "Screen lock: ingest keeps running with the key in memory." : "Full lock: the key is dropped; ingest stops until unlock."}>
@@ -218,15 +253,20 @@ function BinSettings() {
   const [days, setDays] = useState("");
   const [msg, setMsg] = useState<string | null>(null);
   useEffect(() => { if (s.data) setDays(String(s.data.retentionDays)); }, [s.data]);
+  const [err, setErr] = useState<string | null>(null);
   const save = async (e: FormEvent) => {
-    e.preventDefault();
-    try { await api.put("/api/bin/settings", { retentionDays: Number(days) }); setMsg("Saved."); s.reload(); } catch (x) { setMsg(errText(x)); }
+    e.preventDefault(); setMsg(null);
+    const bad = rangeError(days, 1, 3650, "the days");
+    setErr(bad);
+    if (bad) return;
+    try { await api.put("/api/bin/settings", { retentionDays: Number(days) }); setMsg("Saved."); s.reload(); } catch (x) { setErr(errText(x)); }
   };
   return (
     <form aria-label="Recovery bin retention" onSubmit={save} className="stack">
       <div className="group">
-        <Row label="Keep deleted items for" sub="Items deleted inside the vault are removed permanently after this.">
-          <input className="input" style={{ width: 90 }} type="number" min={1} max={3650} value={days} onChange={(e) => setDays(e.target.value)} aria-label="Keep deleted items for days" /><span className="small muted">days</span>
+        <Row label="Keep deleted items for" sub="1 to 3650 days. Items deleted inside the vault are removed permanently after this." error={err} errorId="bin-days-error">
+          <input className="input" style={{ width: 90 }} type="number" min={1} max={3650} value={days} onChange={(e) => setDays(e.target.value)} aria-label="Keep deleted items for days"
+            onBlur={() => setErr(days === "" ? null : rangeError(days, 1, 3650, "the days"))} aria-invalid={!!err || undefined} aria-describedby={err ? "bin-days-error" : undefined} /><span className="small muted">days</span>
         </Row>
         <Row label="Open the recovery bin"><Link to="/bin" className="btn btn-sm">Recovery bin</Link></Row>
       </div>
@@ -239,19 +279,33 @@ function PassphraseChange() {
   const api = useApi();
   const [cur, setCur] = useState(""); const [next, setNext] = useState("");
   const [msg, setMsg] = useState<string | null>(null);
+  const [err, setErr] = useState<{ field: "current" | "next"; text: string } | null>(null);
+  const [busy, setBusy] = useState(false);
   const save = async (e: FormEvent) => {
-    e.preventDefault();
+    e.preventDefault(); setMsg(null); setErr(null);
+    if (next === cur) { setErr({ field: "next", text: "The new passphrase is the same as the current one." }); return; }
+    setBusy(true);
     try { const r = await api.post<any>("/api/keystore/change-passphrase", { current: cur, next }); setCur(""); setNext(""); setMsg(`Changed. Fingerprint unchanged (${r.fingerprint}). ${r.saltBackup ?? ""}`); }
-    catch (x) { setMsg(errText(x)); }
+    catch (x) {
+      const t = errText(x);
+      // a wrong current passphrase belongs to that field; anything else (e.g. too short) to the new one
+      setErr(/wrong|current|incorrect/i.test(t) ? { field: "current", text: `${t}. Enter the passphrase you unlock IVY with.` } : { field: "next", text: t });
+    } finally { setBusy(false); }
   };
   return (
     <form aria-label="Passphrase" onSubmit={save} className="stack">
       <div className="group">
-        <Row label="Current passphrase"><input className="input" type="password" autoComplete="current-password" aria-label="Current" value={cur} onChange={(e) => setCur(e.target.value)} /></Row>
-        <Row label="New passphrase"><input className="input" type="password" autoComplete="new-password" aria-label="New" value={next} onChange={(e) => setNext(e.target.value)} /></Row>
+        <Row label="Current passphrase" error={err?.field === "current" ? err.text : null} errorId="pass-current-error">
+          <input className="input" type="password" autoComplete="current-password" aria-label="Current" value={cur} onChange={(e) => setCur(e.target.value)}
+            aria-invalid={err?.field === "current" || undefined} aria-describedby={err?.field === "current" ? "pass-current-error" : undefined} />
+        </Row>
+        <Row label="New passphrase" error={err?.field === "next" ? err.text : null} errorId="pass-next-error">
+          <input className="input" type="password" autoComplete="new-password" aria-label="New" value={next} onChange={(e) => setNext(e.target.value)}
+            aria-invalid={err?.field === "next" || undefined} aria-describedby={err?.field === "next" ? "pass-next-error" : undefined} />
+        </Row>
       </div>
       <p className="group-foot" style={{ marginTop: -8 }}>The Mac key does not change, so devices stay paired. Keep a fresh copy of data/identity.json afterwards.</p>
-      <div className="row"><span className="spacer" /><button type="submit" className="btn btn-primary" disabled={!cur || !next}>Change passphrase</button></div>
+      <div className="row"><span className="spacer" /><button type="submit" className="btn btn-primary" disabled={!cur || !next || busy}>{busy ? "Changing…" : "Change passphrase"}</button></div>
       {msg && <Notice role="status">{msg}</Notice>}
     </form>
   );
@@ -282,7 +336,7 @@ export function AiSettings() {
         </div>
       </div>
       <form onSubmit={saveKey}>
-        <h4 className="group-title">API key</h4>
+        <h2 className="group-title">API key</h2>
         <div className="group">
           <Row label="OpenAI API key" sub={d?.apiKeySet ? "Stored, sealed under the identity key." : "Not set."}>
             <input className="input" type="password" autoComplete="off" value={key} onChange={(e) => setKey(e.target.value)} aria-label="OpenAI API key" placeholder={d?.apiKeySet ? "Enter a new key to replace it" : "sk-..."} />
@@ -294,7 +348,7 @@ export function AiSettings() {
         </div>
       </form>
       <div>
-        <h4 className="group-title">Model</h4>
+        <h2 className="group-title">Model</h2>
         <div className="group">
           <Row label="Model" sub={!m ? (on ? (d?.apiKeySet ? (models.error ? `Model list unavailable: ${errText(models.error)}` : "Loading the model list…") : "Save an API key to load the model list.") : "The model list is read from the API once cloud AI is on.") : "Read from your OpenAI account."}>
             <select className="select" aria-label="Model" value={d?.model ?? ""} onChange={(e) => void put({ model: e.target.value || null })} disabled={!m}>
@@ -305,7 +359,7 @@ export function AiSettings() {
         </div>
       </div>
       <div>
-        <h4 className="group-title">Semantic search</h4>
+        <h2 className="group-title">Semantic search</h2>
         <div className="group">
           <Row label="Compute embeddings with OpenAI" sub={<>{d?.embeddingsSend ?? ""}{on ? "" : " (needs cloud AI on)"}</>}>
             <Switch label="Compute embeddings with OpenAI" checked={!!d?.embeddings} disabled={!d} onChange={() => void put({ embeddings: !d?.embeddings })} />
@@ -336,18 +390,18 @@ export function ActivityVaultSettings() {
     <section aria-label="Activity Vault import" className="stack" style={{ gap: 20 }}>
       <ErrorLine error={s.error} />
       <div>
-        <h4 className="group-title">Activity Vault</h4>
+        <h2 className="group-title">Activity Vault</h2>
         <div className="group">
           <Row label="Import daily" sub="Copies Google activity (YouTube, Search, Maps, …) from a local Activity Vault archive. The archive is opened read-only and never modified.">
             <Switch label="Import daily" checked={!!d?.settings.enabled} disabled={!d} onChange={() => void put({ enabled: !d?.settings.enabled })} />
           </Row>
           <Row stacked label="Archive path" sub="SQLite or JSON file, or its folder">
             <form className="row" onSubmit={(e) => { e.preventDefault(); void put({ path }); }} style={{ width: "100%" }}>
-              <input aria-label="Archive path" className="input mono spacer" value={path} onChange={(e) => setPathV(e.target.value)} />
+              <input aria-label="Archive path" className="input spacer" value={path} onChange={(e) => setPathV(e.target.value)} />
               <button type="submit" className="btn">Save path</button>
             </form>
           </Row>
-          {d?.detected && <Row label="Detected" sub={<><span className="mono">{d.detected.format}</span>{d.detected.table ? <> table <span className="mono">{d.detected.table}</span></> : null} in <span className="mono">{d.detected.file}</span></>} />}
+          {d?.detected && <Row label="Detected" sub={<><span className="path">{d.detected.format}</span>{d.detected.table ? <> table <span className="path">{d.detected.table}</span></> : null} in <span className="path">{d.detected.file}</span></>} />}
           <Row label="Last run" sub={last ? <><Time at={last.startedAt} /> ({ago(last.startedAt)}): {last.status}{last.status === "ok" ? ` · ${last.rowsAdded} added of ${last.rowsSeen}${last.rowsSkipped ? ` · ${last.rowsSkipped} skipped` : ""}` : last.error ? ` · ${last.error}` : ""}</> : "Never run."}>
             <button type="button" className="btn btn-sm" onClick={() => void run()} disabled={busy || !d?.settings.path}>{busy ? "Importing…" : "Import now"}</button>
           </Row>

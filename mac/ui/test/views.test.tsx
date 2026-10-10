@@ -288,3 +288,47 @@ describe("activity feed", () => {
     expect(pushEvent(l, { id: 599, at: "", type: "x", data: {} })).toBe(l);
   });
 });
+
+describe("settings forms: inline errors at the field (UX error-placement)", () => {
+  it("auto-lock minutes out of range shows an error below the field, linked by aria-describedby, and sends nothing", async () => {
+    const api = mockApi({ "GET /api/keystore": { state: "unlocked", autoLockMinutes: 30, autoLockMode: "ui" }, "PUT /api/keystore/settings": {} });
+    renderWith(<SettingsView />, api, { path: "/settings?section=lock" });
+    const input = await screen.findByLabelText("Lock after idle minutes (0 = never)");
+    await waitFor(() => expect(input).toHaveValue(30));
+    const u = userEvent.setup();
+    await u.clear(input); await u.type(input, "5000");
+    await u.click(screen.getByRole("button", { name: "Save" }));
+    const err = await screen.findByRole("alert");
+    expect(err).toHaveTextContent("Enter the minutes between 0 and 1440.");
+    expect(input).toHaveAttribute("aria-invalid", "true");
+    expect(input.getAttribute("aria-describedby")).toBe(err.id);
+    expect(api.calls.some((c) => c.method === "PUT")).toBe(false);
+    await u.clear(input); await u.type(input, "15");
+    await u.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(api.calls.find((c) => c.method === "PUT")!.arg).toEqual({ autoLockMinutes: 15, autoLockMode: "ui" }));
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("R2: half a device token pair is reported under the tokens, not as a server error", async () => {
+    const api = mockApi({ "GET /api/r2": { configured: false, config: null } });
+    renderWith(<SettingsView />, api, { path: "/settings" });
+    const u = userEvent.setup();
+    await u.type(await screen.findByLabelText("Android device: up-bucket write token"), "a:b");
+    await u.click(screen.getByRole("button", { name: "Save R2 configuration" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(/android device tokens need both.*Fill in both, or leave both empty/);
+    expect(api.calls.some((c) => c.method === "PUT")).toBe(false);
+  });
+
+  it("passphrase: a wrong current passphrase is shown at the current field", async () => {
+    const { ApiError } = await import("../src/api.ts");
+    const api = mockApi({ "POST /api/keystore/change-passphrase": () => { throw new ApiError(401, "wrong_passphrase", "wrong passphrase"); } });
+    renderWith(<SettingsView />, api, { path: "/settings?section=passphrase" });
+    const u = userEvent.setup();
+    await u.type(screen.getByLabelText("Current"), "nope");
+    await u.type(screen.getByLabelText("New"), "a new long passphrase");
+    await u.click(screen.getByRole("button", { name: "Change passphrase" }));
+    const err = await screen.findByRole("alert");
+    expect(err).toHaveTextContent(/wrong passphrase.*Enter the passphrase you unlock IVY with/);
+    expect(screen.getByLabelText("Current")).toHaveAttribute("aria-describedby", err.id);
+  });
+});

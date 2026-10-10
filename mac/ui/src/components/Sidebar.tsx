@@ -7,6 +7,7 @@ import { ago, platformLabel, roleLabel } from "../format.ts";
 import { Icon, type IconName } from "./Icon.tsx";
 import { Link } from "./Controls.tsx";
 import { Dot } from "./Feedback.tsx";
+import { AppIcon } from "./AppIcon.tsx";
 
 export interface ChatSource { source: string; role: string; collector: string; platform: string; conversations: number; messages: number; lastMessageAt: string | null }
 
@@ -33,10 +34,10 @@ function Group({ id, title, defaultOpen, forceOpen, children }: { id: string; ti
   );
 }
 
-function Item({ to, icon, label, current, sub, aria, trailing }: { to: string; icon: IconName; label: string; current: boolean; sub?: boolean; aria?: string; trailing?: ReactNode }) {
+function Item({ to, icon, app, label, current, sub, aria, trailing, describedBy }: { to: string; icon: IconName; app?: string; label: string; current: boolean; sub?: boolean; aria?: string; trailing?: ReactNode; describedBy?: string }) {
   return (
-    <Link to={to} className={`nav-item${sub ? " sub" : ""}`} aria-current={current ? "page" : undefined} aria-label={aria ?? label}>
-      <Icon name={icon} size={sub ? 14 : 16} /><span className="ellipsis">{label}</span>{trailing}
+    <Link to={to} className={`nav-item${sub ? " sub" : ""}`} aria-current={current ? "page" : undefined} aria-label={aria ?? label} aria-describedby={describedBy}>
+      {app ? <AppIcon app={app} size={16} /> : <Icon name={icon} size={16} />}<span className="ellipsis" title={label}>{label}</span>{trailing}
     </Link>
   );
 }
@@ -75,7 +76,7 @@ export function Sidebar({ footer }: { footer: ReactNode }) {
         <Group id="conversations" title="Conversations" defaultOpen forceOpen={starts("/conversations")}>
           <Item to="/conversations" icon="chat" label="All chats" current={is("/conversations") && !query.get("source")} />
           {srcList.map((s) => (
-            <Item key={`${s.source}|${s.platform}`} to={chatSourceHref(s)} icon="chat" sub label={chatSourceLabel(s)}
+            <Item key={`${s.source}|${s.platform}`} to={chatSourceHref(s)} icon="chat" app={s.platform} sub label={chatSourceLabel(s)}
               current={is("/conversations") && query.get("source") === s.source && (query.get("platform") ?? "") === s.platform}
               trailing={<span className="nav-count">{s.conversations}</span>} />
           ))}
@@ -89,7 +90,7 @@ export function Sidebar({ footer }: { footer: ReactNode }) {
               <Item to={`/device/${role}`} icon={role === "windows" ? "laptop" : "phone"} label="Overview" aria={`${roleLabel(role)} overview`}
                 current={is(`/device/${role}`)} trailing={st ? <span className="nav-dot"><Dot s={st} label={`${role} ${st}`} /></span> : <span className="nav-count">not paired</span>} />
               {DEVICE_SOURCES[role].map((s) => (
-                <Item key={s.key} sub to={`/device/${role}/${s.key}`} icon={s.icon} label={s.label} aria={`${roleLabel(role)} ${s.label}`} current={is(`/device/${role}/${s.key}`)} />
+                <Item key={s.key} sub to={`/device/${role}/${s.key}`} icon={s.icon} app={s.view.kind === "chats" ? s.view.platform : undefined} label={s.label} aria={`${roleLabel(role)} ${s.label}`} current={is(`/device/${role}/${s.key}`)} />
               ))}
             </Group>
           );
@@ -97,7 +98,13 @@ export function Sidebar({ footer }: { footer: ReactNode }) {
 
         <Group id="vault" title="Vault" defaultOpen>
           <Item to="/coverage" icon="pulse" label="Coverage" current={starts("/coverage")}
-            trailing={cov.data?.problems?.length ? <span className="nav-dot"><Dot s={(cov.data.problems as Array<{ severity: string }>).some((p) => p.severity === "red") ? "red" : "amber"} label={`${cov.data.problems.length} problem(s)`} /></span> : cov.data ? <span className="nav-dot"><Dot s="green" label="no problems" /></span> : undefined} />
+            describedBy={cov.data ? "nav-coverage-state" : undefined}
+            trailing={cov.data?.problems?.length ? (
+              <span className="nav-problems" id="nav-coverage-state" title={`${cov.data.problems.length} problem(s) need attention`}>
+                <span aria-hidden="true">{cov.data.problems.length}</span><span className="sr-only">{cov.data.problems.length} problem(s) need attention</span>
+                <Dot s={(cov.data.problems as Array<{ severity: string }>).some((p) => p.severity === "red") ? "red" : "amber"} label="" />
+              </span>
+            ) : cov.data ? <span className="nav-dot" id="nav-coverage-state"><span className="sr-only">no problems</span><Dot s="green" label="" /></span> : undefined} />
           <Item to="/devices" icon="link" label="Devices" current={starts("/devices")} />
           <Item to="/bin" icon="trash" label="Recovery bin" current={starts("/bin")} />
           <Item to="/settings" icon="gear" label="Settings" current={starts("/settings")} />

@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { useLoad } from "../ctx.tsx";
 import { href, navigate, useLocation } from "../router.ts";
 import { dayKey, dayLabel, shortWhen } from "../format.ts";
-import { Avatar } from "../components/Avatar.tsx";
+import { AppIcon } from "../components/AppIcon.tsx";
 import { SearchField } from "../components/Controls.tsx";
 import { Empty, ErrorLine, Notice, Pager } from "../components/Feedback.tsx";
 import { RecordCard, type Item } from "./records.tsx";
@@ -37,14 +37,14 @@ export function NotificationsView({ device, embedded }: { device?: string; embed
   return (
     <div className="panes" style={embedded ? { height: "auto", minHeight: 480, border: "1px solid var(--separator)", borderRadius: 12, overflow: "hidden" } : undefined}>
       <section className="pane pane-list" aria-label="Apps" style={{ width: 260 }}>
-        <div className="pane-head"><h2>{embedded ? "Apps" : "Notifications"}</h2></div>
+        <div className="pane-head">{embedded ? <h2>Apps</h2> : <h1>Notifications</h1>}</div>
         <div className="pane-scroll" style={{ padding: 8 }}>
           <button className="app-item" aria-current={!app ? "true" : undefined} onClick={() => go({ app: "", page: 1 })}>
             <span className="app-name">All apps</span><span className="app-count">{total}</span>
           </button>
           {appList.map((a) => (
             <button key={`${a.app}:${a.source}`} className="app-item" aria-current={app === a.app ? "true" : undefined} onClick={() => go({ app: a.app, page: 1 })}>
-              <Avatar name={a.app} size={26} />
+              <AppIcon app={a.app} size={16} />
               <span className="app-name"><span className="ellipsis" style={{ display: "block" }}>{a.app}</span><span className="app-sub">{a.source} · {shortWhen(a.latest)}</span></span>
               <span className="app-count">{a.count}</span>
             </button>
@@ -67,7 +67,7 @@ export function NotificationsView({ device, embedded }: { device?: string; embed
           )}
           {days.map(([day, its]) => (
             <section key={day} aria-label={day === "unknown" ? "Unknown date" : dayLabel(day)}>
-              <h3 className="day-sep">{day === "unknown" ? "Unknown date" : dayLabel(day)}</h3>
+              <h2 className="day-sep">{day === "unknown" ? "Unknown date" : dayLabel(day)}</h2>
               {its.map((it) => <RecordCard key={it.id} it={it} inList />)}
             </section>
           ))}

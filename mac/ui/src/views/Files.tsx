@@ -98,7 +98,7 @@ export function FilesView({ device, embedded }: { device?: string; embedded?: bo
                 <span className="fi" aria-hidden="true">{ext}</span>
                 <div style={{ minWidth: 0 }}>
                   <div className="fname ellipsis">{d.name ?? it.title}{d.sourceStatus === "deleted_at_source" && <> <Badge tone="red">deleted at source</Badge></>}</div>
-                  <div className="fpath ellipsis" title={d.path ?? it.body ?? ""}>{deviceName(it.deviceId, devs.data?.devices)} · <span className="mono">{d.path ?? it.body}</span></div>
+                  <div className="fpath ellipsis" title={d.path ?? it.body ?? ""}>{deviceName(it.deviceId, devs.data?.devices)} · <span className="path">{d.path ?? it.body}</span></div>
                 </div>
                 <span className="fsize">{bytes(d.size)}</span>
                 <span className="fdate" title="modified (original time)"><Time at={d.mtime ?? it.eventTime} field={it.timeField} captured={it.capturedAt} withDate /></span>

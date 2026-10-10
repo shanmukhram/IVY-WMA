@@ -38,7 +38,7 @@ export function Answer({ t }: { t: AiTurn }) {
       <p className="a-text">{t.answer}</p>
       {t.facts.length > 0 && (
         <section aria-label="Facts">
-          <h4>Facts · each linked to records</h4>
+          <h3>Facts · each linked to records</h3>
           <ul className="facts">{t.facts.map((f, i) => (
             <li key={i}><span className="fact-text">{f.text}</span>
               {f.recordIds.map((id) => {
@@ -56,13 +56,13 @@ export function Answer({ t }: { t: AiTurn }) {
       )}
       {t.inferences.length > 0 && (
         <section aria-label="Inferences" className="inferences">
-          <h4>Inferences · not stated by any record</h4>
+          <h3>Inferences · not stated by any record</h3>
           <ul>{t.inferences.map((x, i) => <li key={i} className="inference"><span className="badge badge-purple">inference</span> {x.text}<span className="basis">basis: {x.basis}</span></li>)}</ul>
         </section>
       )}
       {t.missing.length > 0 && (
         <section aria-label="Missing information" className="missing">
-          <h4>Missing or not covered</h4>
+          <h3>Missing or not covered</h3>
           <ul>{t.missing.map((m, i) => <li key={i}>{m}</li>)}</ul>
         </section>
       )}
@@ -171,7 +171,7 @@ export function AiDrawer({ context, label = "AI overview", open, onClose }: { co
   if (!open) return null;
   return (
     <aside className="ai-drawer" aria-label="AI drawer">
-      <div className="drawer-head"><Icon name="sparkles" /><h3>{label}</h3><button className="btn btn-ghost btn-icon btn-sm" onClick={onClose} aria-label="Close AI drawer"><Icon name="close" size={14} /></button></div>
+      <div className="drawer-head"><Icon name="sparkles" /><h2>{label}</h2><button className="btn btn-ghost btn-icon btn-sm" onClick={onClose} aria-label="Close AI drawer"><Icon name="close" size={14} /></button></div>
       <div className="drawer-body"><AiPanel key={JSON.stringify(context)} context={context} overview /></div>
     </aside>
   );
@@ -215,7 +215,7 @@ export function AiView() {
   return (
     <div className="panes">
       <section className="pane pane-list" aria-label="AI conversations">
-        <div className="pane-head"><h2>Ask AI</h2><span className="spacer" />
+        <div className="pane-head"><h1>Ask AI</h1><span className="spacer" />
           <Link to="/ai" className="btn btn-sm" aria-label="New chat"><Icon name="plus" size={13} />New</Link>
         </div>
         <div className="pane-scroll" style={{ padding: 8 }}>
@@ -223,7 +223,7 @@ export function AiView() {
           {list.data && items.length === 0 && <p className="small faint" style={{ padding: "8px 12px" }}>No AI conversations yet. They are stored on this Mac.</p>}
           {items.map((c) => (
             <Link key={c.id} to={href("/ai", { c: c.id })} className="chat-list-item" aria-current={c.id === id ? "true" : undefined}>
-              <span className="cl-title">{c.title}</span>
+              <span className="cl-title" title={c.title}>{c.title}</span>
               <span className="cl-sub">{c.kind} · {c.turns} turn(s) · {shortWhen(c.updatedAt)}</span>
             </Link>
           ))}

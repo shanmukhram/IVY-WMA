@@ -28,7 +28,7 @@ describe("media gallery", () => {
   it("groups by day with headers, filters by kind and device through the API", async () => {
     const api = mockApi(routes());
     renderWith(<MediaView />, api, { path: "/media" });
-    const days = await screen.findAllByRole("heading", { level: 3 });
+    const days = await screen.findAllByRole("heading", { level: 2 });
     expect(days).toHaveLength(2);
     expect(within(days[0]!.closest("section")!).getAllByRole("button")).toHaveLength(2);
     expect(screen.getByRole("button", { name: /screenshot C:\\pics\\a.png/ })).toHaveAttribute("title", "text of a");
@@ -65,6 +65,12 @@ describe("media gallery", () => {
     await waitFor(() => expect(api.calls.filter((c) => c.method === "DELETE").map((c) => c.path)).toEqual(["/api/items/screenshot/a", "/api/items/photo/b"]));
     expect(await screen.findByText(/Moved 2 item\(s\) to the recovery bin/)).toBeInTheDocument();
     expect(screen.getByTestId("selection-count")).toHaveTextContent("0 selected");
+    // bulk bin can be undone in place
+    api.routes["POST /api/bin/screenshot/a/restore"] = { restored: true };
+    api.routes["POST /api/bin/photo/b/restore"] = { restored: true };
+    await u.click(screen.getByRole("button", { name: "Undo" }));
+    expect(await screen.findByText("Restored 2 item(s).")).toBeInTheDocument();
+    expect(api.calls.filter((c) => c.path.endsWith("/restore")).map((c) => c.path)).toEqual(["/api/bin/screenshot/a/restore", "/api/bin/photo/b/restore"]);
   });
 
   it("lightbox: prev / next, metadata, OCR text and origin", async () => {

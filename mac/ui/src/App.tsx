@@ -75,9 +75,17 @@ export function App() {
   return <Shell onLocked={refresh} />;
 }
 
+const TITLES: Array<[RegExp, string]> = [
+  [/^\/(search)?$/, "Search"], [/^\/timeline/, "Timeline"], [/^\/ai/, "Ask AI"], [/^\/media/, "Media"], [/^\/files/, "Files"],
+  [/^\/notifications/, "Notifications"], [/^\/conversations/, "Conversations"], [/^\/device\/windows/, "Windows"], [/^\/device\/android/, "Android"],
+  [/^\/coverage/, "Coverage"], [/^\/devices/, "Devices"], [/^\/settings/, "Settings"], [/^\/bin/, "Recovery bin"],
+];
+
 function Router() {
   const { path } = useLocation();
   const p = path;
+  // the window title names the view (predictable history entries, screen-reader context on route change)
+  useEffect(() => { const t = TITLES.find(([re]) => re.test(p))?.[1]; document.title = t ? `${t} · IVY` : "IVY"; }, [p]);
   if (p === "/" || p === "/search") return <SearchView />;
   if (p.startsWith("/timeline")) return <TimelineView />;
   if (p.startsWith("/conversations")) return <ConversationsView />;
@@ -93,7 +101,7 @@ function Router() {
   return (
     <div className="page">
       <Empty icon="search" title="Page not found" action={<button className="btn" onClick={() => navigate("/")}>Go to Search</button>}>
-        Nothing lives at <span className="mono">{p}</span>.
+        Nothing lives at <span className="path">{p}</span>.
       </Empty>
     </div>
   );
@@ -154,9 +162,10 @@ function Shell({ onLocked }: { onLocked: () => void }) {
 
   return (
     <DevicesContext.Provider value={devs.data?.devices}>
+      <a className="skip-link" href="#main" onClick={(e) => { e.preventDefault(); document.getElementById("main")?.focus(); }}>Skip to content</a>
       <div className="shell">
         <Sidebar footer={footer} />
-        <main className="main" id="main"><Router /></main>
+        <main className="main" id="main" tabIndex={-1}><Router /></main>
         {feedOpen && <ActivityPanel events={events} onClose={() => setFeedOpen(false)} />}
       </div>
     </DevicesContext.Provider>

@@ -17,6 +17,13 @@ describe("sidebar navigation", () => {
     for (const name of ["Search", "Timeline", "Ask AI", "Media", "Files", "Notifications", "All chats", "Coverage", "Devices", "Recovery bin", "Settings"]) {
       expect(within(nav).getByRole("link", { name })).toBeInTheDocument();
     }
+    // a skip link comes first; coverage problems are written out, not shown by colour alone
+    expect(screen.getByRole("link", { name: "Skip to content" })).toHaveAttribute("href", "#main");
+    const cov = within(nav).getByRole("link", { name: "Coverage" });
+    expect(await within(cov).findByText("2 problem(s) need attention")).toBeInTheDocument();
+    expect(cov).toHaveAccessibleDescription("2 problem(s) need attention");
+    // conversation sources and chat sources under devices carry their app's icon
+    expect((await within(nav).findByRole("link", { name: /Telegram · Windows/ })).querySelector("[data-app-icon='telegram']")).not.toBeNull();
     // the current page is marked
     expect(within(nav).getByRole("link", { name: "Search" })).toHaveAttribute("aria-current", "page");
     // one conversation entry per capture source, from the API
