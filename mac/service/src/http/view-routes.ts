@@ -101,25 +101,38 @@ export function registerViewRoutes(app: FastifyInstance, svc: Service): void {
     const total = (db().prepare(`SELECT COUNT(*) AS n FROM conversations c WHERE ${w}`).get(...args) as { n: number }).n;
     const rows = db().prepare(`
       SELECT c.id, c.device_id AS deviceId, c.platform, c.account, c.conv_key AS convKey, c.peer, c.kind, c.coverage, c.coverage_by_source,
-             c.chat_title AS chatTitle, c.participant_count AS participantCount, c.chat_type AS chatType,
+             c.chat_title AS chatTitle, c.participant_count AS participantCount, c.chat_type AS chatType, c.avatar_local_path AS avatarLocalPath,
              (SELECT COUNT(*) FROM messages m WHERE m.conversation_id = c.id AND m.deleted_at IS NULL) AS messageCount,
              (SELECT MIN(m.sent_at) FROM messages m WHERE m.conversation_id = c.id AND m.deleted_at IS NULL) AS firstMessageAt,
              (SELECT MAX(m.sent_at) FROM messages m WHERE m.conversation_id = c.id AND m.deleted_at IS NULL) AS lastMessageAt
       FROM conversations c WHERE ${w}
-      ORDER BY lastMessageAt IS NULL, lastMessageAt DESC, c.rid DESC LIMIT ? OFFSET ?`).all(...args, pageSize, (page - 1) * pageSize) as Array<Record<string, unknown> & { id: string; coverage_by_source: string }>;
+      ORDER BY lastMessageAt IS NULL, lastMessageAt DESC, c.rid DESC LIMIT ? OFFSET ?`).all(...args, pageSize, (page - 1) * pageSize) as Array<Record<string, unknown> & { id: string; coverage_by_source: string; avatarLocalPath: string | null }>;
     const last = db().prepare(`SELECT id, sender, sent_at AS sentAt, substr(text, 1, 200) AS text, media_kind AS mediaKind, source_status AS sourceStatus
                                FROM messages WHERE conversation_id = ? AND deleted_at IS NULL ORDER BY sent_at DESC, rid DESC LIMIT 1`);
-    const items = rows.map(({ coverage_by_source, ...c }) => ({ ...c, ...coverageView(coverage_by_source), lastMessage: last.get(c.id) ?? null }));
+    const items = rows.map(({ coverage_by_source, avatarLocalPath, ...c }) => {
+      const cov = coverageView(coverage_by_source);
+      const lastMessage = (last.get(c.id) as { text: string; sentAt: string } | undefined) ?? null;
+      return {
+        ...c, ...cov, lastMessage,
+        // the resolved display name (chatMeta title), then the peer, then the raw conversation key
+        title: (c.chatTitle as string | null) || (c.peer as string | null) || (c.convKey as string),
+        avatarUrl: avatarLocalPath ? `/api/views/chats/${c.id}/avatar` : null,
+        lastText: lastMessage?.text ?? null,
+        lastAt: lastMessage?.sentAt ?? null,
+        source: cov.coverageSources[0]?.source ?? null,
+      };
+    });
     return { total, page, pageSize, pages: Math.max(1, Math.ceil(total / pageSize)), items };
   });
 
   app.get("/api/views/chats/:id/profile", async (req, reply) => {
     const id = (req.params as { id: string }).id;
     const c = db().prepare(`SELECT id, device_id AS deviceId, platform, account, conv_key AS convKey, peer, kind, coverage, coverage_by_source,
-                                   chat_title AS chatTitle, participant_count AS participantCount, chat_type AS chatType, created_at AS createdAt
-                            FROM conversations WHERE id = ? AND deleted_at IS NULL`).get(id) as (Record<string, unknown> & { coverage_by_source: string }) | undefined;
+                                   chat_title AS chatTitle, participant_count AS participantCount, chat_type AS chatType, created_at AS createdAt,
+                                   avatar_local_path AS avatarLocalPath
+                            FROM conversations WHERE id = ? AND deleted_at IS NULL`).get(id) as (Record<string, unknown> & { coverage_by_source: string; avatarLocalPath: string | null; kind: string }) | undefined;
     if (!c) return reply.status(404).send({ error: "not_found", message: "no such conversation" });
-    const { coverage_by_source, ...conv } = c;
+    const { coverage_by_source, avatarLocalPath, ...conv } = c;
     const stats = db().prepare(`SELECT COUNT(*) AS messages, MIN(sent_at) AS firstMessageAt, MAX(sent_at) AS lastMessageAt,
                                        SUM(edited_at IS NOT NULL) AS edited, SUM(source_status = 'deleted_at_source') AS deletedAtSource,
                                        SUM(text_quality = 'preview') AS previewOnly
@@ -137,13 +150,69 @@ export function registerViewRoutes(app: FastifyInstance, svc: Service): void {
       ...(perSource.find((p) => p.source === source) ?? {}),
     }));
     const senders = db().prepare(`SELECT sender, COUNT(*) AS n FROM messages WHERE conversation_id = ? AND deleted_at IS NULL GROUP BY sender ORDER BY n DESC LIMIT 8`).all(id);
+    // for a group, a short roster of distinct senders with the display name a source resolved (when any)
+    const members = conv.kind === "group"
+      ? (db().prepare(`SELECT sender, MAX(sender_name) AS name FROM messages WHERE conversation_id = ? AND deleted_at IS NULL GROUP BY sender ORDER BY COUNT(*) DESC LIMIT 12`).all(id) as Array<{ sender: string; name: string | null }>)
+          .map((m) => ({ name: m.name ?? m.sender }))
+      : undefined;
     return {
       conversation: { ...conv, ...cov },
+      title: (conv.chatTitle as string | null) || (conv.peer as string | null) || (conv.convKey as string),
+      avatarUrl: avatarLocalPath ? `/api/views/chats/${id}/avatar` : null,
+      platform: conv.platform, account: conv.account, coverageText: cov.coverageText,
+      messageCount: stats.messages ?? 0, firstAt: stats.firstMessageAt ?? null, lastAt: stats.lastMessageAt ?? null,
       messages: stats.messages ?? 0, firstMessageAt: stats.firstMessageAt ?? null, lastMessageAt: stats.lastMessageAt ?? null,
       edited: stats.edited ?? 0, deletedAtSource: stats.deletedAtSource ?? 0, previewOnly: stats.previewOnly ?? 0,
       attachments: Object.fromEntries(attachments.map((a) => [a.status, a.n])),
       sources, senders,
+      ...(members ? { members } : {}),
     };
+  });
+
+  // Thread for the conversation view: each message carries who sent it (fromMe, senderName),
+  // its text and status, and its attachments with a bytes URL for cached images. A window of
+  // messages around a pivot (around=<id>, else the newest) with before/after counts.
+  app.get("/api/views/chats/:id/messages", async (req, reply) => {
+    const id = (req.params as { id: string }).id;
+    const q = req.query as { around?: string; before?: string; after?: string };
+    const c = db().prepare(`SELECT id, platform, account, conv_key AS convKey, peer, kind, coverage, coverage_by_source,
+                                   chat_title AS chatTitle, participant_count AS participantCount, chat_type AS chatType, avatar_local_path AS avatarLocalPath
+                            FROM conversations WHERE id = ? AND deleted_at IS NULL`).get(id) as (Record<string, unknown> & { coverage_by_source: string; avatarLocalPath: string | null }) | undefined;
+    if (!c) return reply.status(404).send({ error: "not_found", message: "no such conversation" });
+    const { coverage_by_source, avatarLocalPath, ...convCols } = c;
+    const conversation = {
+      ...convCols, ...coverageView(coverage_by_source),
+      title: (convCols.chatTitle as string | null) || (convCols.peer as string | null) || (convCols.convKey as string),
+      avatarUrl: avatarLocalPath ? `/api/views/chats/${id}/avatar` : null,
+    };
+    const before = int(q.before, 40, 0, 200), after = int(q.after, 40, 0, 200);
+    let pivot = q.around ? (db().prepare("SELECT sent_at, rid FROM messages WHERE id = ? AND conversation_id = ? AND deleted_at IS NULL").get(q.around, id) as { sent_at: string; rid: number } | undefined) : undefined;
+    pivot ??= db().prepare("SELECT sent_at, rid FROM messages WHERE conversation_id = ? AND deleted_at IS NULL ORDER BY sent_at DESC, rid DESC LIMIT 1").get(id) as { sent_at: string; rid: number } | undefined;
+    const cols = "id, sender, from_me, sender_name, sent_at, text, text_quality, reply_to, edited_at, source_deleted_at, forwarded_from";
+    const older = pivot ? db().prepare(`SELECT ${cols} FROM messages WHERE conversation_id = ? AND deleted_at IS NULL AND (sent_at < ? OR (sent_at = ? AND rid < ?)) ORDER BY sent_at DESC, rid DESC LIMIT ?`).all(id, pivot.sent_at, pivot.sent_at, pivot.rid, before).reverse() : [];
+    const newer = pivot ? db().prepare(`SELECT ${cols} FROM messages WHERE conversation_id = ? AND deleted_at IS NULL AND (sent_at > ? OR (sent_at = ? AND rid >= ?)) ORDER BY sent_at ASC, rid ASC LIMIT ?`).all(id, pivot.sent_at, pivot.sent_at, pivot.rid, after + 1) : [];
+    const rows = [...older, ...newer] as Array<Record<string, unknown> & {
+      id: string; sender: string; from_me: number | null; sender_name: string | null; sent_at: string; text: string;
+      text_quality: string; reply_to: string | null; edited_at: string | null; source_deleted_at: string | null; forwarded_from: string | null;
+    }>;
+    const attByMsg = new Map<string, Array<Record<string, unknown>>>();
+    if (rows.length) {
+      const atts = db().prepare(`SELECT id, message_id AS messageId, kind, filename, status, local_path AS localPath
+                                 FROM attachments WHERE deleted_at IS NULL AND message_id IN (${rows.map(() => "?").join(",")}) ORDER BY rid`)
+        .all(...rows.map((m) => m.id)) as Array<{ id: string; messageId: string; kind: string; filename: string; status: string; localPath: string | null }>;
+      for (const a of atts) {
+        const l = attByMsg.get(a.messageId) ?? [];
+        // a cached image original serves its bytes; everything else has no URL yet
+        l.push({ id: a.id, kind: a.kind, filename: a.filename, status: a.status, imageUrl: a.kind === "image" && a.localPath ? `/api/attachments/${a.id}/content` : null });
+        attByMsg.set(a.messageId, l);
+      }
+    }
+    const messages = rows.map((m) => ({
+      id: m.id, fromMe: m.from_me === 1, sender: m.sender, senderName: m.sender_name ?? null, sentAt: m.sent_at,
+      text: m.text, editedAt: m.edited_at ?? null, deletedAtSource: m.source_deleted_at ?? null, forwardedFrom: m.forwarded_from ?? null,
+      previewOnly: m.text_quality === "preview", replyTo: m.reply_to ?? null, attachments: attByMsg.get(m.id) ?? [],
+    }));
+    return { conversation, around: q.around ?? null, messages };
   });
 
   app.get("/api/views/records", async (req, reply) => {

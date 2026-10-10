@@ -156,6 +156,7 @@ export const dirs = (c: ServiceConfig) => ({
   thumbs: join(c.dataDir, "thumbs"),
   files: join(c.dataDir, "files"),
   attachments: join(c.dataDir, "attachments"),
+  avatars: join(c.dataDir, "avatars"),
   blobsTmp: join(c.dataDir, "blobs"),
   quarantine: join(c.dataDir, "quarantine"),
 });

@@ -294,14 +294,15 @@ export function commitMessageBatch(db: DB, r: MessageBatchRecordT): CommitResult
   by[source] = claim; // the latest claim of each source stands
   if (conv) {
     db.prepare(`UPDATE conversations SET peer = COALESCE(?, peer), kind = ?, coverage = ?, coverage_by_source = ?, cursor = ?, device_id = COALESCE(device_id, ?),
-                  chat_title = COALESCE(?, chat_title), participant_count = COALESCE(?, participant_count), chat_type = COALESCE(?, chat_type), updated_at = ? WHERE id = ?`)
-      .run(r.peer ?? null, r.convKind, bestCoverage(by), stableJson(by), r.cursor, r.deviceId, meta.title ?? null, meta.participantCount ?? null, meta.chatType ?? null, now, conv.id);
+                  chat_title = COALESCE(?, chat_title), participant_count = COALESCE(?, participant_count), chat_type = COALESCE(?, chat_type),
+                  avatar_blob_oid = COALESCE(?, avatar_blob_oid), updated_at = ? WHERE id = ?`)
+      .run(r.peer ?? null, r.convKind, bestCoverage(by), stableJson(by), r.cursor, r.deviceId, meta.title ?? null, meta.participantCount ?? null, meta.chatType ?? null, meta.avatarBlobOid ?? null, now, conv.id);
   } else {
     conv = { id: randomUUID(), coverage_by_source: "" };
-    db.prepare(`INSERT INTO conversations(id, device_id, platform, account, conv_key, peer, kind, coverage, coverage_by_source, cursor, chat_title, participant_count, chat_type, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    db.prepare(`INSERT INTO conversations(id, device_id, platform, account, conv_key, peer, kind, coverage, coverage_by_source, cursor, chat_title, participant_count, chat_type, avatar_blob_oid, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
       .run(conv.id, r.deviceId, r.platform, r.account, r.convKey, r.peer ?? null, r.convKind, bestCoverage(by), stableJson(by), r.cursor,
-        meta.title ?? null, meta.participantCount ?? null, meta.chatType ?? null, now, now);
+        meta.title ?? null, meta.participantCount ?? null, meta.chatType ?? null, meta.avatarBlobOid ?? null, now, now);
   }
   const captured = normTs(r.captureTime)!;
   const blobs: string[] = [];
@@ -309,6 +310,9 @@ export function commitMessageBatch(db: DB, r: MessageBatchRecordT): CommitResult
   const getMsg = db.prepare("SELECT id, text, sender, edited_at, text_source, text_quality FROM messages WHERE conversation_id = ? AND msg_key = ?");
   for (const m of r.messages) {
     const ex = getMsg.get(conv.id, m.msgId) as StoredMsg | undefined;
+    // from_me stays 0/1 when the source said so, null when it did not (so a later source can fill it)
+    const fromMe = m.fromMe === undefined ? null : m.fromMe ? 1 : 0;
+    const senderName = m.senderName ?? null;
     const editedAt = normTs(m.editedAt);
     const deletedAt = m.sourceStatus === "deleted_at_source" ? (normTs(m.deletedAtSource) ?? captured) : null;
     const replyId = m.replyTo
@@ -332,21 +336,23 @@ export function commitMessageBatch(db: DB, r: MessageBatchRecordT): CommitResult
                       sent_at = CASE WHEN ? THEN ? ELSE sent_at END WHERE id = ?`)
           .run(m.text, source, preview ? "preview" : "full", fromPreview ? 1 : 0, m.sender, fromPreview ? 1 : 0, normTs(m.sentAt), ex.id);
       }
-      // never removed by any source: a deletion only marks it (C6); the earliest observed deletion stands
+      // never removed by any source: a deletion only marks it (C6); the earliest observed deletion stands.
+      // from_me and sender_name are filled from whichever source provides them and never cleared.
       db.prepare(`UPDATE messages SET edited_at = CASE WHEN edited_at IS NULL OR ? > edited_at THEN ? ELSE edited_at END,
                     source_status = CASE WHEN ? IS NOT NULL THEN 'deleted_at_source' ELSE source_status END,
                     source_deleted_at = CASE WHEN ? IS NOT NULL AND (source_deleted_at IS NULL OR ? < source_deleted_at) THEN ? ELSE source_deleted_at END,
                     forwarded_from = COALESCE(forwarded_from, ?), media_kind = COALESCE(media_kind, ?),
+                    from_me = COALESCE(from_me, ?), sender_name = COALESCE(sender_name, ?),
                     reply_to = COALESCE(?, reply_to), reply_to_key = COALESCE(?, reply_to_key) WHERE id = ?`)
-        .run(editedAt, editedAt, deletedAt, deletedAt, deletedAt, deletedAt, m.forwardedFrom ?? null, m.mediaKind ?? null, replyId, m.replyTo ?? null, ex.id);
+        .run(editedAt, editedAt, deletedAt, deletedAt, deletedAt, deletedAt, m.forwardedFrom ?? null, m.mediaKind ?? null, fromMe, senderName, replyId, m.replyTo ?? null, ex.id);
       relink = d === "upgrade";
     } else {
       msgId = randomUUID();
       db.prepare(`INSERT INTO messages(id, conversation_id, device_id, msg_key, sender, sent_at, captured_at, text, reply_to, reply_to_key, edited_at, source_status,
-                    text_source, text_quality, forwarded_from, media_kind, source_deleted_at)
-                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+                    text_source, text_quality, forwarded_from, media_kind, from_me, sender_name, source_deleted_at)
+                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
         .run(msgId, conv.id, r.deviceId, m.msgId, m.sender, normTs(m.sentAt), captured, m.text, replyId, m.replyTo ?? null, editedAt,
-          deletedAt ? "deleted_at_source" : "live", source, preview ? "preview" : "full", m.forwardedFrom ?? null, m.mediaKind ?? null, deletedAt);
+          deletedAt ? "deleted_at_source" : "live", source, preview ? "preview" : "full", m.forwardedFrom ?? null, m.mediaKind ?? null, fromMe, senderName, deletedAt);
       // resolve earlier replies that pointed at this message before it arrived
       db.prepare("UPDATE messages SET reply_to = ? WHERE conversation_id = ? AND reply_to_key = ? AND reply_to IS NULL").run(msgId, conv.id, m.msgId);
       inserted++;
@@ -363,6 +369,8 @@ export function commitMessageBatch(db: DB, r: MessageBatchRecordT): CommitResult
       if (a.blobOid) blobs.push(a.blobOid);
     }
   }
+  // the chat avatar is a blob too: return it so the ingester links it to this conversation once placed
+  if (meta.avatarBlobOid) blobs.push(meta.avatarBlobOid);
   return { summary: { conversationId: conv.id, platform: r.platform, sourceSession: source, coverage: claim, inserted, edited, upgraded, linkedNotifications: linked }, blobs };
 }
 

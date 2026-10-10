@@ -594,10 +594,24 @@ UPDATE messages SET text_source = (SELECT s.source_session FROM message_sources 
                     source_deleted_at = CASE WHEN source_status = 'deleted_at_source' THEN captured_at END;
 `;
 
+// v6: sender identity and images in conversation views. A message carries who sent it
+// (from_me, the account's own user) and the sender's resolved display name (sender_name);
+// both are filled from whichever source provides them and never overwritten with null. A
+// conversation carries its peer/chat avatar: the blob oid the source named (avatar_blob_oid)
+// and the local copy once that blob is in place (avatar_local_path).
+const v6 = `
+ALTER TABLE messages ADD COLUMN from_me INTEGER;
+ALTER TABLE messages ADD COLUMN sender_name TEXT;
+ALTER TABLE conversations ADD COLUMN avatar_blob_oid TEXT;
+ALTER TABLE conversations ADD COLUMN avatar_local_path TEXT;
+CREATE INDEX conversations_avatar ON conversations(avatar_blob_oid);
+`;
+
 export const MIGRATIONS: Migration[] = [
   { version: 1, name: "initial vault schema", sql: v1 },
   { version: 2, name: "import progress, manifest commandId, transferring commands", sql: v2 },
   { version: 3, name: "activity vault import, ai conversations, embeddings", sql: v3 },
   { version: 4, name: "file originals (media policy) and document text", sql: v4 },
   { version: 5, name: "multi-source conversations: message provenance, coverage per source", sql: v5 },
+  { version: 6, name: "sender identity (from_me, sender_name) and conversation avatars", sql: v6 },
 ];

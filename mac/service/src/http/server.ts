@@ -409,6 +409,16 @@ export async function buildServer(svc: Service): Promise<FastifyInstance> {
     const m = ctx.db.prepare("SELECT local_path FROM media WHERE id = ? AND deleted_at IS NULL").get((req.params as { id: string }).id) as { local_path: string | null } | undefined;
     return sendLocalFile(reply, m?.local_path);
   });
+  // the cached original bytes of a message attachment (set once its blob is in place, C4)
+  app.get("/api/attachments/:id/content", async (req, reply) => {
+    const a = ctx.db.prepare("SELECT local_path FROM attachments WHERE id = ? AND deleted_at IS NULL").get((req.params as { id: string }).id) as { local_path: string | null } | undefined;
+    return sendLocalFile(reply, a?.local_path);
+  });
+  // the conversation's peer/chat avatar bytes (the local copy of the avatar blob)
+  app.get("/api/views/chats/:id/avatar", async (req, reply) => {
+    const c = ctx.db.prepare("SELECT avatar_local_path FROM conversations WHERE id = ? AND deleted_at IS NULL").get((req.params as { id: string }).id) as { avatar_local_path: string | null } | undefined;
+    return sendLocalFile(reply, c?.avatar_local_path);
+  });
   app.get("/api/media/:id/thumb", async (req, reply) => {
     const m = ctx.db.prepare("SELECT thumb_path, local_path FROM media WHERE id = ? AND deleted_at IS NULL").get((req.params as { id: string }).id) as { thumb_path: string | null; local_path: string | null } | undefined;
     return sendLocalFile(reply, m?.thumb_path ?? m?.local_path);

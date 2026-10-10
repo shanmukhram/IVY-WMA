@@ -205,8 +205,9 @@ export async function finalizeBlob(ctx: Ctx, bucket: string, oid: string): Promi
   return { ok: true, path: placed ?? holding };
 }
 
-/** `original`: a file whose file_meta.originalBlobOid names the blob (PLAN decision 8 photo / document). */
-interface Ref { kind: "media" | "thumb" | "file_original" | "attachment" | "original"; id: string; devicePath?: string; deviceId?: string }
+/** `original`: a file whose file_meta.originalBlobOid names the blob (PLAN decision 8 photo / document).
+ *  `avatar`: a conversation whose chatMeta named the blob as its peer/chat image. */
+interface Ref { kind: "media" | "thumb" | "file_original" | "attachment" | "original" | "avatar"; id: string; devicePath?: string; deviceId?: string }
 
 function referencesOf(ctx: Ctx, oid: string): Ref[] {
   const refs: Ref[] = [];
@@ -225,6 +226,9 @@ function referencesOf(ctx: Ctx, oid: string): Ref[] {
   }
   for (const r of ctx.db.prepare("SELECT id, path, device_id FROM files WHERE original_blob_oid = ? ORDER BY rid").all(oid) as Array<{ id: string; path: string; device_id: string }>) {
     refs.push({ kind: "original", id: r.id, devicePath: r.path, deviceId: r.device_id });
+  }
+  for (const r of ctx.db.prepare("SELECT id FROM conversations WHERE avatar_blob_oid = ?").all(oid) as Array<{ id: string }>) {
+    refs.push({ kind: "avatar", id: r.id });
   }
   return refs;
 }
@@ -252,6 +256,7 @@ function homeFor(ctx: Ctx, row: BlobRow, refs: Ref[]): string | null {
   const sniffed = row.ext ?? undefined;
   const kind = row.payload_kind;
   if (kind === "thumbnail") return join(d.thumbs, `${row.oid}.${sniffed ?? "jpg"}`);
+  if (kind === "avatar") return join(d.avatars, `${row.oid}.${sniffed ?? "jpg"}`);
   if (kind === "file_original") {
     const ref = refs.find((r) => r.kind === "file_original" && r.devicePath);
     if (!ref) return null; // wait for the command_status that names it
@@ -305,6 +310,8 @@ export function placeAndLink(ctx: Ctx, oid: string): string | null {
           if (r.deviceId) ctx.db.prepare("UPDATE blobs SET device_id = COALESCE(device_id, ?) WHERE rid = ?").run(r.deviceId, row.rid);
         } else if (r.kind === "thumb") {
           ctx.db.prepare("UPDATE files SET thumb_path = ? WHERE id = ?").run(path, r.id);
+        } else if (r.kind === "avatar") {
+          ctx.db.prepare("UPDATE conversations SET avatar_local_path = ? WHERE id = ?").run(path, r.id);
         } else if (r.kind === "attachment") {
           ctx.db.prepare("UPDATE attachments SET local_path = ?, status = 'cached' WHERE id = ?").run(path, r.id);
         } else if (r.kind === "original") {
