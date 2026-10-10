@@ -312,10 +312,12 @@ The earlier checklists still apply to behaviour; this one covers the new window.
 
 - [ ] Left-click opens the window on the last page; right-click shows Open / Pause / Sync now / Quit; the tooltip reads "IVY: Running, N queued"; closing the window hides it to the tray; Quit exits within 15 s.
 
-### LINE key (verify when testing LINE decryption)
+### LINE page (verify LINE capture)
 
-- [ ] The LINE page shows a "LINE key" card with a key box, Save key, and Detect from LINE.
-- [ ] Pasting the 32-character key and pressing Save: the status shows "key stored; reading LINE", a green "A LINE key is set" bar appears, and the LINE row moves to ok partial with messages captured. On the Mac dashboard a "LINE · Windows" conversation entry appears.
-- [ ] Detect from LINE, with LINE running and signed in: finds the key and stores it (status "key found and stored"); with LINE closed: "no key found".
-- [ ] A wrong key: the row stays red with "the LINE key does not fit this store".
-- [ ] The key persists across an app restart (stored in DPAPI under %LOCALAPPDATA%\IVY\keys); the keys folder contains no readable 32-char value.
+Detail on how LINE capture works lives in docs/internals/line-collector.md and is not needed here; verify from the page.
+
+- [ ] The LINE page shows a card for turning on LINE capture, with an input box and two buttons: "Detect from LINE" and "Save key".
+- [ ] "Detect from LINE", with LINE open and signed in, turns the row to ok partial and captures messages; a "LINE . Windows" entry appears on the Mac dashboard. With LINE closed it reports nothing found.
+- [ ] Entering the value in the box and pressing "Save key" has the same effect.
+- [ ] A wrong value leaves the row red with a short reason.
+- [ ] The setting persists across an app restart; the %LOCALAPPDATA%\IVY\keys folder holds no readable value.
