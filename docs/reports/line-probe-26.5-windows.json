@@ -1,6 +1,6 @@
 {
  "schema": 1,
- "generatedAt": "2026-10-10T10:07:45.573Z",
+ "generatedAt": "2026-10-10T18:29:16.459Z",
  "lineVersion": "unknown",
  "locations": [
   {
@@ -10,8 +10,8 @@
    "files": [
     {
      "relativePath": "LINE.ini",
-     "size": 3053,
-     "mtime": "2026-10-10T08:54:34.417Z",
+     "size": 4680,
+     "mtime": "2026-10-10T18:02:44.754Z",
      "head16Hex": null,
      "kind": "Json",
      "looksEncrypted": false,
@@ -50,8 +50,8 @@
     },
     {
      "relativePath": "advertisement/cc475325499f9a96254fda282dc4d8f6/advertisement0.dat",
-     "size": 29008,
-     "mtime": "2026-10-10T08:54:05.426Z",
+     "size": 29136,
+     "mtime": "2026-10-10T18:01:48.274Z",
      "head16Hex": "c445826583d55d8d03dcef78ee2c480f",
      "kind": "Binary",
      "looksEncrypted": false,
@@ -61,7 +61,7 @@
     {
      "relativePath": "advertisement/cc475325499f9a96254fda282dc4d8f6/advertisement1.dat",
      "size": 224,
-     "mtime": "2026-10-10T08:54:04.278Z",
+     "mtime": "2026-10-10T17:57:33.734Z",
      "head16Hex": "90b33d72f5504fb74f70e1ee53b9dc95",
      "kind": "Binary",
      "looksEncrypted": false,
@@ -69,14 +69,103 @@
      "note": null
     },
     {
+     "relativePath": "ampkit/.jup_storage.db",
+     "size": 144,
+     "mtime": "2026-10-10T17:56:01.303Z",
+     "head16Hex": null,
+     "kind": "Json",
+     "looksEncrypted": false,
+     "tables": null,
+     "note": "head16Hex removed from the committed copy (text content)"
+    },
+    {
      "relativePath": "db/AutoSuggest/qwcc68c86ea190f10a6b78361790f878.edb",
      "size": 10387456,
-     "mtime": "2026-10-10T09:57:06.583Z",
-     "head16Hex": "ea8ac8444445429a1972086bf5ce8b69",
+     "mtime": "2026-10-10T17:55:51.046Z",
+     "head16Hex": "ea8ac8444445429a6379d1a76474480e",
      "kind": "Binary",
      "looksEncrypted": true,
-     "tables": null,
-     "note": null
+     "tables": [
+      {
+       "name": "_auto_suggest_dictionary",
+       "columns": [
+        "_keyword",
+        "_language",
+        "_tagIds"
+       ]
+      },
+      {
+       "name": "_auto_suggest_dictionary_state",
+       "columns": [
+        "_language",
+        "_version",
+        "_name",
+        "_enabled",
+        "_downloaded",
+        "_preload",
+        "_downloaded_by_preload"
+       ]
+      },
+      {
+       "name": "_auto_suggest_items",
+       "columns": [
+        "_type",
+        "_packageId",
+        "_id",
+        "_weight"
+       ]
+      },
+      {
+       "name": "_auto_suggest_setting",
+       "columns": [
+        "_key",
+        "_value"
+       ]
+      },
+      {
+       "name": "_auto_suggest_showcase",
+       "columns": [
+        "_id",
+        "_version",
+        "_name",
+        "_showcaseType",
+        "_type",
+        "_subType",
+        "_sticonResourceType"
+       ]
+      },
+      {
+       "name": "_auto_suggest_tag",
+       "columns": [
+        "_tagId",
+        "_packageId",
+        "_type",
+        "_stickers"
+       ]
+      },
+      {
+       "name": "_auto_suggest_tag_state",
+       "columns": [
+        "_id",
+        "_type",
+        "_version"
+       ]
+      },
+      {
+       "name": "_meta_info",
+       "columns": [
+        "m_n",
+        "m_v",
+        "m_p",
+        "m_s",
+        "m_c",
+        "m_i",
+        "m_f",
+        "m_d"
+       ]
+      }
+     ],
+     "note": "decrypted schema (names only)"
     },
     {
      "relativePath": "db/album_qw475325499f9a96254fda282dc4d8f6.edb",
@@ -85,8 +174,29 @@
      "head16Hex": "ea8ac8444445429aa0335924c763a09e",
      "kind": "Binary",
      "looksEncrypted": true,
-     "tables": null,
-     "note": null
+     "tables": [
+      {
+       "name": "_album_upload_retry",
+       "columns": [
+        "_homeId_albumId",
+        "_data"
+       ]
+      },
+      {
+       "name": "_meta_info",
+       "columns": [
+        "m_n",
+        "m_v",
+        "m_p",
+        "m_s",
+        "m_c",
+        "m_i",
+        "m_f",
+        "m_d"
+       ]
+      }
+     ],
+     "note": "decrypted schema (names only)"
     },
     {
      "relativePath": "db/chatStats_qw475325499f9a96254fda282dc4d8f6.edb",
@@ -95,8 +205,42 @@
      "head16Hex": "ea8ac8444445429a4e0114e0194d96dc",
      "kind": "Binary",
      "looksEncrypted": true,
-     "tables": null,
-     "note": null
+     "tables": [
+      {
+       "name": "_chatStats",
+       "columns": [
+        "_chatId",
+        "_event",
+        "_weekday",
+        "_hour",
+        "_hourTimestamp",
+        "_timestamp",
+        "_valueNumber",
+        "_valueText"
+       ]
+      },
+      {
+       "name": "_chatStatsSetting",
+       "columns": [
+        "_key",
+        "_value"
+       ]
+      },
+      {
+       "name": "_meta_info",
+       "columns": [
+        "m_n",
+        "m_v",
+        "m_p",
+        "m_s",
+        "m_c",
+        "m_i",
+        "m_f",
+        "m_d"
+       ]
+      }
+     ],
+     "note": "decrypted schema (names only)"
     },
     {
      "relativePath": "db/f59c00309acd23908b1254ee081d8258",
@@ -150,24 +294,668 @@
      "head16Hex": "ea8ac8444445429ab7849722b97b7770",
      "kind": "Binary",
      "looksEncrypted": true,
-     "tables": null,
-     "note": null
+     "tables": [
+      {
+       "name": "_keep_command_info",
+       "columns": [
+        "_id",
+        "_commandType",
+        "_customData"
+       ]
+      },
+      {
+       "name": "_keep_content",
+       "columns": [
+        "_contentId",
+        "_createdTime",
+        "_modifiedTime",
+        "_clientId",
+        "_revision",
+        "_serviceType",
+        "_source",
+        "_contentData",
+        "_status",
+        "_tags",
+        "_collectionInfos",
+        "_pinInfo",
+        "_messageId",
+        "_name",
+        "_size",
+        "_mainType",
+        "_updateState",
+        "_attribute",
+        "_contentInfo"
+       ]
+      },
+      {
+       "name": "_keep_content_command",
+       "columns": [
+        "_id",
+        "_commandType",
+        "_clientRevision",
+        "_contentData",
+        "_source",
+        "_tags",
+        "_uploadableItemCount",
+        "_totalSize",
+        "_commandState",
+        "_revision",
+        "_customData"
+       ]
+      },
+      {
+       "name": "_keep_settings",
+       "columns": [
+        "_key",
+        "_value"
+       ]
+      },
+      {
+       "name": "_meta_info",
+       "columns": [
+        "m_n",
+        "m_v",
+        "m_p",
+        "m_s",
+        "m_c",
+        "m_i",
+        "m_f",
+        "m_d"
+       ]
+      }
+     ],
+     "note": "decrypted schema (names only)"
     },
     {
      "relativePath": "db/qw475325499f9a96254fda282dc4d8f6.edb",
      "size": 532480,
-     "mtime": "2026-10-10T09:36:18.683Z",
+     "mtime": "2026-10-10T16:28:16.513Z",
      "head16Hex": "ea8ac8444445429ae80eb8f8c5b2d507",
      "kind": "Binary",
      "looksEncrypted": true,
-     "tables": null,
-     "note": null
+     "tables": [
+      {
+       "name": "_buddyDetail",
+       "columns": [
+        "_mid",
+        "_memberCount",
+        "_onAir",
+        "_businessAccount",
+        "_addable",
+        "_acceptableContentTypes",
+        "_capableMyhome",
+        "_freePhoneCallable",
+        "_phoneNumberToDial",
+        "_needPermissionApproval",
+        "_channelId",
+        "_channelProviderName",
+        "_iconType",
+        "_botType",
+        "_showRichMenu",
+        "_richMenuRevision",
+        "_onAirLabel",
+        "_onAirVersion",
+        "_useTheme",
+        "_themeId",
+        "_useBar",
+        "_barRevision",
+        "_useBackground",
+        "_backgroundId",
+        "_statusBarEnabled",
+        "_statusBarRevision",
+        "_searchId",
+        "_blockable",
+        "_botActiveStatus",
+        "_membershipEnabled",
+        "_legalCountryCode",
+        "_botTalkroomAds",
+        "_botOaCallDetail",
+        "_aiChatBot",
+        "_supportSpeechToText",
+        "_voomEnabled",
+        "_buddyCautionNoticeFromCMS",
+        "_region",
+        "_serviceMenuBar",
+        "_brandType",
+        "_verifiedIconType",
+        "_lineWorks",
+        "_revision"
+       ]
+      },
+      {
+       "name": "_buddyStatusBar",
+       "columns": [
+        "_label",
+        "_displayType",
+        "_title",
+        "_iconUrl",
+        "_linkUrl",
+        "_mid",
+        "_revision"
+       ]
+      },
+      {
+       "name": "_channelToken",
+       "columns": [
+        "_channelId",
+        "_channelAccessToken",
+        "_expiration",
+        "_obsToken",
+        "_refreshToken",
+        "_token"
+       ]
+      },
+      {
+       "name": "_chat",
+       "columns": [
+        "_id",
+        "_midType",
+        "_lastMessage",
+        "_lastUpdatedTime",
+        "_sendChatCheckedId",
+        "_messageBoxNextId",
+        "_unreadCount",
+        "_onAir",
+        "_showMember",
+        "_status",
+        "_memberHistory",
+        "_lastReceivedOpRev",
+        "_announcement",
+        "_firstUnreadId",
+        "_messageBoxNextCreatedTime",
+        "_lastSyncToken",
+        "_mediaMessageFlow",
+        "_messageEditNotice"
+       ]
+      },
+      {
+       "name": "_chatE2EEPublicKeys",
+       "columns": [
+        "_chatId",
+        "_publicKeys",
+        "_e2eeEnabled",
+        "_allowedTypes",
+        "_specVersion",
+        "_chatCounter",
+        "_lastNegotiationTime"
+       ]
+      },
+      {
+       "name": "_chatOption",
+       "columns": [
+        "_id",
+        "_hidden",
+        "_notification",
+        "_pinnedTime",
+        "_utilityData"
+       ]
+      },
+      {
+       "name": "_contact",
+       "columns": [
+        "_mid",
+        "_createdTime",
+        "_type",
+        "_status",
+        "_displayName",
+        "_displayNameOverridden",
+        "_phoneDisplayName",
+        "_pictureStatus",
+        "_thumbnailUrl",
+        "_statusMessage",
+        "_favoriteTime",
+        "_attributes",
+        "_settings",
+        "_picturePath",
+        "_recordId",
+        "_addedTime",
+        "_recommendParams",
+        "_unregisteredContact",
+        "_videoProfile",
+        "_musicProfile",
+        "_profileUpdateSign",
+        "_statusMessageContentMetadata",
+        "_userType",
+        "_targetProfileDetail",
+        "_friendDetail",
+        "_blockDetail",
+        "_recommendationOrNot",
+        "_notificationSettingEntry"
+       ]
+      },
+      {
+       "name": "_groupChat",
+       "columns": [
+        "_type",
+        "_chatMid",
+        "_createdTime",
+        "_notificationDisabled",
+        "_favoriteTimestamp",
+        "_chatName",
+        "_picturePath",
+        "_extra",
+        "_status",
+        "_addedTime",
+        "_inviterMId"
+       ]
+      },
+      {
+       "name": "_group_call",
+       "columns": [
+        "_chat_id",
+        "_online",
+        "_video",
+        "_live"
+       ]
+      },
+      {
+       "name": "_message",
+       "columns": [
+        "_from",
+        "_to",
+        "_toType",
+        "_id",
+        "_createdTime",
+        "_deliveredTime",
+        "_text",
+        "_location",
+        "_hasContent",
+        "_contentType",
+        "_contentMetadata",
+        "_contentPreview",
+        "_sessionId",
+        "_chunks",
+        "_relatedMessageId",
+        "_messageRelationType",
+        "_readCount",
+        "_relatedMessageServiceCode",
+        "_appExtensionType",
+        "_reactions",
+        "_chatId",
+        "_type",
+        "_status",
+        "_reqSeqV2",
+        "_reqSeq",
+        "_contentInfo",
+        "_eventInfo",
+        "_rev",
+        "_errorCode",
+        "_urlPreview",
+        "_hasUrlPreview",
+        "_syncToken",
+        "_fromType",
+        "_attribute",
+        "_flag",
+        "_reactionStatus"
+       ]
+      },
+      {
+       "name": "_message_fts",
+       "columns": [
+        "_text"
+       ]
+      },
+      {
+       "name": "_message_fts_content",
+       "columns": [
+        "docid",
+        "c0_text"
+       ]
+      },
+      {
+       "name": "_message_fts_docsize",
+       "columns": [
+        "docid",
+        "size"
+       ]
+      },
+      {
+       "name": "_message_fts_segdir",
+       "columns": [
+        "level",
+        "idx",
+        "start_block",
+        "leaves_end_block",
+        "end_block",
+        "root"
+       ]
+      },
+      {
+       "name": "_message_fts_segments",
+       "columns": [
+        "blockid",
+        "block"
+       ]
+      },
+      {
+       "name": "_message_fts_stat",
+       "columns": [
+        "id",
+        "value"
+       ]
+      },
+      {
+       "name": "_message_sticker",
+       "columns": [
+        "_packageId",
+        "_stickerId",
+        "_message"
+       ]
+      },
+      {
+       "name": "_meta_info",
+       "columns": [
+        "m_n",
+        "m_v",
+        "m_p",
+        "m_s",
+        "m_c",
+        "m_i",
+        "m_f",
+        "m_d"
+       ]
+      },
+      {
+       "name": "_myE2EEKeyChain",
+       "columns": [
+        "_mid",
+        "_e2eeKeyChain",
+        "_validation"
+       ]
+      },
+      {
+       "name": "_profile",
+       "columns": [
+        "_allowSearchByEmail",
+        "_allowSearchByUserid",
+        "_displayName",
+        "_email",
+        "_mid",
+        "_phone",
+        "_phoneticName",
+        "_picturePath",
+        "_pictureStatus",
+        "_regionCode",
+        "_statusMessage",
+        "_thumbnailUrl",
+        "_userid",
+        "_videoProfile",
+        "_musicProfile",
+        "_statusMessageContentMetadata"
+       ]
+      },
+      {
+       "name": "_profileMappedId",
+       "columns": [
+        "_profileId",
+        "_mids"
+       ]
+      },
+      {
+       "name": "_room",
+       "columns": [
+        "_mid",
+        "_createdTime",
+        "_contacts",
+        "_notificationDisabled",
+        "_invitor",
+        "_memberMids"
+       ]
+      },
+      {
+       "name": "_setting",
+       "columns": [
+        "_key",
+        "_value"
+       ]
+      },
+      {
+       "name": "_square",
+       "columns": [
+        "_mid",
+        "_name",
+        "_welcomeMessage",
+        "_profileImageObsHash",
+        "_desc",
+        "_searchable",
+        "_type",
+        "_categoryId",
+        "_invitationURL",
+        "_revision",
+        "_ableToUseInvitationTicket",
+        "_state",
+        "_emblems",
+        "_adultOnly",
+        "_svcTags",
+        "_createdAt",
+        "_authority",
+        "_creatorId",
+        "_status",
+        "_myMemberId",
+        "_featureSet",
+        "_metadata",
+        "_lastJoinRequestAt",
+        "_lastVisitTime",
+        "_noteStatus"
+       ]
+      },
+      {
+       "name": "_squareBot",
+       "columns": [
+        "_botMid",
+        "_active",
+        "_displayName",
+        "_profileImageObsHash",
+        "_iconType",
+        "_lastModifiedAt",
+        "_expiredIn",
+        "_syncTime"
+       ]
+      },
+      {
+       "name": "_squareChat",
+       "columns": [
+        "_squareChatMid",
+        "_squareMid",
+        "_type",
+        "_name",
+        "_chatImageObsHash",
+        "_squareChatRevision",
+        "_maxMemberCount",
+        "_state",
+        "_status",
+        "_myMember",
+        "_joinedAt",
+        "_announcement",
+        "_featureSet"
+       ]
+      },
+      {
+       "name": "_squareMember",
+       "columns": [
+        "_squareMemberMid",
+        "_squareMid",
+        "_displayName",
+        "_profileImageObsHash",
+        "_ableToReceiveMessage",
+        "_membershipState",
+        "_role",
+        "_revision",
+        "_preference",
+        "_joinMessage",
+        "_relation",
+        "_myMember"
+       ]
+      },
+      {
+       "name": "_squareThread",
+       "columns": [
+        "_threadMid",
+        "_chatMid",
+        "_squareMid",
+        "_messageId",
+        "_state",
+        "_expiresAt",
+        "_readOnlyAt",
+        "_revision",
+        "_squareThreadMember",
+        "_totalMessageCount",
+        "_unreadCount",
+        "_lastMessage",
+        "_rootMessage",
+        "_lastMessageAt"
+       ]
+      },
+      {
+       "name": "_squareToken",
+       "columns": [
+        "_id",
+        "_token",
+        "_backwardToken",
+        "_timestamp"
+       ]
+      },
+      {
+       "name": "_stickerProductNew",
+       "columns": [
+        "_id",
+        "_billingItemId",
+        "_billingCpId",
+        "_type",
+        "_subtype",
+        "_name",
+        "_author",
+        "_details",
+        "_copyright",
+        "_notice",
+        "_promotionInfo",
+        "_latestVersion",
+        "_latestVersionString",
+        "_version",
+        "_versionString",
+        "_applicationVersionRange",
+        "_owned",
+        "_grantedByDefault",
+        "_validFor",
+        "_validUntil",
+        "_onSale",
+        "_salesFlags",
+        "_availableForPresent",
+        "_availableForMyself",
+        "_priceTier",
+        "_price",
+        "_priceInLineCoin",
+        "_localizedPrice",
+        "_images",
+        "_attributes",
+        "_authorId",
+        "_stickerResourceType",
+        "_productProperty",
+        "_productSalesState",
+        "_installedTime",
+        "_wishProperty",
+        "_subscriptionProperty",
+        "_productPromotionProperty",
+        "_availableInCountry",
+        "_editorsPickBanners",
+        "_ableToBeGivenAsPresent",
+        "_madeWithStickerMaker",
+        "_customDownloadButtonLabel",
+        "_generatedByAI",
+        "_usageState",
+        "_c_premium"
+       ]
+      },
+      {
+       "name": "_sticker_history",
+       "columns": [
+        "_packageId",
+        "_stickerId",
+        "_message",
+        "_useTime",
+        "_weight"
+       ]
+      },
+      {
+       "name": "_sticonProduct",
+       "columns": [
+        "_id",
+        "_billingItemId",
+        "_billingCpId",
+        "_type",
+        "_subtype",
+        "_name",
+        "_author",
+        "_details",
+        "_copyright",
+        "_notice",
+        "_promotionInfo",
+        "_latestVersion",
+        "_latestVersionString",
+        "_version",
+        "_versionString",
+        "_applicationVersionRange",
+        "_owned",
+        "_grantedByDefault",
+        "_validFor",
+        "_validUntil",
+        "_onSale",
+        "_salesFlags",
+        "_availableForPresent",
+        "_availableForMyself",
+        "_priceTier",
+        "_price",
+        "_priceInLineCoin",
+        "_localizedPrice",
+        "_images",
+        "_attributes",
+        "_authorId",
+        "_stickerResourceType",
+        "_productProperty",
+        "_productSalesState",
+        "_installedTime",
+        "_wishProperty",
+        "_subscriptionProperty",
+        "_productPromotionProperty",
+        "_availableInCountry",
+        "_editorsPickBanners",
+        "_ableToBeGivenAsPresent",
+        "_madeWithStickerMaker",
+        "_customDownloadButtonLabel",
+        "_generatedByAI",
+        "_usageState",
+        "_c_premium"
+       ]
+      },
+      {
+       "name": "_sticon_mapping",
+       "columns": [
+        "_productId",
+        "_oldProductId",
+        "_newToOldSticonIdMapping",
+        "_oldPackageVersion",
+        "_oldMetaVersion",
+        "_stickerPackageId",
+        "_stickerPackageVersion",
+        "_stickerIds"
+       ]
+      },
+      {
+       "name": "_voip_bg",
+       "columns": [
+        "_bg",
+        "_thumb",
+        "_type"
+       ]
+      }
+     ],
+     "note": "decrypted schema (names only)"
     },
     {
      "relativePath": "db/qw475325499f9a96254fda282dc4d8f6.edb-shm",
      "size": 32768,
      "mtime": "2026-10-10T08:54:00.358Z",
-     "head16Hex": "18e22d00000000001600000001000010",
+     "head16Hex": "18e22d00000000005400000001000010",
      "kind": "SqliteSidecar",
      "looksEncrypted": false,
      "tables": null,
@@ -175,9 +963,9 @@
     },
     {
      "relativePath": "db/qw475325499f9a96254fda282dc4d8f6.edb-wal",
-     "size": 4144752,
-     "mtime": "2026-10-10T10:03:48.275Z",
-     "head16Hex": "377f0682002de2180000100000000002",
+     "size": 4210672,
+     "mtime": "2026-10-10T18:02:45.167Z",
+     "head16Hex": "377f0682002de2180000100000000003",
      "kind": "SqliteSidecar",
      "looksEncrypted": false,
      "tables": null,
@@ -186,7 +974,7 @@
     {
      "relativePath": "installLang.ini",
      "size": 42,
-     "mtime": "2026-10-10T08:53:21.693Z",
+     "mtime": "2026-10-10T17:47:32.799Z",
      "head16Hex": null,
      "kind": "Json",
      "looksEncrypted": false,
@@ -1215,8 +2003,8 @@
     },
     {
      "relativePath": "plugin/LineCall/1.0.0.913/steplog.log",
-     "size": 197,
-     "mtime": "2026-10-10T08:54:04.450Z",
+     "size": 344,
+     "mtime": "2026-10-10T17:56:01.659Z",
      "head16Hex": "2d696e69740d0a2d696e697420646f6e",
      "kind": "LevelDb",
      "looksEncrypted": false,
@@ -2647,7 +3435,7 @@
   }
  ],
  "summary": {
-  "totalFiles": 260,
+  "totalFiles": 261,
   "databases": 6,
   "readable": 1
  }
