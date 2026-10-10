@@ -4,15 +4,10 @@ import userEvent from "@testing-library/user-event";
 import { App } from "../src/App.tsx";
 import { ApiError } from "../src/api.ts";
 import { mockApi, renderWith } from "./helpers.tsx";
-
-const shellRoutes = {
-  "GET /api/stats": { counts: { messages: 0, notifications: 0, media: 0, files: 0, usage: 0, calls: 0 }, lastSync: [] },
-  "GET /api/activity": { events: [] },
-  "GET /api/facets": { devices: [], apps: [], accounts: [], conversations: [] },
-};
+import { shellRoutes } from "./fixtures.ts";
 
 describe("lock flow", () => {
-  it("uninitialized: set passphrase, shows the salt backup note, then the dashboard", async () => {
+  it("uninitialized: set passphrase with the salt backup note, then the vault-created card, then the dashboard", async () => {
     let state = "uninitialized";
     const api = mockApi({
       ...shellRoutes,
@@ -24,20 +19,20 @@ describe("lock flow", () => {
     expect(screen.getByText(/Back up data\/identity.json/)).toBeInTheDocument();
     expect(screen.queryByRole("navigation")).toBeNull();
     const u = userEvent.setup();
-    const [p1, p2] = screen.getAllByLabelText(/passphrase/i).filter((x) => x.tagName === "INPUT" && (x as HTMLInputElement).type === "password");
-    await u.type(p1!, "a long enough passphrase");
-    await u.type(p2!, "a different one");
+    await u.type(screen.getByLabelText("Passphrase"), "a long enough passphrase");
+    await u.type(screen.getByLabelText("Repeat passphrase"), "a different one");
     await u.click(screen.getByRole("button", { name: "Set passphrase" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("differ");
-    await u.clear(p2!); await u.type(p2!, "a long enough passphrase");
+    await u.clear(screen.getByLabelText("Repeat passphrase")); await u.type(screen.getByLabelText("Repeat passphrase"), "a long enough passphrase");
     await u.click(screen.getByRole("button", { name: "Set passphrase" }));
-    expect(await screen.findByText("ABCD-EF01-2345-6789")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Vault created" })).toBeInTheDocument();
+    expect(screen.getByText("ABCD-EF01-2345-6789")).toBeInTheDocument();
     expect(screen.getByText("Back up data/identity.json now.")).toBeInTheDocument();
     await u.click(screen.getByRole("button", { name: "Continue" }));
-    expect(await screen.findByRole("navigation")).toBeInTheDocument();
+    expect(await screen.findByRole("navigation", { name: "Sidebar" })).toBeInTheDocument();
   });
 
-  it("locked: nothing but the passphrase field until unlocked; wrong passphrase shows the error", async () => {
+  it("locked: a centered card with only the passphrase until unlocked; a wrong passphrase shows the error", async () => {
     let state = "locked";
     const api = mockApi({
       ...shellRoutes,
@@ -46,19 +41,23 @@ describe("lock flow", () => {
     });
     renderWith(<App />, api);
     const field = await screen.findByLabelText("Passphrase");
+    expect(screen.getByRole("heading", { name: "IVY is locked" })).toBeInTheDocument();
+    expect(screen.getByText(/Full lock: the key is not in memory/)).toBeInTheDocument();
     expect(screen.queryByRole("navigation")).toBeNull();
     expect(screen.queryByRole("search")).toBeNull();
+    expect(api.calls.filter((c) => c.path !== "/api/keystore")).toEqual([]); // nothing else is fetched while locked
     const u = userEvent.setup();
+    expect(screen.getByRole("button", { name: "Unlock" })).toBeDisabled();
     await u.type(field, "nope");
-    await u.click(screen.getByRole("button", { name: "Unlock" }));
+    await u.keyboard("{Enter}");
     expect(await screen.findByRole("alert")).toHaveTextContent("wrong passphrase");
     await u.clear(field); await u.type(field, "right one");
     await u.click(screen.getByRole("button", { name: "Unlock" }));
-    expect(await screen.findByRole("navigation")).toBeInTheDocument();
+    expect(await screen.findByRole("navigation", { name: "Sidebar" })).toBeInTheDocument();
     expect(screen.getByRole("search")).toBeInTheDocument();
   });
 
-  it("Lock offers screen-only and full; each sends the matching full flag", async () => {
+  it("Lock in the sidebar offers screen-only and full; each sends the matching full flag", async () => {
     let state = "unlocked";
     const api = mockApi({
       ...shellRoutes,
@@ -78,6 +77,7 @@ describe("lock flow", () => {
     await u.click(await screen.findByRole("button", { name: "Lock" }));
     await u.click(screen.getByRole("menuitem", { name: /screen only/ }));
     await screen.findByRole("heading", { name: "IVY is locked" });
+    expect(screen.getByText(/key is still in memory/)).toBeInTheDocument();
     expect(api.calls.filter((c) => c.path === "/api/keystore/lock").map((c) => c.arg)).toEqual([{ full: true }, { full: false }]);
   });
 
@@ -93,5 +93,12 @@ describe("lock flow", () => {
     await u.type(await screen.findByLabelText("Session token"), "t0k");
     await u.click(screen.getByRole("button", { name: "Continue" }));
     await waitFor(() => expect(screen.getByRole("heading", { name: "IVY is locked" })).toBeInTheDocument());
+  });
+
+  it("Sync now reports what was committed", async () => {
+    const api = mockApi({ ...shellRoutes, "GET /api/keystore": { state: "unlocked", fingerprint: "F" }, "POST /api/ingest/poll": { buckets: [{ committed: 2 }, { committed: 1 }] } });
+    renderWith(<App />, api);
+    await userEvent.setup().click(await screen.findByRole("button", { name: "Sync now" }));
+    expect(await screen.findByRole("status")).toHaveTextContent("sync done: 3 committed");
   });
 });

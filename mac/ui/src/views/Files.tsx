@@ -1,20 +1,26 @@
+/** Files (F1-F4): list with reference / preview / local copy, request original with progress, open local copy, search. */
 import { useEffect, useState, type FormEvent } from "react";
 import { errText } from "../api.ts";
 import { useApi, useEvents, useLoad } from "../ctx.tsx";
 import { href, navigate, useLocation } from "../router.ts";
-import { Chip, DeviceChip, Empty, ErrorLine, Mono, Pager, Time, bytes } from "../ui.tsx";
-import { AVAILABILITY, type Item } from "./items.tsx";
+import { bytes } from "../format.ts";
+import { SearchField } from "../components/Controls.tsx";
+import { Badge, Empty, ErrorLine, Pager, Progress, Time } from "../components/Feedback.tsx";
+import { AVAILABILITY, AVAILABILITY_SHORT, deviceName, type Item } from "./records.tsx";
 import { applyEvent, describe, fromCommand, type CommandView, type RequestState } from "../request.ts";
 
-export function FilesView() {
+export function FilesView({ device, embedded }: { device?: string; embedded?: boolean } = {}) {
   const api = useApi();
-  const { query } = useLocation();
-  const q = query.get("q") ?? "";
-  const page = Number(query.get("page") ?? 1) || 1;
-  const focus = query.get("focus") ?? "";
+  const loc = useLocation();
+  const [local, setLocal] = useState({ q: "", page: 1 });
+  const q = embedded ? local.q : loc.query.get("q") ?? "";
+  const page = embedded ? local.page : Number(loc.query.get("page") ?? 1) || 1;
+  const focus = embedded ? "" : loc.query.get("focus") ?? "";
   const [text, setText] = useState(q);
   useEffect(() => setText(q), [q]);
-  const list = useLoad<any>((a) => q.trim() ? a.get("/api/search", { q, type: "file", page, pageSize: 50 }) : a.get("/api/files", { page, pageSize: 50 }), [q, page]);
+  const list = useLoad<any>((a) => q.trim()
+    ? a.get("/api/search", { q, type: "file", device, page, pageSize: 50 })
+    : device ? a.get("/api/views/records", { type: "file", device, page, pageSize: 50 }) : a.get("/api/files", { page, pageSize: 50 }), [q, page, device]);
   const devs = useLoad<any>((a) => a.get("/api/devices"), []);
   const [req, setReq] = useState<Record<string, RequestState>>({});
   const [err, setErr] = useState<Record<string, string>>({});
@@ -56,47 +62,68 @@ export function FilesView() {
       else if (r.alreadyCached) list.reload();
     } catch (e) { setErr((x) => ({ ...x, [it.id]: errText(e) })); }
   };
-  const go = (patch: Record<string, string | number | undefined>) => navigate(href("/files", { q, page, ...patch }));
-  const submit = (e: FormEvent) => { e.preventDefault(); go({ q: text || undefined, page: undefined }); };
+  const go = (patch: { q?: string; page?: number }) => {
+    if (embedded) { setLocal((s) => ({ ...s, page: 1, ...patch })); return; }
+    navigate(href("/files", { q, page, ...patch }));
+  };
+  const submit = (e: FormEvent) => { e.preventDefault(); go({ q: text || "", page: 1 }); };
 
   return (
-    <div>
-      <form onSubmit={submit} className="searchbar" role="search">
-        <input aria-label="Search files" placeholder="file name or path" value={text} onChange={(e) => setText(e.target.value)} />
-        <button type="submit">Search</button>
+    <div className={embedded ? "" : "page"}>
+      {!embedded && (
+        <div className="page-head">
+          <div><h1>Files</h1><p className="page-sub">The index of every file on the devices. Originals stay on the device until you request them.</p></div>
+        </div>
+      )}
+      <form onSubmit={submit} role="search" className="row" style={{ marginBottom: 16 }}>
+        <SearchField aria-label="Search files" placeholder="Search file names, paths and document text" value={text} onChange={(e) => setText(e.target.value)} className="spacer" />
+        <button type="submit" className="btn">Search</button>
+        {q && <button type="button" className="btn btn-plain" onClick={() => { setText(""); go({ q: "", page: 1 }); }}>Clear</button>}
       </form>
       <ErrorLine error={list.error} />
-      {list.data && items.length === 0 && <Empty>{q ? "No files match." : "No files indexed yet. The Windows and Android file collectors send the index; originals stay on the device until requested."}</Empty>}
+      {list.data && items.length === 0 && (
+        <Empty icon="doc" title={q ? "No files match" : "No files indexed yet"}>
+          {q ? `Nothing matches “${q}”.` : "The Windows and Android file collectors send the index; originals stay on the device until requested."}
+        </Empty>
+      )}
       {items.length > 0 && (
-        <table className="files">
-          <thead><tr><th>Name</th><th>Device / path</th><th>Size</th><th>Modified</th><th>Copy</th><th>Original</th></tr></thead>
-          <tbody>
-            {items.map((it) => {
-              const d = it.detail ?? {};
-              const s = req[it.id];
-              const local = d.availability === "local" || s?.phase === "done";
-              return (
-                <tr key={it.id} className={it.id === focus ? "hit" : ""} data-testid={`file-${it.id}`}>
-                  <td>{d.name ?? it.title}{d.sourceStatus === "deleted_at_source" && <> <Chip kind="warn">deleted at source</Chip></>}</td>
-                  <td><DeviceChip id={it.deviceId} devices={devs.data?.devices} /> <Mono>{d.path ?? it.body}</Mono></td>
-                  <td>{bytes(d.size)}</td>
-                  <td><Time at={d.mtime ?? it.eventTime} field={it.timeField} captured={it.capturedAt} /></td>
-                  <td><Chip kind={d.availability === "local" ? "ok" : "ref"}>{AVAILABILITY[d.availability] ?? d.availability}</Chip></td>
-                  <td>
-                    {d.contentUrl && d.availability === "local" ? <a href={d.contentUrl} target="_blank" rel="noreferrer">Open local copy</a> : null}
-                    {!local && (!s || s.phase === "failed") && <button onClick={() => void request(it)}>Request original</button>}
-                    {s && <div className={`req req-${s.phase}`} role="status" data-testid="request-status">{describe(s)}
-                      {s.phase === "in_progress" && s.total ? <progress max={s.total} value={s.bytes ?? 0} /> : null}</div>}
-                    {s?.phase === "done" && !d.contentUrl && <div className="small muted">refresh to open</div>}
-                    {err[it.id] && <div className="error">{err[it.id]}</div>}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+        <div className="group" role="list" aria-label="Files">
+          {items.map((it) => {
+            const d = it.detail ?? {};
+            const s = req[it.id];
+            const isLocal = d.availability === "local" || s?.phase === "done";
+            const ext = String(d.ext ?? d.name ?? it.title ?? "").split(".").pop()?.slice(0, 4) ?? "";
+            return (
+              <div key={it.id} role="listitem" className={`file-row${it.id === focus ? " hit" : ""}`} data-testid={`file-${it.id}`}>
+                <span className="fi" aria-hidden="true">{ext}</span>
+                <div style={{ minWidth: 0 }}>
+                  <div className="fname ellipsis">{d.name ?? it.title}{d.sourceStatus === "deleted_at_source" && <> <Badge tone="red">deleted at source</Badge></>}</div>
+                  <div className="fpath ellipsis" title={d.path ?? it.body ?? ""}>{deviceName(it.deviceId, devs.data?.devices)} · <span className="mono">{d.path ?? it.body}</span></div>
+                </div>
+                <span className="fsize">{bytes(d.size)}</span>
+                <span className="fdate" title="modified (original time)"><Time at={d.mtime ?? it.eventTime} field={it.timeField} captured={it.capturedAt} withDate /></span>
+                <div className="fact">
+                  <Badge tone={d.availability === "local" ? "green" : undefined} title={AVAILABILITY[d.availability] ?? d.availability}>
+                    <span className="sr-only">{AVAILABILITY[d.availability] ?? d.availability}</span><span aria-hidden="true">{AVAILABILITY_SHORT[d.availability] ?? d.availability}</span>
+                  </Badge>
+                  {d.contentUrl && d.availability === "local" ? <a href={d.contentUrl} target="_blank" rel="noreferrer">Open local copy</a> : null}
+                  {!isLocal && (!s || s.phase === "failed") && <button className="btn btn-sm" onClick={() => void request(it)}>Request original</button>}
+                  {s && (
+                    <div className={`req req-${s.phase}`} role="status" data-testid="request-status">
+                      {describe(s)}
+                      {s.phase === "in_progress" && s.total ? <Progress value={s.bytes ?? 0} max={s.total} label="Transfer progress" /> : null}
+                    </div>
+                  )}
+                  {s?.phase === "done" && !d.contentUrl && <span className="small faint">refresh to open</span>}
+                  {err[it.id] && <span className="small error">{err[it.id]}</span>}
+                </div>
+              </div>
+            );
+          })}
+        </div>
       )}
       {pages > 1 && <Pager page={page} pages={pages} total={list.data?.total} onPage={(p) => go({ page: p })} />}
+      {list.data && <p className="small faint" style={{ marginTop: 8 }}>{list.data.total ?? items.length} file(s)</p>}
     </div>
   );
 }

@@ -1,7 +1,11 @@
+/** Recovery bin (B1-B4): restore, or permanently delete after a confirmation naming what is removed. */
 import { useState } from "react";
 import { errText } from "../api.ts";
 import { useApi, useEvents, useLoad } from "../ctx.tsx";
-import { Empty, ErrorLine, Pager, Time } from "../ui.tsx";
+import { TYPE_ICON, Icon } from "../components/Icon.tsx";
+import { Link } from "../components/Controls.tsx";
+import { Empty, ErrorLine, Notice, Pager, Time } from "../components/Feedback.tsx";
+import { Sheet } from "../components/Overlay.tsx";
 
 const REMOVES: Record<string, string> = {
   message: "the message text, its prior edit versions, its search index entries and its attachments' local copies",
@@ -23,43 +27,46 @@ export function BinView() {
   const [page, setPage] = useState(1);
   const b = useLoad<any>((a) => a.get("/api/bin", { page }), [page]);
   useEvents(() => b.reload(), ["bin."]);
-  const [confirm, setConfirm] = useState<string | null>(null);
+  const [confirm, setConfirm] = useState<any>(null);
   const [msg, setMsg] = useState<string | null>(null);
   const act = async (fn: () => Promise<unknown>, ok: string) => { try { await fn(); setMsg(ok); } catch (e) { setMsg(errText(e)); } setConfirm(null); b.reload(); };
   const d = b.data;
   return (
-    <div>
-      <h2>Recovery bin</h2>
-      <p className="small muted">Items deleted inside the vault stay here for {d?.retentionDays ?? "…"} days, then are removed permanently. Deletion at the source (on a device) is different: those records stay in the vault, marked “deleted at source”.</p>
-      <ErrorLine error={b.error} />
-      {msg && <p role="status">{msg}</p>}
-      {d && d.total === 0 && <Empty>The recovery bin is empty.</Empty>}
-      {d && d.total > 0 && (
-        <table>
-          <thead><tr><th>Type</th><th>Item</th><th>Deleted in vault</th><th>Purged automatically</th><th></th></tr></thead>
-          <tbody>{d.items.map((it: any) => {
-            const k = `${it.type}:${it.id}`;
-            return (
-              <tr key={k}>
-                <td>{it.type}</td>
-                <td>{it.title ?? it.id}{it.detail ? <div className="small muted">{String(it.detail).slice(0, 160)}</div> : null}</td>
-                <td><Time at={it.deletedAt} /></td><td><Time at={it.purgeAt} /></td>
-                <td>
-                  <button onClick={() => void act(() => api.post(`/api/bin/${it.type}/${it.id}/restore`, {}), `Restored ${it.type}.`)}>Restore</button>{" "}
-                  {confirm === k ? (
-                    <span className="confirm" role="alertdialog" aria-label="Confirm permanent delete">
-                      <span className="warn">Permanently delete {it.type} “{it.title ?? it.id}”? This removes {REMOVES[it.type] ?? "the stored copy, extracted text, thumbnails and search entries"}. It cannot be undone.</span>{" "}
-                      <button onClick={() => void act(() => api.del(`/api/bin/${it.type}/${it.id}`), `Permanently deleted ${it.type}.`)}>Delete permanently</button>{" "}
-                      <button onClick={() => setConfirm(null)}>Cancel</button>
-                    </span>
-                  ) : <button onClick={() => setConfirm(k)}>Delete permanently…</button>}
-                </td>
-              </tr>
-            );
-          })}</tbody>
-        </table>
+    <div className="page" style={{ maxWidth: 900 }}>
+      <div className="page-head">
+        <div>
+          <h1>Recovery bin</h1>
+          <p className="page-sub">Items deleted inside the vault stay here for {d?.retentionDays ?? "…"} days, then are removed permanently. Deletion at the source (on a device) is different: those records stay in the vault, marked “deleted at source”.</p>
+        </div>
+        <div className="page-actions"><Link to="/settings?section=bin" className="btn btn-sm">Retention…</Link></div>
+      </div>
+      <div className="stack">
+        <ErrorLine error={b.error} />
+        {msg && <Notice role="status">{msg}</Notice>}
+        {d && d.total === 0 && <div className="group"><Empty icon="trash" title="The recovery bin is empty">Anything you move to the bin from search, media or AI history waits here before it is removed.</Empty></div>}
+        {d && d.total > 0 && (
+          <div className="group" role="list" aria-label="Deleted items">{d.items.map((it: any) => (
+            <div key={`${it.type}:${it.id}`} className="bin-row" role="listitem">
+              <span className={`rec-icon t-${it.type}`} style={{ width: 28, height: 28 }}><Icon name={TYPE_ICON[it.type] ?? (it.type === "ai_conversation" ? "sparkles" : "doc")} size={14} /></span>
+              <div className="b-main">
+                <div className="b-title ellipsis">{it.title ?? it.id}</div>
+                <div className="b-sub">{it.type.replace("_", " ")} · deleted <Time at={it.deletedAt} /> · removed for good <Time at={it.purgeAt} /></div>
+                {it.detail ? <div className="b-sub ellipsis">{String(it.detail).slice(0, 160)}</div> : null}
+              </div>
+              <button className="btn btn-sm" onClick={() => void act(() => api.post(`/api/bin/${it.type}/${it.id}/restore`, {}), `Restored ${it.type}.`)}><Icon name="restore" size={13} />Restore</button>
+              <button className="btn btn-sm btn-danger" onClick={() => setConfirm(it)}>Delete permanently…</button>
+            </div>
+          ))}</div>
+        )}
+        {d && Math.ceil(d.total / d.pageSize) > 1 && <Pager page={d.page} pages={Math.ceil(d.total / d.pageSize)} total={d.total} onPage={setPage} />}
+      </div>
+      {confirm && (
+        <Sheet title="Delete permanently?" label="Confirm permanent delete" onClose={() => setConfirm(null)}
+          footer={<><button className="btn" onClick={() => setConfirm(null)}>Cancel</button>
+            <button className="btn btn-danger-fill" onClick={() => void act(() => api.del(`/api/bin/${confirm.type}/${confirm.id}`), `Permanently deleted ${confirm.type}.`)}>Delete permanently</button></>}>
+          <p role="alert">Permanently delete {confirm.type} “{confirm.title ?? confirm.id}”? This removes {REMOVES[confirm.type] ?? "the stored copy, extracted text, thumbnails and search entries"}. It cannot be undone.</p>
+        </Sheet>
       )}
-      {d && Math.ceil(d.total / d.pageSize) > 1 && <Pager page={d.page} pages={Math.ceil(d.total / d.pageSize)} total={d.total} onPage={setPage} />}
     </div>
   );
 }

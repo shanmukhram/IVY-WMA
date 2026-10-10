@@ -1,8 +1,13 @@
+/** Devices: paired devices, pairing (QR + pairing string in a sheet), revoke with confirmation. */
 import { useEffect, useState } from "react";
 import QRCode from "qrcode";
 import { errText } from "../api.ts";
 import { useApi, useEvents, useLoad, useServices } from "../ctx.tsx";
-import { Empty, ErrorLine, Mono, Time } from "../ui.tsx";
+import { ago, roleLabel } from "../format.ts";
+import { Icon } from "../components/Icon.tsx";
+import { Empty, ErrorLine, Notice, Time } from "../components/Feedback.tsx";
+import { Sheet } from "../components/Overlay.tsx";
+import { Link } from "../components/Controls.tsx";
 
 interface Pairing { pairingId: string; role: string; pairingString: string; macFingerprint: string; expiresAt: string }
 
@@ -18,7 +23,7 @@ export function DevicesView() {
   const [pairing, setPairing] = useState<Pairing | null>(null);
   const [result, setResult] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  const [confirmRevoke, setConfirmRevoke] = useState<string | null>(null);
+  const [confirmRevoke, setConfirmRevoke] = useState<any>(null);
 
   useEvents((ev) => {
     if (ev.type === "pairing.completed" && pairing && ev.data.pairingId === pairing.pairingId) {
@@ -42,41 +47,63 @@ export function DevicesView() {
 
   const d = devs.data;
   return (
-    <div>
-      <ErrorLine error={devs.error} />
-      {d && <p>Mac fingerprint: <Mono>{d.macFingerprint}</Mono></p>}
-      <h2>Paired devices</h2>
-      {d && d.devices.length === 0 && <Empty>No paired devices.</Empty>}
-      {d && d.devices.length > 0 && (
-        <table>
-          <thead><tr><th>Role</th><th>Device id</th><th>Fingerprint</th><th>Paired</th><th>Last seen</th><th>Last report</th><th>App</th><th></th></tr></thead>
-          <tbody>{d.devices.map((x: any) => (
-            <tr key={x.id}>
-              <td>{x.role}</td><td><Mono>{x.id}</Mono></td><td><Mono>{x.fingerprint}</Mono></td><td><Time at={x.pairedAt} /></td>
-              <td><Time at={x.lastSeen} /></td><td><Time at={x.lastReportAt} /></td><td>{x.appVersion ?? "—"}</td>
-              <td>{confirmRevoke === x.id ? (
-                <span className="confirm"><span className="warn small">{x.revokeWarning}</span> <button onClick={() => void revoke(x.id)}>Confirm revoke</button> <button onClick={() => setConfirmRevoke(null)}>Keep</button></span>
-              ) : <button onClick={() => setConfirmRevoke(x.id)}>Revoke</button>}</td>
-            </tr>
-          ))}</tbody>
-        </table>
-      )}
-
-      <h2>Pair a device</h2>
-      <p className="small muted">The code is valid for 10 minutes. On Windows paste the pairing string; on Android scan the QR code. Both screens then show the same Mac fingerprint. After restoring the Mac, initialize with the same passphrase and identity salt and the same Mac key comes back.</p>
-      <div className="toolbar">
-        <button onClick={() => void start("windows")}>Start pairing: Windows</button>
-        <button onClick={() => void start("android")}>Start pairing: Android</button>
+    <div className="page" style={{ maxWidth: 820 }}>
+      <div className="page-head">
+        <div><h1>Devices</h1><p className="page-sub">Paired capture devices. Both screens show the same Mac fingerprint after pairing.</p></div>
+        <div className="page-actions">
+          <button className="btn btn-primary" onClick={() => void start("windows")}><Icon name="laptop" size={14} />Start pairing: Windows</button>
+          <button className="btn btn-primary" onClick={() => void start("android")}><Icon name="phone" size={14} />Start pairing: Android</button>
+        </div>
       </div>
-      {err && <p className="error" role="alert">{err}</p>}
-      {result && <p className="ok" role="status">{result}</p>}
-      {pairing && <PairingPanel p={pairing} onCancel={() => void cancel()} />}
+      <div className="stack" style={{ gap: 20 }}>
+        <ErrorLine error={devs.error} />
+        {err && <Notice tone="error" role="alert">{err}{/r2_unavailable|R2/.test(err) ? <> · <Link to="/settings?section=r2">Set up Cloudflare R2 in Settings</Link></> : null}</Notice>}
+        {result && <Notice tone="ok" role="status">{result}</Notice>}
+        {d && (
+          <section aria-label="This Mac">
+            <h4 className="group-title">This Mac</h4>
+            <div className="group"><div className="group-row"><Icon name="shield" /><span className="row-label">Mac fingerprint</span><span className="fingerprint">{d.macFingerprint}</span></div></div>
+          </section>
+        )}
+        <section aria-label="Paired devices">
+          <h4 className="group-title">Paired devices</h4>
+          {d && d.devices.length === 0 && <div className="group"><Empty icon="link" title="No paired devices">Start pairing above: on Windows paste the pairing string, on Android scan the QR code.</Empty></div>}
+          {d && d.devices.length > 0 && (
+            <div className="group">{d.devices.map((x: any) => (
+              <div key={x.id} className="group-row" style={{ alignItems: "flex-start", paddingTop: 12, paddingBottom: 12 }}>
+                <span className="dev-icon" style={{ width: 36, height: 36, borderRadius: 9, background: "var(--fill-2)", display: "flex", alignItems: "center", justifyContent: "center" }}><Icon name={x.role === "windows" ? "laptop" : "phone"} size={18} /></span>
+                <div className="row-label">
+                  <div style={{ fontWeight: 600 }}>{roleLabel(x.role)} <span className="faint mono small">{x.id}</span></div>
+                  <div className="fingerprint small">{x.fingerprint}</div>
+                  <div className="row-sub">Paired <Time at={x.pairedAt} /> · last seen {ago(x.lastSeen)} · last report {ago(x.lastReportAt)} · app {x.appVersion ?? "—"}</div>
+                </div>
+                <button className="btn btn-sm btn-danger" onClick={() => setConfirmRevoke(x)}>Revoke</button>
+              </div>
+            ))}</div>
+          )}
+          <p className="group-foot">The code is valid for 10 minutes. After restoring the Mac, initialize with the same passphrase and identity salt and the same Mac key comes back.</p>
+        </section>
+      </div>
+      {pairing && <PairingSheet p={pairing} onCancel={() => void cancel()} />}
+      {confirmRevoke && (
+        <Sheet title={`Revoke ${roleLabel(confirmRevoke.role)}?`} label="Confirm revoke" onClose={() => setConfirmRevoke(null)}
+          footer={<><button className="btn" onClick={() => setConfirmRevoke(null)}>Keep</button><button className="btn btn-danger-fill" onClick={() => void revoke(confirmRevoke.id)}>Confirm revoke</button></>}>
+          <p className="fingerprint">{confirmRevoke.fingerprint}</p>
+          <Notice tone="warn">{confirmRevoke.revokeWarning}</Notice>
+        </Sheet>
+      )}
     </div>
   );
 }
 
-export function PairingPanel({ p, onCancel }: { p: Pairing; onCancel: () => void }) {
-  const { now } = useServices();
+export function PairingSheet({ p, onCancel }: { p: Pairing; onCancel: () => void }) {
+  const { now, api } = useServices();
+  const [checking, setChecking] = useState<string | null>(null);
+  // the device answers through its up-bucket; the next poll completes pairing (or check now)
+  const checkNow = async () => {
+    setChecking("Checking…");
+    try { await api.post("/api/ingest/poll", {}); setChecking("Checked. Waiting for the device's answer…"); } catch (e) { setChecking(`Check failed: ${errText(e)}`); }
+  };
   const clock = now ?? Date.now;
   const [svg, setSvg] = useState<string | null>(null);
   const [qrErr, setQrErr] = useState<string | null>(null);
@@ -96,20 +123,23 @@ export function PairingPanel({ p, onCancel }: { p: Pairing; onCancel: () => void
     try { await navigator.clipboard.writeText(p.pairingString); setCopied(true); } catch { setCopied(false); }
   };
   return (
-    <section className="panel pairing" aria-label="Pairing code">
-      <p>Pairing <strong>{p.role}</strong> · Mac fingerprint <Mono>{p.macFingerprint}</Mono> · expires in <Mono><span data-testid="countdown">{countdown(left)}</span></Mono></p>
-      <div className="pair-cols">
-        <div className="qr">
-          {svg ? <img alt="Pairing QR code" src={`data:image/svg+xml;utf8,${encodeURIComponent(svg)}`} width={280} height={280} /> : qrErr ? <p className="error">QR failed: {qrErr}</p> : <p className="muted">rendering QR…</p>}
+    <Sheet title={`Pair ${roleLabel(p.role)}`} label="Pairing" wide onClose={onCancel}
+      footer={<>{checking && <span className="small muted" role="status" style={{ marginRight: "auto" }}>{checking}</span>}<button className="btn" onClick={onCancel}>Cancel pairing</button><button className="btn" onClick={() => void checkNow()}><Icon name="sync" size={13} />Check now</button><button className="btn btn-primary" onClick={() => void copy()}><Icon name="doc" size={13} />{copied ? "Copied" : "Copy pairing string"}</button></>}>
+      <section aria-label="Pairing code" className="stack">
+        <p className="muted">{p.role === "android" ? "Scan the QR code with the IVY Android app." : "Paste the pairing string into the IVY Windows app."} The Mac picks up the answer on its next sync. Expires in <span className="countdown" data-testid="countdown">{countdown(left)}</span>.</p>
+        <div className="pair-cols">
+          <div className="qr-box">
+            {svg ? <img alt="Pairing QR code" src={`data:image/svg+xml;utf8,${encodeURIComponent(svg)}`} width={200} height={200} /> : qrErr ? <p className="error">QR failed: {qrErr}</p> : <p className="muted">rendering QR…</p>}
+          </div>
+          <div className="stack">
+            <label className="field"><span className="field-label">Pairing string</span>
+              <textarea readOnly className="textarea mono" rows={6} value={p.pairingString} aria-label="Pairing string" onFocus={(e) => e.currentTarget.select()} />
+            </label>
+            <div className="stack-sm"><span className="small muted">Mac fingerprint</span><span className="fingerprint">{p.macFingerprint}</span></div>
+          </div>
         </div>
-        <div className="grow">
-          <label>Pairing string
-            <textarea readOnly className="mono" rows={6} value={p.pairingString} aria-label="Pairing string" onFocus={(e) => e.currentTarget.select()} />
-          </label>
-          <button onClick={() => void copy()}>{copied ? "Copied" : "Copy pairing string"}</button> <button onClick={onCancel}>Cancel pairing</button>
-          <p className="warn small">The pairing string carries a one-time secret and a read token for the device's command bucket. Do not share it.</p>
-        </div>
-      </div>
-    </section>
+        <Notice tone="warn">The pairing string carries a one-time secret and a read token for the device's command bucket. Do not share it.</Notice>
+      </section>
+    </Sheet>
   );
 }

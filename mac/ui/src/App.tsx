@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
 import { ApiError, errText } from "./api.ts";
-import { useApi, useEvents } from "./ctx.tsx";
-import { useLocation, navigate } from "./router.ts";
-import { Link, Time } from "./ui.tsx";
+import { useApi, useEvents, useLoad } from "./ctx.tsx";
+import { navigate, useLocation } from "./router.ts";
+import { Sidebar, LastSync } from "./components/Sidebar.tsx";
+import { Icon } from "./components/Icon.tsx";
+import { Empty } from "./components/Feedback.tsx";
 import { CreatedPanel, LockScreen, TokenScreen, type Created, type KeystoreStatus } from "./views/Lock.tsx";
 import { SearchView } from "./views/Search.tsx";
 import { TimelineView } from "./views/Timeline.tsx";
@@ -12,15 +14,12 @@ import { MediaView } from "./views/Media.tsx";
 import { FilesView } from "./views/Files.tsx";
 import { CoverageView } from "./views/Coverage.tsx";
 import { DevicesView } from "./views/Devices.tsx";
+import { DeviceView } from "./views/Device.tsx";
 import { SettingsView } from "./views/Settings.tsx";
 import { BinView } from "./views/Bin.tsx";
-import { ActivityFeed } from "./views/Activity.tsx";
+import { ActivityPanel, useActivity } from "./views/Activity.tsx";
 import { AiView } from "./views/Ai.tsx";
-
-const NAV: Array<[string, string]> = [
-  ["/", "Search"], ["/timeline", "Timeline"], ["/conversations", "Conversations"], ["/notifications", "Notifications"],
-  ["/media", "Media"], ["/files", "Files"], ["/coverage", "Coverage"], ["/devices", "Devices"], ["/ai", "Ask AI"], ["/settings", "Settings"], ["/bin", "Recovery bin"],
-];
+import { DevicesContext } from "./views/records.tsx";
 
 type Boot = { kind: "checking" } | { kind: "token"; error?: string } | { kind: "error"; error: string } | { kind: "keystore"; status: KeystoreStatus };
 
@@ -58,90 +57,108 @@ export function App() {
     return () => window.removeEventListener("ivy:locked", on);
   }, [refresh]);
 
-  if (boot.kind === "checking") return <div className="center"><p>Connecting to the IVY service…</p></div>;
-  if (boot.kind === "error") return <div className="center"><p className="error" role="alert">Cannot reach the IVY service: {boot.error}</p><button onClick={() => void refresh()}>Retry</button></div>;
+  if (boot.kind === "checking") return <div className="center"><p className="muted">Connecting to the IVY service…</p></div>;
+  if (boot.kind === "error") {
+    return (
+      <div className="center">
+        <div className="auth-card">
+          <h1>Cannot reach IVY</h1>
+          <p className="error" role="alert">Cannot reach the IVY service: {boot.error}</p>
+          <button className="btn btn-primary btn-lg" onClick={() => void refresh()}>Retry</button>
+        </div>
+      </div>
+    );
+  }
   if (boot.kind === "token") return <TokenScreen onDone={refresh} />;
   if (created) return <CreatedPanel c={created} onContinue={() => { setCreated(null); void refresh(); }} />;
   if (boot.status.state !== "unlocked") return <LockScreen status={boot.status} onUnlocked={refresh} onCreated={setCreated} />;
-  return <Shell status={boot.status} onLocked={refresh} />;
+  return <Shell onLocked={refresh} />;
 }
 
-function Shell({ status, onLocked }: { status: KeystoreStatus; onLocked: () => void }) {
+function Router() {
+  const { path } = useLocation();
+  const p = path;
+  if (p === "/" || p === "/search") return <SearchView />;
+  if (p.startsWith("/timeline")) return <TimelineView />;
+  if (p.startsWith("/conversations")) return <ConversationsView />;
+  if (p.startsWith("/notifications")) return <NotificationsView />;
+  if (p.startsWith("/media")) return <MediaView />;
+  if (p.startsWith("/files")) return <FilesView />;
+  if (p.startsWith("/coverage")) return <CoverageView />;
+  if (p.startsWith("/devices")) return <DevicesView />;
+  if (p.startsWith("/device/")) return <DeviceView />;
+  if (p.startsWith("/settings")) return <SettingsView />;
+  if (p.startsWith("/bin")) return <BinView />;
+  if (p.startsWith("/ai")) return <AiView />;
+  return (
+    <div className="page">
+      <Empty icon="search" title="Page not found" action={<button className="btn" onClick={() => navigate("/")}>Go to Search</button>}>
+        Nothing lives at <span className="mono">{p}</span>.
+      </Empty>
+    </div>
+  );
+}
+
+function Shell({ onLocked }: { onLocked: () => void }) {
   const api = useApi();
-  const loc = useLocation();
   const [lockOpen, setLockOpen] = useState(false);
-  const [feedOpen, setFeedOpen] = useState(() => { try { return localStorage.getItem("ivy.feed") !== "0"; } catch { return true; } });
+  const [feedOpen, setFeedOpen] = useState(false);
   const [syncMsg, setSyncMsg] = useState<string | null>(null);
+  const [syncing, setSyncing] = useState(false);
+  const events = useActivity();
+  const stats = useLoad<any>((a) => a.get("/api/stats"), []);
+  const devs = useLoad<any>((a) => a.get("/api/devices"), []);
+  useEvents(() => devs.reload(), ["pairing.completed", "device.revoked"]);
+  useEvents(() => stats.reload(), ["ingest.poll"]);
+  const lastOk = ((stats.data?.lastSync ?? []) as Array<{ lastOkAt?: string | null }>).map((b) => b.lastOkAt).filter(Boolean).sort().at(-1) ?? null;
 
   const lock = async (full: boolean) => {
     setLockOpen(false);
     try { await api.post("/api/keystore/lock", { full }); } finally { onLocked(); }
   };
   const sync = async () => {
-    setSyncMsg("syncing…");
+    setSyncing(true); setSyncMsg("syncing…");
     try {
       const r = await api.post<any>("/api/ingest/poll", {});
       const committed = Array.isArray(r?.buckets) ? r.buckets.reduce((n: number, b: any) => n + (b.committed ?? 0), 0) : null;
       setSyncMsg(r?.skipped ? `sync skipped: ${r.skipped}` : committed !== null ? `sync done: ${committed} committed` : "sync done");
+      stats.reload();
     } catch (e) { setSyncMsg(`sync failed: ${errText(e)}`); }
+    finally { setSyncing(false); }
   };
-  const toggleFeed = () => setFeedOpen((v) => { try { localStorage.setItem("ivy.feed", v ? "0" : "1"); } catch { /* per-viewer only */ } return !v; });
+  useEffect(() => {
+    if (!lockOpen) return;
+    const close = (e: KeyboardEvent) => { if (e.key === "Escape") setLockOpen(false); };
+    document.addEventListener("keydown", close);
+    return () => document.removeEventListener("keydown", close);
+  }, [lockOpen]);
 
-  const p = loc.path;
-  const active = (to: string) => (to === "/" ? p === "/" : p === to || p.startsWith(to + "/"));
-  let view;
-  if (p === "/" || p === "/search") view = <SearchView />;
-  else if (p.startsWith("/timeline")) view = <TimelineView />;
-  else if (p.startsWith("/conversations")) view = <ConversationsView />;
-  else if (p.startsWith("/notifications")) view = <NotificationsView />;
-  else if (p.startsWith("/media")) view = <MediaView />;
-  else if (p.startsWith("/files")) view = <FilesView />;
-  else if (p.startsWith("/coverage")) view = <CoverageView />;
-  else if (p.startsWith("/devices")) view = <DevicesView />;
-  else if (p.startsWith("/settings")) view = <SettingsView />;
-  else if (p.startsWith("/bin")) view = <BinView />;
-  else if (p.startsWith("/ai")) view = <AiView />;
-  else view = <div><p>Not found: <span className="mono">{p}</span></p><button onClick={() => navigate("/")}>Search</button></div>;
-
-  return (
-    <div className={`shell${feedOpen ? " with-feed" : ""}`}>
-      <header className="top">
-        <strong className="brand">IVY</strong>
-        <nav>{NAV.map(([to, label]) => <Link key={to} to={to} className={active(to) ? "active" : ""}>{label}</Link>)}</nav>
-        <span className="spacer" />
-        {syncMsg && <span className="muted small" role="status">{syncMsg}</span>}
-        <button onClick={() => void sync()}>Sync now</button>
-        <button onClick={toggleFeed} aria-expanded={feedOpen}>Activity</button>
-        <span className="lock-wrap">
-          <button onClick={() => setLockOpen((v) => !v)} aria-expanded={lockOpen}>Lock</button>
-          {lockOpen && (
-            <div className="lock-menu" role="menu">
-              <button role="menuitem" onClick={() => void lock(false)}>Lock screen only (key stays in memory; ingest keeps running)</button>
-              <button role="menuitem" onClick={() => void lock(true)}>Lock fully (drop the key; ingest stops until unlock)</button>
-            </div>
-          )}
-        </span>
-      </header>
-      <main className="main">{view}</main>
-      {feedOpen && <ActivityFeed />}
-      <Footer autoLock={status.autoLockMinutes} />
-    </div>
+  const footer = (
+    <>
+      <div className="foot-row">
+        <button className="btn" onClick={() => void sync()} disabled={syncing}><Icon name="sync" size={14} />Sync now</button>
+        <button className="btn" onClick={() => setFeedOpen(true)} aria-expanded={feedOpen} aria-label="Activity"><Icon name="activity" size={14} />Activity</button>
+      </div>
+      <div className="foot-row menu-wrap">
+        <button className="btn" onClick={() => setLockOpen((v) => !v)} aria-expanded={lockOpen} aria-haspopup="menu" aria-label="Lock"><Icon name="lock" size={14} />Lock</button>
+        {lockOpen && (
+          <div className="menu up" role="menu" aria-label="Lock">
+            <button role="menuitem" onClick={() => void lock(false)} autoFocus>Lock screen only<span className="menu-sub">The key stays in memory; ingest keeps running.</span></button>
+            <button role="menuitem" onClick={() => void lock(true)}>Lock fully<span className="menu-sub">Drop the key; ingest stops until unlock.</span></button>
+          </div>
+        )}
+      </div>
+      <div className="sync-line">{syncMsg ? <span role="status">{syncMsg}</span> : <LastSync at={lastOk} />}</div>
+    </>
   );
-}
 
-function Footer({ autoLock }: { autoLock?: number }) {
-  const api = useApi();
-  const [stats, setStats] = useState<any>(null);
-  const load = useCallback(() => { api.get("/api/stats").then(setStats, () => undefined); }, [api]);
-  useEffect(() => { load(); }, [load]);
-  useEvents(() => load(), ["ingest.poll", "bin."]);
-  const c = stats?.counts ?? {};
-  const last = (stats?.lastSync ?? []) as Array<{ bucket: string; at?: string; lastOkAt?: string | null; ok?: boolean }>;
   return (
-    <footer className="foot small">
-      <span>Index: {c.messages ?? 0} messages · {c.notifications ?? 0} notifications · {c.media ?? 0} media · {c.files ?? 0} files · {c.usage ?? 0} usage · {c.calls ?? 0} calls</span>
-      <span>Last sync: {last.length ? last.map((b) => <span key={b.bucket}> {b.bucket} <Time at={b.lastOkAt ?? null} /> {b.ok === false ? "(last poll failed)" : ""}</span>) : "never"}</span>
-      {autoLock !== undefined && <span>Auto-lock: {autoLock ? `${autoLock} min` : "off"}</span>}
-    </footer>
+    <DevicesContext.Provider value={devs.data?.devices}>
+      <div className="shell">
+        <Sidebar footer={footer} />
+        <main className="main" id="main"><Router /></main>
+        {feedOpen && <ActivityPanel events={events} onClose={() => setFeedOpen(false)} />}
+      </div>
+    </DevicesContext.Provider>
   );
 }

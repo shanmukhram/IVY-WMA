@@ -1,23 +1,131 @@
+/**
+ * Day timeline (T1-T6): a vertical time axis from 00:00 to 24:00, events placed on it by their
+ * original time and grouped by hour (expandable), photos inline, message excerpts, coverage gaps
+ * drawn as shaded bands on the axis with a label, capture time on hover, AI overview in a drawer.
+ */
 import { useMemo, useState } from "react";
 import { useLoad, useEvents, useDebounced } from "../ctx.tsx";
 import { href, navigate, useLocation } from "../router.ts";
-import { Empty, ErrorLine, Pager, fmtTime } from "../ui.tsx";
-import { ItemRow, type Item } from "./items.tsx";
+import { TYPE_LABEL, TYPE_PLURAL, hm, localDate, longDate, platformLabel, roleLabel } from "../format.ts";
+import { Icon, TYPE_ICON } from "../components/Icon.tsx";
+import { Link } from "../components/Controls.tsx";
+import { Badge, Empty, ErrorLine, Notice, Pager, Time } from "../components/Feedback.tsx";
+import { recordHref, titleOf, type Item } from "./records.tsx";
 import { AiDrawer } from "./Ai.tsx";
 
-interface Gap { deviceId: string; role: string; collector: string; from: string; to: string; reason: string; open: boolean }
-interface TimelineResult {
+export interface Gap { deviceId: string; role: string; collector: string; from: string; to: string; reason: string; open: boolean }
+export interface TimelineResult {
   window: { from: string; to: string; tz: string }; page: number; pages: number; total: number;
   counts: Record<string, number>; hours: Array<{ index: number; from: string; to: string; count: number }>;
   gaps: Gap[]; items: Item[]; unavailable: Array<{ role: string; reason: string }>;
 }
 
-export function localDate(d = new Date()): string {
-  const p = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+export { localDate };
+const TYPES = ["message", "notification", "screenshot", "photo", "file", "usage", "call", "browsing"];
+const H = 3600_000;
+const COLLAPSE_OVER = 6;
+
+const gapText = (g: Gap) => `${roleLabel(g.role)} ${g.collector} · ${hm(g.from)}–${g.open ? "now" : hm(g.to)} · ${g.reason.replace(/_/g, " ")}`;
+
+/** One label per (device, window, reason): "Windows usage, files · 06:30–10:30 · stale". */
+export function gapLabels(gaps: Gap[]): string[] {
+  const m = new Map<string, { role: string; cols: string[]; span: string; reason: string }>();
+  for (const g of gaps) {
+    const span = `${hm(g.from)}–${g.open ? "now" : hm(g.to)}`;
+    const k = `${g.role}|${span}|${g.reason}`;
+    const e = m.get(k) ?? { role: g.role, cols: [], span, reason: g.reason };
+    if (!e.cols.includes(g.collector)) e.cols.push(g.collector);
+    m.set(k, e);
+  }
+  return [...m.values()].map((e) => `${roleLabel(e.role)} ${e.cols.join(", ")} · ${e.span} · ${e.reason.replace(/_/g, " ")}`);
 }
 
-const TYPES = ["message", "notification", "screenshot", "photo", "file", "usage", "call", "browsing"];
+/** Where a gap sits inside one hour of the axis, as percentages of that hour (null when it does not touch it). */
+export function gapSpan(g: Gap, hourStart: number): { top: number; height: number } | null {
+  const a = Math.max(Date.parse(g.from), hourStart), b = Math.min(Date.parse(g.to), hourStart + H);
+  if (!(b > a)) return null;
+  return { top: ((a - hourStart) / H) * 100, height: Math.max(((b - a) / H) * 100, 2) };
+}
+
+function Event({ it }: { it: Item }) {
+  const d = it.detail ?? {};
+  const to = recordHref(it);
+  const isMedia = (it.type === "screenshot" || it.type === "photo") && d.thumbUrl;
+  const text = it.type === "message" || it.type === "notification" || it.type === "browsing" ? it.body : it.type === "screenshot" || it.type === "photo" ? (it.ocrText ?? null) : it.type === "file" ? (d.path ?? it.body) : null;
+  return (
+    <li className="tl-ev" data-testid={`item-${it.type}`}>
+      <Time at={it.eventTime} field={it.timeField} captured={it.capturedAt} imported={d.importedAt} short />
+      <span className={`ev-icon t-${it.type}`}><Icon name={TYPE_ICON[it.type] ?? "info"} size={12} /></span>
+      <div className="ev-body">
+        <span className="ev-title">{titleOf(it)}</span>
+        {text && <span className="ev-text">{text}</span>}
+        {isMedia && to && <Link to={to} aria-label={`Open ${it.type} in Media`}><img className="ev-thumb" src={d.thumbUrl} alt={`${it.type} ${it.title ?? ""}`} loading="lazy" /></Link>}
+        <span className="ev-meta">
+          <span>{TYPE_LABEL[it.type] ?? it.type}</span>
+          {it.app && <span>· {it.type === "message" ? platformLabel(it.app) : it.app}</span>}
+          {it.type === "notification" && <Badge tone="amber">partial</Badge>}
+          {d.sourceStatus === "deleted_at_source" && <Badge tone="red">deleted at source</Badge>}
+          {it.type === "browsing" && d.link && <a href={String(d.link)} target="_blank" rel="noreferrer noopener">link</a>}
+          {to && !isMedia && <Link to={to}>Open</Link>}
+        </span>
+      </div>
+    </li>
+  );
+}
+
+export function DayAxis({ data }: { data: TimelineResult }) {
+  const start = Date.parse(data.window.from);
+  const nHours = Math.max(1, Math.round((Date.parse(data.window.to) - start) / H));
+  const [collapsed, setCollapsed] = useState<Record<number, boolean>>({});
+  const groups = useMemo(() => {
+    const m = new Map<number, Item[]>();
+    for (const it of data.items) {
+      const h = Math.min(nHours - 1, Math.max(0, Math.floor((Date.parse(it.eventTime ?? data.window.from) - start) / H)));
+      m.set(h, [...(m.get(h) ?? []), it]);
+    }
+    return m;
+  }, [data, start, nHours]);
+
+  return (
+    <section className="timeline" aria-label="Day timeline">
+      {Array.from({ length: nHours }, (_, h) => {
+        const hs = start + h * H;
+        const items = groups.get(h) ?? [];
+        const total = data.hours.find((x) => x.index === h)?.count ?? items.length;
+        const bands = data.gaps.map((g, i) => ({ g, i, span: gapSpan(g, hs) })).filter((x) => x.span);
+        const starting = data.gaps.filter((g) => { const f = Date.parse(g.from); return (f >= hs && f < hs + H) || (h === 0 && f < hs && Date.parse(g.to) > hs); });
+        const isCollapsed = collapsed[h] ?? items.length > COLLAPSE_OVER;
+        const shown = isCollapsed ? items.slice(0, 3) : items;
+        return (
+          <div key={h} className={`tl-hour${items.length ? "" : " is-empty"}`} data-testid={`hour-${h}`}>
+            <span className="tl-hour-label">{hm(new Date(hs).toISOString())}</span>
+            <div className="tl-axis">
+              {bands.map(({ g, i, span }) => (
+                <span key={i} className={`tl-gap reason-${g.reason}`} data-testid="gap-band" title={gapText(g)}
+                  style={{ top: `${span!.top}%`, height: `${span!.height}%` }} />
+              ))}
+            </div>
+            <div className="tl-content">
+              {gapLabels(starting).map((t) => <span key={t} className="tl-gaplabel" data-testid="gap-label"><Icon name="warn" size={11} />Not captured: {t}</span>)}
+              {items.length > 0 && (
+                <>
+                  <button className="tl-group-head" aria-expanded={!isCollapsed} onClick={() => setCollapsed((c) => ({ ...c, [h]: !isCollapsed }))}>
+                    <Icon name="chevronDown" size={11} className="chev" />
+                    {items.length}{total > items.length ? ` of ${total}` : ""} record{items.length === 1 ? "" : "s"} · {hm(new Date(hs).toISOString())}–{hm(new Date(hs + H).toISOString())}
+                  </button>
+                  <ul className="tl-events">{shown.map((it) => <Event key={`${it.type}:${it.id}`} it={it} />)}</ul>
+                  {isCollapsed && items.length > shown.length && (
+                    <button className="btn btn-plain btn-sm tl-show-more" onClick={() => setCollapsed((c) => ({ ...c, [h]: false }))}>Show all {items.length}</button>
+                  )}
+                </>
+              )}
+            </div>
+          </div>
+        );
+      })}
+    </section>
+  );
+}
 
 export function TimelineView() {
   const { query } = useLocation();
@@ -26,97 +134,73 @@ export function TimelineView() {
   const device = query.get("device") ?? "";
   const type = query.get("type") ?? "";
   const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
-  const t = useLoad((a) => a.get<TimelineResult>("/api/timeline", { date, tz, page, pageSize: 100, device, type }), [date, page, device, type, tz]);
-  const devs = useLoad((a) => a.get("/api/devices"), []);
+  const t = useLoad((a) => a.get<TimelineResult>("/api/timeline", { date, tz, page, pageSize: 500, device, type }), [date, page, device, type, tz]);
   const reload = useDebounced(t.reload, 1000);
   useEvents(() => reload(), ["ingest.committed", "coverage.changed", "bin."]);
-  const [collapsed, setCollapsed] = useState<Set<number>>(new Set());
+  const [aiOpen, setAiOpen] = useState(false);
   const go = (patch: Record<string, string | number | undefined>) => navigate(href("/timeline", { date, device, type, ...patch }));
-  const devices = (devs.data?.devices ?? []) as Array<{ id: string; role: string }>;
+  const shift = (days: number) => { const d = new Date(date + "T12:00:00"); d.setDate(d.getDate() + days); go({ date: localDate(d), page: undefined }); };
   const data = t.data;
-
-  const groups = useMemo(() => {
-    if (!data) return [];
-    const start = Date.parse(data.window.from);
-    const map = new Map<number, Item[]>();
-    for (const it of data.items) {
-      const h = Math.floor((Date.parse(it.eventTime ?? data.window.from) - start) / 3600_000);
-      map.set(h, [...(map.get(h) ?? []), it]);
-    }
-    return [...map.entries()].sort((a, b) => a[0] - b[0]).map(([h, items]) => ({ h, items, total: data.hours.find((x) => x.index === h)?.count ?? items.length, from: new Date(start + h * 3600_000) }));
-  }, [data]);
-
   const locations = (data?.items ?? []).filter((i) => i.detail?.location && typeof i.detail.location.lat === "number");
-  const toggle = (h: number) => setCollapsed((s) => { const n = new Set(s); if (n.has(h)) n.delete(h); else n.add(h); return n; });
+  const isToday = date === localDate();
 
   return (
-    <div>
-      <div className="toolbar">
-        <label>Date <input type="date" aria-label="Date" value={date} onChange={(e) => go({ date: e.target.value || undefined })} /></label>
-        <button onClick={() => { const d = new Date(date + "T12:00:00"); d.setDate(d.getDate() - 1); go({ date: localDate(d) }); }}>Previous day</button>
-        <button onClick={() => { const d = new Date(date + "T12:00:00"); d.setDate(d.getDate() + 1); go({ date: localDate(d) }); }}>Next day</button>
-        <label>Device
-          <select value={device} onChange={(e) => go({ device: e.target.value || undefined })}>
-            <option value="">all</option><option value="windows">Windows</option><option value="android">Android</option>
-            {devices.map((d) => <option key={d.id} value={d.id}>{d.role} {d.id.slice(0, 8)}</option>)}
-          </select>
-        </label>
-        <label>Type
-          <select value={type} onChange={(e) => go({ type: e.target.value || undefined })}>
-            <option value="">all</option>{TYPES.map((x) => <option key={x} value={x}>{x}</option>)}
-          </select>
-        </label>
-        <AiDrawer context={{ date, timeline: true, tz }} label="AI overview of this day" />
-        <span className="muted small">times are original event times in {tz}; hover a time for capture/import time</span>
+    <div className="page page-wide" style={{ maxWidth: 1280 }}>
+      <div className="page-head">
+        <div>
+          <h1>Timeline</h1>
+          <p className="page-sub">Original event times in {tz}; hover a time for capture and import times.</p>
+        </div>
+        <div className="page-actions">
+          <button className="btn btn-sm" aria-expanded={aiOpen} onClick={() => setAiOpen((v) => !v)}><Icon name="sparkles" size={13} />AI overview</button>
+        </div>
+      </div>
+      <div className="row-wrap" style={{ marginBottom: 16, gap: 12 }}>
+        <div className="datenav" role="group" aria-label="Date">
+          <button className="btn btn-icon" onClick={() => shift(-1)} aria-label="Previous day"><Icon name="chevronLeft" size={14} /></button>
+          <span className="date-label" aria-live="polite">{longDate(date)}</span>
+          <button className="btn btn-icon" onClick={() => shift(1)} aria-label="Next day"><Icon name="chevronRight" size={14} /></button>
+        </div>
+        <input className="input" type="date" aria-label="Pick a date" value={date} onChange={(e) => go({ date: e.target.value || undefined, page: undefined })} />
+        {!isToday && <button className="btn" onClick={() => go({ date: undefined, page: undefined })}>Today</button>}
+        <span className="spacer" />
+        <select className="select" aria-label="Device" value={device} onChange={(e) => go({ device: e.target.value || undefined, page: undefined })}>
+          <option value="">All devices</option><option value="windows">Windows</option><option value="android">Android</option>
+        </select>
+        <select className="select" aria-label="Type" value={type} onChange={(e) => go({ type: e.target.value || undefined, page: undefined })}>
+          <option value="">All types</option>{TYPES.map((x) => <option key={x} value={x}>{TYPE_PLURAL[x]}</option>)}
+        </select>
       </div>
       <ErrorLine error={t.error} />
-      {data && (
-        <>
-          <CoverageRibbon from={data.window.from} to={data.window.to} gaps={data.gaps} />
-          {data.unavailable.length > 0 && <p className="warn">Unavailable sources: {data.unavailable.map((u) => `${u.role} (${u.reason})`).join(", ")}</p>}
-          <p className="muted small" data-testid="timeline-summary">{data.total} records · {Object.entries(data.counts).map(([k, v]) => `${v} ${k}`).join(" · ") || "none"}</p>
-          {locations.length > 0 && (
-            <section className="map-strip" aria-label="Locations">
-              <h3>Locations</h3>
-              <ul>{locations.map((i) => <li key={i.id} className="mono">{fmtTime(i.eventTime, false)} {i.detail.location.lat.toFixed(5)}, {i.detail.location.lon.toFixed(5)}</li>)}</ul>
-            </section>
+      <div className="with-drawer">
+        <div className="content">
+          {data && (
+            <>
+              <div className="tl-summary">
+                <span className="muted small" data-testid="timeline-summary">{data.total} records · {Object.entries(data.counts).map(([k, v]) => `${v} ${k}`).join(" · ") || "none"}</span>
+                <span className="spacer" />
+                <span className="tl-legend"><span><span className="sw" />not captured (coverage gap)</span></span>
+              </div>
+              {data.unavailable.length > 0 && (
+                <div style={{ marginBottom: 12 }}><Notice tone="warn">Unavailable sources: {data.unavailable.map((u) => `${roleLabel(u.role)} (${u.reason})`).join(", ")}. Nothing from them can appear here.</Notice></div>
+              )}
+              {locations.length > 0 && (
+                <section className="card card-pad" aria-label="Locations" style={{ marginBottom: 12 }}>
+                  <h3 className="small" style={{ marginBottom: 6 }}>Locations</h3>
+                  <ul className="small">{locations.map((i) => <li key={i.id} className="tnum">{hm(i.eventTime)} · {i.detail.location.lat.toFixed(5)}, {i.detail.location.lon.toFixed(5)}</li>)}</ul>
+                </section>
+              )}
+              {data.total === 0 && (
+                <div style={{ marginBottom: 12 }}><Notice>Nothing recorded on {longDate(date)}. Shaded bands show where collectors were not running; empty is not the same as nothing happened.</Notice></div>
+              )}
+              <DayAxis data={data} />
+              {data.pages > 1 && <Pager page={data.page} pages={data.pages} total={data.total} onPage={(p) => go({ page: p })} />}
+            </>
           )}
-          {data.total === 0 && <Empty>Nothing recorded on {date}. Gaps above show where collectors were not running; empty is not the same as nothing happened.</Empty>}
-          {groups.map((g) => (
-            <section key={g.h} className="group">
-              <button className="group-head" aria-expanded={!collapsed.has(g.h)} onClick={() => toggle(g.h)}>
-                <span className="mono">{fmtTime(g.from.toISOString(), false).slice(0, 5)}</span> · {g.items.length}{g.total > g.items.length ? ` of ${g.total}` : ""} record(s) {collapsed.has(g.h) ? "▸" : "▾"}
-              </button>
-              {!collapsed.has(g.h) && g.items.map((it) => <ItemRow key={`${it.type}:${it.id}`} it={it} devices={devices} />)}
-            </section>
-          ))}
-          {data.pages > 1 && <Pager page={data.page} pages={data.pages} total={data.total} onPage={(p) => go({ page: p })} />}
-        </>
-      )}
-    </div>
-  );
-}
-
-/** One row per device/collector over the day; red/amber segments are gaps (T5). */
-export function CoverageRibbon({ from, to, gaps }: { from: string; to: string; gaps: Gap[] }) {
-  const a = Date.parse(from), b = Date.parse(to);
-  const rows = new Map<string, Gap[]>();
-  for (const g of gaps) rows.set(`${g.role} ${g.collector}`, [...(rows.get(`${g.role} ${g.collector}`) ?? []), g]);
-  return (
-    <section className="ribbon" aria-label="Coverage ribbon">
-      {rows.size === 0 && <p className="muted small">Coverage: no gaps reported by any paired collector for this window.</p>}
-      {[...rows.entries()].map(([name, gs]) => (
-        <div key={name} className="ribbon-row">
-          <span className="ribbon-label">{name}</span>
-          <span className="ribbon-bar">
-            {gs.map((g, i) => {
-              const l = ((Date.parse(g.from) - a) / (b - a)) * 100, w = ((Date.parse(g.to) - Date.parse(g.from)) / (b - a)) * 100;
-              return <span key={i} className={`gap gap-${g.reason}`} style={{ left: `${l}%`, width: `${Math.max(w, 0.3)}%` }} title={`${g.reason}: ${fmtTime(g.from)} – ${fmtTime(g.to)}`} />;
-            })}
-          </span>
-          <span className="small muted">{gs.map((g) => `${fmtTime(g.from, false).slice(0, 5)}–${fmtTime(g.to, false).slice(0, 5)} ${g.reason}`).join(", ")}</span>
+          {!data && !t.error && <Empty icon="timeline" title="Loading the day…" />}
         </div>
-      ))}
-    </section>
+        <AiDrawer open={aiOpen} onClose={() => setAiOpen(false)} context={{ date, timeline: true, tz }} label="AI overview of this day" />
+      </div>
+    </div>
   );
 }

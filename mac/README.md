@@ -56,14 +56,14 @@ Everything is under the data directory (`<repo>/data` for the app, `--data` for 
 3. Devices > Start pairing: Windows (or Android). The page shows the pairing string (Copy button), a QR code of the same string, the Mac fingerprint and a 10-minute countdown.
    - Windows: paste the pairing string into the IVY Windows app.
    - Android: scan the QR code.
-4. The device answers through its up-bucket; the next poll (every 2 minutes, or Sync now in the header) completes pairing. The page shows the device fingerprint; both screens must show the same Mac fingerprint.
+4. The device answers through its up-bucket; the next poll (every 2 minutes, or Check now in the pairing sheet / Sync now at the bottom of the sidebar) completes pairing. The page shows the device fingerprint; both screens must show the same Mac fingerprint.
 5. Coverage shows each device and collector with a status dot, last sync, last report, queue depth, import progress and gaps; problems are pinned at the top.
 
 Revoking a device (Devices) forgets its key; its R2 tokens stay valid until rotated in Cloudflare.
 
 ## AI and Activity Vault (optional)
 
-- Settings > AI (cloud, OpenAI): off by default. Turning it on and saving an OpenAI API key enables Ask AI (nav), the "AI overview" drawer beside search results and the timeline, and optionally embeddings for "Semantic matches". The page states what is sent. With it off nothing leaves the Mac.
+- Settings > AI (cloud, OpenAI): off by default. Turning it on and saving an OpenAI API key enables Ask AI (sidebar), the "AI overview" drawer beside search results and the timeline, and optionally embeddings for "Semantic matches". The page states what is sent. With it off nothing leaves the Mac.
 - Settings > Activity Vault import: point it at the Activity Vault archive (SQLite or JSON file, or its folder) and tick "Import daily", or use "Import now". The archive is read-only to IVY. Imported rows appear as "Google activity" in search and on the timeline; Coverage shows the import row.
 
 ## Tests

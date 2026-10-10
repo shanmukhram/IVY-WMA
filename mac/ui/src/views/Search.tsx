@@ -1,9 +1,17 @@
-import { useEffect, useState, type FormEvent } from "react";
+/**
+ * Search (Q1-Q6): one large field, filter chips (device, app, type, date, more), results as
+ * cards grouped by type with highlighted passages, exact matches first, close (typo-tolerant)
+ * matches after, a labeled semantic section only when the API reports it, pagination over all.
+ */
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { errText } from "../api.ts";
 import { useApi, useLoad } from "../ctx.tsx";
 import { href, navigate, useLocation } from "../router.ts";
-import { Empty, ErrorLine, Pager } from "../ui.tsx";
-import { ItemRow, type Item } from "./items.tsx";
+import { TYPE_PLURAL, platformLabel } from "../format.ts";
+import { Icon, TYPE_ICON } from "../components/Icon.tsx";
+import { Field, SearchField } from "../components/Controls.tsx";
+import { Empty, ErrorLine, Pager, Notice } from "../components/Feedback.tsx";
+import { RecordCard, type Item } from "./records.tsx";
 import { AiDrawer } from "./Ai.tsx";
 
 const TYPES = ["message", "notification", "screenshot", "photo", "file", "usage", "call", "browsing"];
@@ -14,6 +22,31 @@ interface SearchResult {
   counts: Record<string, { exact: number; fuzzy: number }>;
   items: Item[];
   semantic: { enabled: boolean; label: string; items: Array<{ type: string; id: string; score: number; title?: string | null; snippet?: string | null; eventTime?: string | null }> };
+}
+
+/** Group a run of items by type, keeping the first-seen order of types. */
+function byType(items: Item[]): Array<[string, Item[]]> {
+  const m = new Map<string, Item[]>();
+  for (const it of items) m.set(it.type, [...(m.get(it.type) ?? []), it]);
+  return [...m.entries()];
+}
+
+function Popover({ label, active, children }: { label: string; active?: boolean; children: ReactNode }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: MouseEvent) => { if (!ref.current?.contains(e.target as Node)) setOpen(false); };
+    const esc = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
+    document.addEventListener("mousedown", close); document.addEventListener("keydown", esc);
+    return () => { document.removeEventListener("mousedown", close); document.removeEventListener("keydown", esc); };
+  }, [open]);
+  return (
+    <div className="filter-pop" ref={ref}>
+      <button type="button" className={`chip chip-outline${active ? " active" : ""}`} aria-expanded={open} onClick={() => setOpen((v) => !v)}>{label}<Icon name="chevronDown" size={11} /></button>
+      {open && <div className="filter-panel" role="group" aria-label={label}>{children}</div>}
+    </div>
+  );
 }
 
 export function SearchView() {
@@ -29,6 +62,7 @@ export function SearchView() {
   const [err, setErr] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
   const [binMsg, setBinMsg] = useState<string | null>(null);
+  const [aiOpen, setAiOpen] = useState(false);
   const key = query.toString();
 
   useEffect(() => {
@@ -42,6 +76,7 @@ export function SearchView() {
     return () => { live = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [api, key]);
+  useEffect(() => setAiOpen(false), [q, params.device, params.app, params.type, params.from, params.to]);
 
   const go = (patch: Record<string, string | number | undefined>) => {
     const next: Record<string, string | number | undefined> = { q, ...params, page: undefined, ...patch };
@@ -51,6 +86,7 @@ export function SearchView() {
   const types = params.type ? params.type.split(",") : [];
   const toggleType = (t: string) => go({ type: (types.includes(t) ? types.filter((x) => x !== t) : [...types, t]).join(",") || undefined });
   const devices = (facets.data?.devices ?? []) as Array<{ id: string; role: string }>;
+  const anyFilter = FILTERS.some((k) => k !== "sort" && params[k]);
 
   const bin = async (it: Item) => {
     try { await api.del(`/api/items/${it.type}/${it.id}`); setBinMsg(`Moved ${it.type} to the recovery bin.`); go({ page }); }
@@ -58,78 +94,109 @@ export function SearchView() {
   };
 
   const items = res?.items ?? [];
-  const firstFuzzy = items.findIndex((i) => i.match === "fuzzy");
+  const exact = items.filter((i) => i.match !== "fuzzy");
+  const fuzzy = items.filter((i) => i.match === "fuzzy");
+  const count = (t: string) => res?.counts[t] ? res.counts[t].exact + res.counts[t].fuzzy : 0;
+  const groups = (list: Item[]) => byType(list).map(([t, its]) => (
+    <section key={t} className="result-group" aria-label={TYPE_PLURAL[t] ?? t}>
+      <h3><Icon name={TYPE_ICON[t] ?? "info"} size={14} />{TYPE_PLURAL[t] ?? t}<span className="faint">{count(t)}</span></h3>
+      {its.map((it) => <RecordCard key={`${it.type}:${it.id}`} it={it} devices={devices} onBin={(x) => void bin(x)} />)}
+    </section>
+  ));
+
   return (
-    <div className="search">
-      <form onSubmit={submit} className="searchbar" role="search">
-        <input aria-label="Search" placeholder='Search everything: words, "exact phrase", -exclude' value={text} onChange={(e) => setText(e.target.value)} autoFocus />
-        <button type="submit">Search</button>
-      </form>
-      <div className="search-cols">
-        <aside className="rail" aria-label="Filters">
-          <label>Device
-            <select value={params.device} onChange={(e) => go({ device: e.target.value || undefined })}>
-              <option value="">any</option><option value="windows">Windows</option><option value="android">Android</option>
-              {devices.map((d) => <option key={d.id} value={d.id}>{d.role} {d.id.slice(0, 8)}</option>)}
-            </select>
-          </label>
-          <label>App
-            <input list="facet-apps" value={params.app} onChange={(e) => go({ app: e.target.value || undefined })} />
-            <datalist id="facet-apps">{(facets.data?.apps ?? []).map((a: string) => <option key={a} value={a} />)}</datalist>
-          </label>
-          <label>Account
-            <input list="facet-accounts" value={params.account} onChange={(e) => go({ account: e.target.value || undefined })} />
-            <datalist id="facet-accounts">{(facets.data?.accounts ?? []).map((a: string) => <option key={a} value={a} />)}</datalist>
-          </label>
-          <label>Person <input value={params.person} onChange={(e) => go({ person: e.target.value || undefined })} /></label>
-          <label>Conversation
-            <select value={params.conversation} onChange={(e) => go({ conversation: e.target.value || undefined })}>
-              <option value="">any</option>
-              {(facets.data?.conversations ?? []).map((c: any) => <option key={c.id} value={c.id}>{c.platform} · {c.name}</option>)}
-            </select>
-          </label>
-          <label>From <input type="date" value={params.from} onChange={(e) => go({ from: e.target.value || undefined })} /></label>
-          <label>To <input type="date" value={params.to} onChange={(e) => go({ to: e.target.value || undefined })} /></label>
-          <fieldset><legend>Type</legend>
-            {TYPES.map((t) => (
-              <label key={t} className="check"><input type="checkbox" checked={types.includes(t)} onChange={() => toggleType(t)} /> {t}
-                {res?.counts[t] ? <span className="muted"> ({res.counts[t].exact + res.counts[t].fuzzy})</span> : null}</label>
-            ))}
-          </fieldset>
-          <label>Order
-            <select value={params.sort} onChange={(e) => go({ sort: e.target.value || undefined })}>
-              <option value="">relevance</option><option value="newest">newest</option><option value="oldest">oldest</option>
-            </select>
-          </label>
-        </aside>
-        <section className="results" aria-label="Results">
-          {!q && <Empty>Type a word, a phrase in quotes, or -word to exclude. Every match is listed, exact matches first.</Empty>}
-          {busy && <p className="muted">Searching…</p>}
+    <div className="page">
+      <div className="with-drawer">
+        <div className="content">
+          <div className="search-hero">
+            <form onSubmit={submit} role="search">
+              <SearchField large aria-label="Search" placeholder='Search everything: words, "exact phrase", -exclude' value={text} onChange={(e) => setText(e.target.value)} autoFocus />
+              <button type="submit" className="btn btn-primary btn-lg">Search</button>
+            </form>
+            <div className="filter-bar" aria-label="Filters" role="group">
+              <select className="select chip-select" aria-label="Device" value={params.device} onChange={(e) => go({ device: e.target.value || undefined })}>
+                <option value="">Any device</option><option value="windows">Windows</option><option value="android">Android</option>
+                {devices.map((d) => <option key={d.id} value={d.id}>{d.role} {d.id.slice(0, 8)}</option>)}
+              </select>
+              <select className="select" aria-label="App" value={params.app} onChange={(e) => go({ app: e.target.value || undefined })}>
+                <option value="">Any app</option>
+                {(facets.data?.apps ?? []).map((a: string) => <option key={a} value={a}>{platformLabel(a) || a}</option>)}
+                {params.app && !(facets.data?.apps ?? []).includes(params.app) && <option value={params.app}>{params.app}</option>}
+              </select>
+              <Popover label={params.from || params.to ? `${params.from || "…"} – ${params.to || "…"}` : "Date"} active={!!(params.from || params.to)}>
+                <Field label="From"><input className="input" type="date" aria-label="From" value={params.from} onChange={(e) => go({ from: e.target.value || undefined })} /></Field>
+                <Field label="To"><input className="input" type="date" aria-label="To" value={params.to} onChange={(e) => go({ to: e.target.value || undefined })} /></Field>
+              </Popover>
+              <Popover label="More" active={!!(params.account || params.person || params.conversation || params.sort)}>
+                <Field label="Account">
+                  <select className="select" aria-label="Account" value={params.account} onChange={(e) => go({ account: e.target.value || undefined })}>
+                    <option value="">Any</option>{(facets.data?.accounts ?? []).map((a: string) => <option key={a} value={a}>{a}</option>)}
+                  </select>
+                </Field>
+                <Field label="Person"><input className="input" aria-label="Person" defaultValue={params.person} onKeyDown={(e) => { if (e.key === "Enter") go({ person: (e.target as HTMLInputElement).value || undefined }); }} onBlur={(e) => { if (e.target.value !== params.person) go({ person: e.target.value || undefined }); }} /></Field>
+                <Field label="Conversation">
+                  <select className="select" aria-label="Conversation" value={params.conversation} onChange={(e) => go({ conversation: e.target.value || undefined })}>
+                    <option value="">Any</option>{(facets.data?.conversations ?? []).map((c: any) => <option key={c.id} value={c.id}>{platformLabel(c.platform)} · {c.name}</option>)}
+                  </select>
+                </Field>
+                <Field label="Order">
+                  <select className="select" aria-label="Order" value={params.sort} onChange={(e) => go({ sort: e.target.value || undefined })}>
+                    <option value="">Relevance</option><option value="newest">Newest first</option><option value="oldest">Oldest first</option>
+                  </select>
+                </Field>
+              </Popover>
+              <span className="vsep" aria-hidden="true" />
+              {TYPES.map((t) => (
+                <button key={t} type="button" className="chip" aria-pressed={types.includes(t)} onClick={() => toggleType(t)}>
+                  {TYPE_PLURAL[t]}{res && count(t) ? <span style={{ opacity: 0.7 }}> {count(t)}</span> : null}
+                </button>
+              ))}
+              {anyFilter && <button type="button" className="btn btn-plain btn-sm" onClick={() => navigate(href("/", { q }))}>Clear filters</button>}
+            </div>
+          </div>
+
+          {!q && (
+            <Empty icon="search" title="Search everything">
+              Messages, notifications, screenshots (by their text), photos, files and captured titles. Use "quotes" for a phrase and -word to exclude. Every match is listed, exact matches first.
+            </Empty>
+          )}
+          {busy && !res && <p className="muted">Searching…</p>}
           <ErrorLine error={err} />
-          {binMsg && <p className="muted" role="status">{binMsg}</p>}
+          {binMsg && <Notice role="status">{binMsg}</Notice>}
           {res && (
             <>
-              <AiDrawer context={{ searchQuery: res.q, filters: Object.fromEntries(Object.entries(params).filter(([, v]) => v)) }} />
-              <p className="muted small" data-testid="search-summary">{res.total} matches · {res.exactTotal} exact · {res.fuzzyTotal} close (typo-tolerant) · {res.tookMs} ms</p>
-              {res.total === 0 && <Empty>No records match “{res.q}”.</Empty>}
-              {items.map((it, i) => (
-                <div key={`${it.type}:${it.id}`}>
-                  {i === firstFuzzy && <h3 className="divider">Close matches (typo-tolerant), after all exact matches</h3>}
-                  <ItemRow it={it} devices={devices} onBin={(x) => void bin(x)} />
-                </div>
-              ))}
+              <div className="results-head">
+                <p className="muted small" data-testid="search-summary">{res.total} matches · {res.exactTotal} exact · {res.fuzzyTotal} close (typo-tolerant) · {res.tookMs} ms</p>
+                <span className="spacer" />
+                <button className="btn btn-sm" aria-expanded={aiOpen} onClick={() => setAiOpen((v) => !v)}><Icon name="sparkles" size={13} />AI overview</button>
+              </div>
+              {res.total === 0 && <Empty icon="search" title={`No results for “${res.q}”`}>Try fewer words, another spelling, or clear the filters.</Empty>}
+              {groups(exact)}
+              {fuzzy.length > 0 && (
+                <>
+                  <h3 className="section-divider">Close matches (typo-tolerant), after all exact matches</h3>
+                  {groups(fuzzy)}
+                </>
+              )}
               {res.pages > 1 && <Pager page={res.page} pages={res.pages} total={res.total} onPage={(p) => go({ page: p })} />}
               {res.semantic?.enabled && (
                 <section aria-label="Semantic matches">
-                  <h3 className="divider">{res.semantic.label || "Semantic matches"}</h3>
-                  {res.semantic.items.length === 0 ? <Empty>No semantic matches.</Empty> : (
-                    <ul>{res.semantic.items.map((s) => <li key={`${s.type}:${s.id}`}>{s.type} {s.title ? <strong>{s.title}</strong> : <span className="mono">{s.id}</span>}{s.snippet ? <span className="muted"> · {s.snippet}</span> : null} · score {s.score.toFixed(3)}</li>)}</ul>
+                  <h3 className="section-divider">{res.semantic.label || "Semantic matches"}</h3>
+                  {res.semantic.items.length === 0 ? <p className="muted small">No semantic matches.</p> : (
+                    <div className="group">{res.semantic.items.map((s) => (
+                      <div key={`${s.type}:${s.id}`} className="list-row">
+                        <span className={`rec-icon t-${s.type}`}><Icon name={TYPE_ICON[s.type] ?? "info"} size={14} /></span>
+                        <div style={{ flex: 1, minWidth: 0 }}><div className="ellipsis" style={{ fontWeight: 500 }}>{s.title ?? s.id}</div>{s.snippet ? <div className="small muted ellipsis">{s.snippet}</div> : null}</div>
+                        <span className="badge">score {s.score.toFixed(3)}</span>
+                      </div>
+                    ))}</div>
                   )}
                 </section>
               )}
             </>
           )}
-        </section>
+        </div>
+        {res && <AiDrawer open={aiOpen} onClose={() => setAiOpen(false)} context={{ searchQuery: res.q, filters: Object.fromEntries(Object.entries(params).filter(([, v]) => v)) }} />}
       </div>
     </div>
   );

@@ -1,7 +1,10 @@
+/** Session token, first-run passphrase (with the salt backup note), vault created, and the lock screen. */
 import { useState, type FormEvent } from "react";
 import { errText } from "../api.ts";
 import { useApi } from "../ctx.tsx";
-import { Mono } from "../ui.tsx";
+import { Icon } from "../components/Icon.tsx";
+import { Field } from "../components/Controls.tsx";
+import { Notice } from "../components/Feedback.tsx";
 
 export interface KeystoreStatus {
   state: "uninitialized" | "locked" | "unlocked";
@@ -19,6 +22,10 @@ export interface KeystoreStatus {
 export const SALT_NOTE_FALLBACK =
   "Back up data/identity.json (it holds the identity salt). Re-pairing after a restore needs the same passphrase and the same salt: a new salt means a new Mac key and every device must be paired again.";
 
+function Mark({ icon = "lock" }: { icon?: string }) {
+  return <div className="auth-icon"><Icon name={icon} size={26} /></div>;
+}
+
 /** Shown when the browser has no session cookie: paste data/session.token once. */
 export function TokenScreen({ onDone }: { onDone: () => void }) {
   const api = useApi();
@@ -30,11 +37,12 @@ export function TokenScreen({ onDone }: { onDone: () => void }) {
   };
   return (
     <div className="center">
-      <form className="panel narrow" onSubmit={submit}>
-        <h1>IVY</h1>
-        <p>This browser has no session. Paste the token from <Mono>data/session.token</Mono>.</p>
-        <label>Session token <input type="password" autoComplete="off" value={token} onChange={(e) => setToken(e.target.value)} /></label>
-        <button type="submit" disabled={!token.trim()}>Continue</button>
+      <form className="auth-card" onSubmit={submit} aria-label="Connect">
+        <Mark icon="key" />
+        <h1>Connect to IVY</h1>
+        <p className="fine">This browser has no session yet. Paste the token from <span className="mono">data/session.token</span>.</p>
+        <Field label="Session token"><input className="input input-lg" type="password" autoComplete="off" value={token} onChange={(e) => setToken(e.target.value)} autoFocus /></Field>
+        <button className="btn btn-primary btn-lg" type="submit" disabled={!token.trim()}>Continue</button>
         {err && <p className="error" role="alert">{err}</p>}
       </form>
     </div>
@@ -51,11 +59,15 @@ export function LockScreen({ status, onUnlocked, onCreated }: { status: Keystore
 export function CreatedPanel({ c, onContinue }: { c: Created; onContinue: () => void }) {
   return (
     <div className="center">
-      <div className="panel narrow">
+      <div className="auth-card wide">
+        <Mark icon="check" />
         <h1>Vault created</h1>
-        <p>Mac fingerprint: <Mono>{c.fingerprint}</Mono></p>
-        <p className="warn">{c.note}</p>
-        <button onClick={onContinue}>Continue</button>
+        <div className="stack-sm">
+          <span className="fine">Mac fingerprint</span>
+          <span className="fingerprint">{c.fingerprint}</span>
+        </div>
+        <div className="salt-note"><Notice tone="warn">{c.note}</Notice></div>
+        <button className="btn btn-primary btn-lg" onClick={onContinue} autoFocus>Continue</button>
       </div>
     </div>
   );
@@ -74,12 +86,13 @@ function Unlock({ status, onDone }: { status: KeystoreStatus; onDone: () => void
   };
   return (
     <div className="center">
-      <form className="panel narrow" onSubmit={submit} aria-label="Unlock">
+      <form className="auth-card" onSubmit={submit} aria-label="Unlock">
+        <Mark />
         <h1>IVY is locked</h1>
-        <label>Passphrase <input type="password" autoFocus autoComplete="current-password" value={pass} onChange={(e) => setPass(e.target.value)} /></label>
-        <button type="submit" disabled={busy || !pass}>{busy ? "Unlocking…" : "Unlock"}</button>
+        <Field label="Passphrase"><input className="input input-lg" type="password" autoFocus autoComplete="current-password" value={pass} onChange={(e) => setPass(e.target.value)} /></Field>
+        <button className="btn btn-primary btn-lg" type="submit" disabled={busy || !pass}>{busy ? "Unlocking…" : "Unlock"}</button>
         {err && <p className="error" role="alert">{err}</p>}
-        <p className="muted small">{status.keyInMemory ? "Screen lock: the key is still in memory and ingest keeps running." : "Full lock: the key is not in memory; nothing is ingested until you unlock."}</p>
+        <p className="fine">{status.keyInMemory ? "Screen lock: the key is still in memory and ingest keeps running." : "Full lock: the key is not in memory; nothing is ingested until you unlock."}</p>
       </form>
     </div>
   );
@@ -108,15 +121,16 @@ function SetPassphrase({ status, onDone }: { status: KeystoreStatus; onDone: (c:
 
   return (
     <div className="center">
-      <form className="panel narrow" onSubmit={submit} aria-label="Set passphrase">
+      <form className="auth-card wide" onSubmit={submit} aria-label="Set passphrase">
+        <Mark icon="key" />
         <h1>Set a passphrase</h1>
-        <p className="muted">The Mac identity key is derived from this passphrase (Argon2id) and held in memory only while unlocked.</p>
-        <label>Passphrase <input type="password" autoComplete="new-password" value={pass} onChange={(e) => setPass(e.target.value)} /></label>
-        <label>Repeat passphrase <input type="password" autoComplete="new-password" value={again} onChange={(e) => setAgain(e.target.value)} /></label>
-        <label className="check"><input type="checkbox" checked={restore} onChange={(e) => setRestore(e.target.checked)} /> Restoring: I have the identity salt from a backup</label>
-        {restore && <label>Identity salt (base64, from identity.json) <input value={salt} onChange={(e) => setSalt(e.target.value)} className="mono" /></label>}
-        <p className="warn">{note}</p>
-        <button type="submit" disabled={busy || !pass || !again}>{busy ? "Deriving key…" : "Set passphrase"}</button>
+        <p className="fine">The Mac identity key is derived from this passphrase (Argon2id) and held in memory only while unlocked.</p>
+        <Field label="Passphrase"><input className="input input-lg" type="password" autoComplete="new-password" value={pass} onChange={(e) => setPass(e.target.value)} autoFocus /></Field>
+        <Field label="Repeat passphrase"><input className="input input-lg" type="password" autoComplete="new-password" value={again} onChange={(e) => setAgain(e.target.value)} /></Field>
+        <label className="check fine" style={{ textAlign: "left" }}><input type="checkbox" checked={restore} onChange={(e) => setRestore(e.target.checked)} /> Restoring: I have the identity salt from a backup</label>
+        {restore && <Field label="Identity salt (base64, from identity.json)"><input className="input mono" value={salt} onChange={(e) => setSalt(e.target.value)} /></Field>}
+        <div className="salt-note"><Notice tone="warn">{note}</Notice></div>
+        <button className="btn btn-primary btn-lg" type="submit" disabled={busy || !pass || !again}>{busy ? "Deriving key…" : "Set passphrase"}</button>
         {err && <p className="error" role="alert">{err}</p>}
       </form>
     </div>

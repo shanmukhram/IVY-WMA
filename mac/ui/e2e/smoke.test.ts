@@ -28,6 +28,11 @@ let svc: ChildProcess; let browser: Browser; let page: Page; let base = "";
 let s3: Awaited<ReturnType<typeof startS3>>; let tokens: ReturnType<typeof makeTokens>; let dataDir = "";
 let dev: SimDevice | null = null; let log = "";
 
+/** Sidebar link by its exact name ("Files" is not "Windows Files"). */
+async function nav(p: Page, name: string) {
+  await p.getByRole("navigation", { name: "Sidebar" }).getByRole("link", { name, exact: true }).click();
+}
+
 async function sync(p: Page) {
   await p.getByRole("button", { name: "Sync now" }).click();
   await p.getByRole("status").filter({ hasText: /^sync (done|skipped|failed)/ }).waitFor();
@@ -80,11 +85,11 @@ describe("Mac dashboard against the real service", () => {
     await page.getByRole("heading", { name: "Vault created" }).waitFor({ timeout: 30_000 });
     expect(await page.getByText(/identity\.json/).first().textContent()).toMatch(/salt/);
     await page.getByRole("button", { name: "Continue" }).click();
-    await page.getByRole("navigation").waitFor();
+    await page.getByRole("navigation", { name: "Sidebar" }).waitFor();
     expect(page.url()).not.toContain("token="); // the fragment is consumed
 
     // ---- settings: R2 (the S3 mock) and a connection check; secrets come back masked
-    await page.getByRole("navigation").getByRole("link", { name: "Settings" }).click();
+    await nav(page, "Settings");
     await page.getByLabel("Endpoint (instead of account id)").fill(s3.mock.url);
     await page.getByLabel("Mac token, all four buckets (fallback)").fill(tokens.mac);
     await page.getByLabel("Windows device: up-bucket write token").fill(tokens.winUp);
@@ -99,7 +104,7 @@ describe("Mac dashboard against the real service", () => {
     expect(await page.getByRole("table", { name: "Connection check" }).getByText("reachable").count()).toBe(4);
 
     // ---- start pairing: string + QR + fingerprint
-    await page.getByRole("navigation").getByRole("link", { name: "Devices" }).click();
+    await nav(page, "Devices");
     await page.getByRole("button", { name: "Start pairing: Windows" }).click();
     const pairingString = await page.getByLabel("Pairing string").inputValue();
     expect(pairingString).toMatch(/^IVYPAIR1\./);
@@ -109,7 +114,7 @@ describe("Mac dashboard against the real service", () => {
     // ---- a simulated Windows device pairs and uploads
     dev = new SimDevice(pairingString);
     await dev.pair();
-    await sync(page);
+    await page.getByRole("dialog", { name: "Pairing" }).getByRole("button", { name: "Check now" }).click();
     await page.getByRole("status").filter({ hasText: /^Paired windows device/ }).waitFor();
     expect(await page.getByText(dev.fingerprint).count()).toBeGreaterThan(0);
 
@@ -124,8 +129,8 @@ describe("Mac dashboard against the real service", () => {
     await sync(page);
 
     // ---- search finds both
-    await page.getByRole("navigation").getByRole("link", { name: "Search" }).click();
-    await page.getByLabel("Search", { exact: true }).fill("robotics");
+    await nav(page, "Search");
+    await page.getByRole("searchbox", { name: "Search", exact: true }).fill("robotics");
     await page.getByRole("button", { name: "Search", exact: true }).click();
     await page.getByTestId("search-summary").filter({ hasText: /^2 matches/ }).waitFor();
     await page.getByTestId("item-file").waitFor();
@@ -134,14 +139,14 @@ describe("Mac dashboard against the real service", () => {
     expect(await page.getByTestId("item-file").textContent()).toMatch(/reference only/);
 
     // ---- timeline (today) shows them, image inline
-    await page.getByRole("navigation").getByRole("link", { name: "Timeline" }).click();
+    await nav(page, "Timeline");
     await page.getByTestId("timeline-summary").filter({ hasText: /^2 records/ }).waitFor();
     await page.getByTestId("item-screenshot").locator("img").waitFor();
     expect(await page.getByTestId("item-screenshot").locator("img").evaluate((i: HTMLImageElement) => i.complete && i.naturalWidth > 0)).toBe(true);
-    await page.getByRole("region", { name: "Coverage ribbon" }).waitFor();
+    await page.getByRole("region", { name: "Day timeline" }).waitFor();
 
     // ---- request original: queued -> in progress -> done
-    await page.getByRole("navigation").getByRole("link", { name: "Files" }).click();
+    await nav(page, "Files");
     await page.getByRole("button", { name: "Request original" }).click();
     await page.getByTestId("request-status").filter({ hasText: "waiting for the device" }).waitFor();
     const cmds = await dev.commands();
@@ -163,17 +168,26 @@ describe("Mac dashboard against the real service", () => {
     expect(got).toBe(2048);
 
     // ---- coverage shows the device with dots; activity feed saw the events
-    await page.getByRole("navigation").getByRole("link", { name: "Coverage" }).click();
+    await nav(page, "Coverage");
     await page.getByRole("region", { name: "windows coverage" }).waitFor();
+    await page.getByRole("button", { name: "Activity", exact: true }).click();
     expect(await page.getByRole("complementary", { name: "Live activity" }).textContent()).toMatch(/file\.cached/);
+    await page.keyboard.press("Escape");
+    await page.getByRole("complementary", { name: "Live activity" }).waitFor({ state: "detached" });
+
+    // ---- the Windows group lists its sources; a source opens the per-device view
+    await page.getByRole("navigation", { name: "Sidebar" }).getByRole("button", { name: "Windows", exact: true }).click();
+    await nav(page, "Windows Files");
+    await page.getByRole("region", { name: "Windows status" }).waitFor();
+    await page.getByText("Robotics Offer.pdf").first().waitFor();
 
     // ---- screen lock keeps the key; unlock comes back
-    await page.getByRole("button", { name: "Lock" }).click();
+    await page.getByRole("button", { name: "Lock", exact: true }).click();
     await page.getByRole("menuitem", { name: /screen only/ }).click();
     await page.getByRole("heading", { name: "IVY is locked" }).waitFor();
     expect(await page.getByText(/key is still in memory/).count()).toBe(1);
     await page.getByLabel("Passphrase").fill(PASS);
     await page.getByRole("button", { name: "Unlock" }).click();
-    await page.getByRole("navigation").waitFor({ timeout: 30_000 });
+    await page.getByRole("navigation", { name: "Sidebar" }).waitFor({ timeout: 30_000 });
   });
 });

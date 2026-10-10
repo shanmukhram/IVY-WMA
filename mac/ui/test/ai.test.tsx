@@ -1,9 +1,10 @@
 import { describe, it, expect } from "vitest";
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { AiDrawer, AiPanel, Answer, type AiTurn } from "../src/views/Ai.tsx";
-import { AiSettings, ImportsCoverage } from "../src/views/AiSettings.tsx";
+import { Answer, AiDrawer, AiView, type AiTurn } from "../src/views/Ai.tsx";
+import { AiSettings } from "../src/views/Settings.tsx";
 import { SearchView } from "../src/views/Search.tsx";
+import { ApiError } from "../src/api.ts";
 import { mockApi, renderWith } from "./helpers.tsx";
 
 const rec = (over: Record<string, unknown>) => ({
@@ -13,10 +14,10 @@ const rec = (over: Record<string, unknown>) => ({
 const turn = (over: Partial<AiTurn> = {}): AiTurn => ({
   conversationId: "conv1", model: "gpt-5.5",
   answer: "You paid the invoice on 24 September.",
-  facts: [{ text: "Aki asked about the invoice", recordIds: ["m1"] }, { text: "A receipt screenshot exists", recordIds: ["s1"] }],
+  facts: [{ text: "Aki asked about the invoice", recordIds: ["m1"] }, { text: "A receipt screenshot exists", recordIds: ["s1"] }, { text: "A gone record", recordIds: ["zz123456789"] }],
   inferences: [{ text: "The receipt is for that invoice", basis: "same amount" }],
   missing: ["No bank statement in the vault"],
-  records: [rec({}), rec({ type: "screenshot", id: "s1", app: null, title: "/sdcard/shot.png", body: "receipt", detail: {} })] as never,
+  records: [rec({}), rec({ type: "screenshot", id: "s1", app: null, title: "/sdcard/shot.png", body: "receipt", detail: { thumbUrl: "/api/media/s1/thumb" } })] as never,
   toolCalls: [{ name: "search", summary: 'search "invoice": 2 match(es)' }],
   ...over,
 });
@@ -24,16 +25,26 @@ const ON = { cloudEnabled: true, apiKeySet: true, embeddings: false, model: null
 const OFF = { ...ON, cloudEnabled: false };
 
 describe("answer rendering (A2)", () => {
-  it("facts carry record chips that open the record; inferences are separate; missing is listed", async () => {
-    renderWith(<Answer t={turn()} question="Did I pay?" />, mockApi({}));
+  it("facts carry record chips that open the record in a sheet; inferences apart; missing listed", async () => {
+    renderWith(<Answer t={turn()} />, mockApi({}));
     const facts = screen.getByRole("region", { name: "Facts" });
     const chips = within(facts).getAllByRole("button");
-    expect(chips.map((c) => c.textContent)).toEqual([expect.stringMatching(/^message · 2026-09-24/), expect.stringMatching(/^screenshot · 2026-09-24/)]);
-    expect(screen.queryByLabelText("Opened record")).toBeNull();
-    await userEvent.setup().click(chips[0]!);
-    const opened = screen.getByLabelText("Opened record");
-    expect(within(opened).getByRole("link", { name: /Open thread at this message/ })).toHaveAttribute("href", "/conversations/c1?around=m1");
+    expect(chips.map((c) => c.textContent)).toEqual([expect.stringMatching(/^message · .*\d\d:\d\d$/), expect.stringMatching(/^screenshot · /), "record zz123456 (gone)"]);
+    expect(chips[2]).toBeDisabled();
+    expect(screen.queryByRole("dialog")).toBeNull();
+    const u = userEvent.setup();
+    await u.click(chips[0]!);
+    const sheet = screen.getByRole("dialog", { name: "Opened record" });
+    expect(within(sheet).getByText("Did you pay the invoice?")).toBeInTheDocument();
+    expect(within(sheet).getByRole("link", { name: "Open in place" })).toHaveAttribute("href", "/conversations?chat=c1&around=m1");
+    await u.click(within(sheet).getByRole("button", { name: "Done" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    await u.click(chips[1]!);
+    expect(within(screen.getByRole("dialog", { name: "Opened record" })).getByRole("img")).toHaveAttribute("src", "/api/media/s1/thumb");
+    await u.keyboard("{Escape}");
+
     const inf = screen.getByRole("region", { name: "Inferences" });
+    expect(inf).toHaveClass("inferences");
     expect(inf).toHaveTextContent(/inference.*The receipt is for that invoice.*basis: same amount/);
     expect(facts).not.toHaveTextContent("The receipt is for that invoice");
     expect(screen.getByRole("region", { name: "Missing information" })).toHaveTextContent("No bank statement in the vault");
@@ -41,13 +52,47 @@ describe("answer rendering (A2)", () => {
   });
 });
 
-describe("AI panel", () => {
-  it("with cloud AI off says nothing leaves the Mac and sends nothing", async () => {
-    const api = mockApi({ "GET /api/ai/settings": OFF });
-    renderWith(<AiPanel context={{ searchQuery: "invoice" }} overview />, api);
-    expect(await screen.findByText(/Cloud AI is off/)).toBeInTheDocument();
+describe("Ask AI chat", () => {
+  it("lists conversations, shows the thread as bubbles, and Enter sends a follow-up in the same conversation", async () => {
+    const api = mockApi({
+      "GET /api/ai/settings": ON,
+      "GET /api/ai/conversations": { items: [{ id: "conv1", title: "Did I pay?", kind: "ask", turns: 1, updatedAt: "2026-09-24T10:00:00Z" }, { id: "conv2", title: "Overview of 2026-09-23", kind: "overview", turns: 1, updatedAt: "2026-09-23T10:00:00Z" }] },
+      "GET /api/ai/conversations/conv1": { id: "conv1", title: "Did I pay?", context: { searchQuery: "invoice" }, turns: [{ question: "Did I pay?", result: turn() }] },
+      "POST /api/ai/ask": () => turn({ answer: "Follow-up answer", facts: [], inferences: [], missing: [] }),
+    });
+    renderWith(<AiView />, api, { path: "/ai?c=conv1" });
+    const list = await screen.findByRole("region", { name: "AI conversations" });
+    expect(within(list).getByRole("link", { name: /Did I pay\?/ })).toHaveAttribute("aria-current", "true");
+    expect(within(list).getByRole("link", { name: /Overview of 2026-09-23/ })).toHaveAttribute("href", "/ai?c=conv2");
+    const chat = screen.getByRole("region", { name: "AI chat" });
+    expect(await within(chat).findByText("You paid the invoice on 24 September.")).toBeInTheDocument();
+    expect(within(chat).getByText("Did I pay?", { selector: ".bubble" })).toBeInTheDocument();
+    const u = userEvent.setup();
+    const box = within(chat).getByRole("textbox", { name: "Ask about your records" });
+    await u.type(box, "and who sent it?{Enter}");
+    expect(await within(chat).findByText("Follow-up answer")).toBeInTheDocument();
+    expect(api.calls.find((c) => c.path === "/api/ai/ask")!.arg).toMatchObject({ question: "and who sent it?", conversationId: "conv1", context: { searchQuery: "invoice" } });
+    expect(box).toHaveValue("");
+    expect(within(chat).getAllByTestId("ai-answer")).toHaveLength(2);
+  });
+
+  it("Shift+Enter makes a new line instead of sending", async () => {
+    const api = mockApi({ "GET /api/ai/settings": ON, "GET /api/ai/conversations": { items: [] } });
+    renderWith(<AiView />, api, { path: "/ai" });
+    const u = userEvent.setup();
+    const box = await screen.findByRole("textbox", { name: "Ask about your records" });
+    await u.type(box, "line one{Shift>}{Enter}{/Shift}line two");
+    expect(box).toHaveValue("line one\nline two");
+    expect(api.calls.filter((c) => c.method === "POST")).toHaveLength(0);
+  });
+
+  it("with cloud AI off: a clear state with a link to Settings, history still readable, nothing sent", async () => {
+    const api = mockApi({ "GET /api/ai/settings": OFF, "GET /api/ai/conversations": { items: [] } });
+    renderWith(<AiView />, api, { path: "/ai" });
+    expect(await screen.findByRole("heading", { name: "Cloud AI is off" })).toBeInTheDocument();
     expect(screen.getByText(/Nothing leaves this Mac/)).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /Overview/ })).toBeNull();
+    expect(screen.getByRole("link", { name: "Open Settings › AI" })).toHaveAttribute("href", "/settings?section=ai");
+    expect(screen.queryByRole("textbox", { name: "Ask about your records" })).toBeNull();
     expect(api.calls.filter((c) => c.method === "POST")).toHaveLength(0);
   });
 
@@ -66,26 +111,21 @@ describe("AI panel", () => {
     expect(screen.getByTestId("search-summary")).toBeInTheDocument(); // the results stay
     await u.click(await within(drawer).findByRole("button", { name: "Overview of these results" }));
     expect(await within(drawer).findByText("Overview text")).toBeInTheDocument();
-    const ov = api.calls.find((c) => c.path === "/api/ai/overview")!;
-    expect(ov.arg.context).toEqual({ searchQuery: "invoice", filters: { app: "line" } });
+    expect(api.calls.find((c) => c.path === "/api/ai/overview")!.arg.context).toEqual({ searchQuery: "invoice", filters: { app: "line" } });
     await u.type(within(drawer).getByRole("textbox", { name: "Ask about your records" }), "and who sent it?");
     await u.click(within(drawer).getByRole("button", { name: "Ask" }));
     expect(await within(drawer).findByText("Follow-up answer")).toBeInTheDocument();
-    const ask = api.calls.find((c) => c.path === "/api/ai/ask")!;
-    expect(ask.arg).toMatchObject({ question: "and who sent it?", conversationId: "conv1", context: { searchQuery: "invoice" } });
+    expect(api.calls.find((c) => c.path === "/api/ai/ask")!.arg).toMatchObject({ question: "and who sent it?", conversationId: "conv1", context: { searchQuery: "invoice" } });
     await u.click(within(drawer).getByRole("button", { name: "Close AI drawer" }));
     expect(screen.queryByRole("complementary", { name: "AI drawer" })).toBeNull();
     expect(screen.getByTestId("search-summary")).toBeInTheDocument();
   });
 
   it("shows the service's refusal instead of an answer", async () => {
-    const { ApiError } = await import("../src/api.ts");
     const api = mockApi({ "GET /api/ai/settings": ON, "POST /api/ai/ask": () => { throw new ApiError(502, "ai_unlinked_facts", "The model's answer was rejected twice"); } });
-    renderWith(<AiDrawer context={{ date: "2026-09-24", timeline: true }} />, api);
+    renderWith(<AiDrawer open onClose={() => undefined} context={{ date: "2026-09-24", timeline: true }} />, api);
     const u = userEvent.setup();
-    await u.click(screen.getByRole("button", { name: "AI overview" }));
-    await u.type(await screen.findByRole("textbox", { name: "Ask about your records" }), "what happened?");
-    await u.click(screen.getByRole("button", { name: "Ask" }));
+    await u.type(await screen.findByRole("textbox", { name: "Ask about your records" }), "what happened?{Enter}");
     expect(await screen.findByRole("alert")).toHaveTextContent(/rejected twice/);
     expect(screen.queryByTestId("ai-answer")).toBeNull();
   });
@@ -100,6 +140,7 @@ describe("AI settings (A3)", () => {
     });
     renderWith(<AiSettings />, api);
     expect(await screen.findByTestId("ai-what-is-sent")).toHaveTextContent("your question, and the passages and records the assistant retrieves while answering");
+    expect(screen.getByRole("switch", { name: "Allow cloud AI processing (OpenAI API)" })).toBeChecked();
     const keyInput = screen.getByLabelText("OpenAI API key") as HTMLInputElement;
     expect(keyInput.value).toBe("");
     expect(keyInput.type).toBe("password");
@@ -110,20 +151,7 @@ describe("AI settings (A3)", () => {
     await u.click(screen.getByRole("button", { name: "Save key" }));
     expect(api.calls.find((c) => c.method === "PUT")!.arg).toEqual({ apiKey: "sk-test-123456789012345678901234" });
     expect(keyInput.value).toBe("");
-    expect(screen.getByText(/semantic search exists only through OpenAI|Compute embeddings/)).toBeInTheDocument();
-  });
-});
-
-describe("coverage: imports row (S7)", () => {
-  it("labels source-reported gaps apart from unknown days", () => {
-    renderWith(<ImportsCoverage imports={[{
-      name: "Activity Vault import", source: "activity_vault", status: "green", statusReason: "imported", location: "/av", lastRunAt: "2026-10-09T00:00:00Z", lastSuccessAt: "2026-10-09T00:00:01Z",
-      rowsTotal: 5, lastRowsAdded: 2, gapWindowDays: 14, firstRowAt: "2026-10-01T00:00:00Z", captureReported: { healthy: null },
-      gaps: [{ date: "2026-10-07", state: "gap", rows: 0, note: "the source reported a capture gap" }, { date: "2026-10-06", state: "unknown", rows: 0, note: "no rows; the source did not report on this day" }],
-      captures: "Google activity",
-    }]} />, mockApi({}));
-    const row = screen.getByTestId("import-activity_vault");
-    expect(row).toHaveTextContent(/2026-10-07 gap · the source reported a capture gap/);
-    expect(row).toHaveTextContent(/2026-10-06 unknown · no rows/);
+    await u.click(screen.getByRole("switch", { name: "Allow cloud AI processing (OpenAI API)" }));
+    expect(api.calls.filter((c) => c.method === "PUT").at(-1)!.arg).toEqual({ cloudEnabled: false });
   });
 });

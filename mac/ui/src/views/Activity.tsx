@@ -1,7 +1,10 @@
+/** Live activity: every service event, newest first, collected while the dashboard is open; shown in a slide-over. */
 import { useEffect, useState } from "react";
 import { useApi, useEvents } from "../ctx.tsx";
 import type { ServiceEvent } from "../events.ts";
-import { fmtTime } from "../ui.tsx";
+import { fmtTime } from "../format.ts";
+import { SlideOver } from "../components/Overlay.tsx";
+import { Empty } from "../components/Feedback.tsx";
 
 export const FEED_MAX = 500;
 
@@ -11,32 +14,38 @@ export function pushEvent(list: ServiceEvent[], ev: ServiceEvent): ServiceEvent[
   return [ev, ...list].slice(0, FEED_MAX);
 }
 
-export function ActivityFeed() {
+/** Collects events for the whole session (mounted by the shell, panel or not). */
+export function useActivity(): ServiceEvent[] {
   const api = useApi();
   const [events, setEvents] = useState<ServiceEvent[]>([]);
-  const [open, setOpen] = useState(true);
   useEffect(() => {
     api.get<{ events: ServiceEvent[] }>("/api/activity", { limit: 100 }).then((r) => setEvents((cur) => {
-      let out = [...r.events].reverse().reduce(pushEvent, [] as ServiceEvent[]);
+      let out = [...(r?.events ?? [])].reverse().reduce(pushEvent, [] as ServiceEvent[]);
       for (const e of [...cur].reverse()) out = pushEvent(out, e);
       return out;
     }), () => undefined);
   }, [api]);
   useEvents((ev) => { if (ev.type !== "hello") setEvents((l) => pushEvent(l, ev)); });
-  return (
-    <aside className="feed" aria-label="Live activity">
-      <button className="feed-head" onClick={() => setOpen((v) => !v)} aria-expanded={open}>Live activity ({events.length}) {open ? "▾" : "▸"}</button>
-      {open && (
-        <ol className="feed-list">
-          {events.map((e, i) => (
-            <li key={e.id ?? `l${i}-${e.at}`}><span className="mono">{fmtTime(e.at, false)}</span> <strong>{e.type}</strong> <span className="small muted">{summary(e.data)}</span></li>
-          ))}
-        </ol>
-      )}
-    </aside>
-  );
+  return events;
 }
 
 function summary(d: Record<string, unknown>): string {
   return Object.entries(d ?? {}).filter(([, v]) => v !== null && v !== undefined && typeof v !== "object").map(([k, v]) => `${k}=${String(v)}`).join(" ").slice(0, 200);
+}
+
+export function ActivityPanel({ events, onClose }: { events: ServiceEvent[]; onClose: () => void }) {
+  return (
+    <SlideOver title="Live activity" label="Live activity" onClose={onClose}>
+      {events.length === 0 ? <Empty icon="activity" title="Quiet so far">Sync, ingest, commands and pairing events appear here as they happen, newest first.</Empty> : (
+        <ol aria-label="Events">
+          {events.map((e, i) => (
+            <li key={e.id ?? `l${i}-${e.at}`} className="act-item">
+              <time>{fmtTime(e.at, false)}</time>
+              <div><div className="act-type">{e.type}</div><div className="act-data">{summary(e.data)}</div></div>
+            </li>
+          ))}
+        </ol>
+      )}
+    </SlideOver>
+  );
 }
