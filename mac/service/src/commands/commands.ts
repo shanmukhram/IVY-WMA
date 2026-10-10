@@ -2,7 +2,8 @@
  * Mac -> device commands (PRD F2/F3, PROTOCOL §6 command / command_status).
  *
  * Lifecycle: queued (row written; R2 not reached yet) -> sent (cmd/<oid> is in
- * the device's cmd-bucket) -> uploaded / done / not_found / access_denied /
+ * the device's cmd-bucket) -> [transferring: a file_original manifest naming this
+ * command arrived (PROTOCOL §2.2 commandId); parts are committing] -> uploaded / done / not_found / access_denied /
  * too_large / error (from the device's command_status). For file_request,
  * "uploaded" turns into "done" when the file_original blob is reassembled and
  * the file is cached locally. An offline device simply leaves the command at
@@ -109,7 +110,7 @@ export async function maintainCommands(ctx: Ctx, now = Date.now()): Promise<void
 
 export async function cancelCommand(ctx: Ctx, commandId: string): Promise<boolean> {
   const c = getCommand(ctx, commandId);
-  if (!c || !["queued", "sent"].includes(c.status)) return false;
+  if (!c || !["queued", "sent", "transferring"].includes(c.status)) return false;
   ctx.db.prepare("UPDATE commands SET status = 'cancelled', status_at = ? WHERE id = ?").run(nowIso(), c.id);
   if (c.status === "sent") await deleteCommandObject(ctx, c.id);
   else ctx.db.prepare("UPDATE commands SET cmd_deleted = 1 WHERE id = ?").run(c.id);
@@ -130,10 +131,10 @@ export function commandView(ctx: Ctx, c: CommandRow) {
       { committed_parts: string; total_chunks: number | null; committed_bytes: number; total_size: number | null; status: string } | undefined;
     if (b) progress = { committedParts: (JSON.parse(b.committed_parts) as number[]).length, totalChunks: b.total_chunks, committedBytes: b.committed_bytes, totalSize: b.total_size };
   }
-  const display = c.status === "queued" || c.status === "sent" ? "queued" : c.status === "uploaded" ? "transferring" : c.status;
+  const display = c.status === "queued" || c.status === "sent" ? "queued" : c.status === "uploaded" || c.status === "transferring" ? "transferring" : c.status;
   return {
     id: c.id, deviceId: c.device_id, type: c.type, params: rec.params, fileId: c.file_id, status: c.status, display,
-    waitingOn: c.status === "queued" ? "mac" : c.status === "sent" ? "device" : c.status === "uploaded" ? "transfer" : null,
+    waitingOn: c.status === "queued" ? "mac" : c.status === "sent" ? "device" : c.status === "uploaded" || c.status === "transferring" ? "transfer" : null,
     detail: c.detail, resultOid: c.result_oid, issuedAt: c.issued_at, sentAt: c.sent_at, statusAt: c.status_at,
     completedAt: c.completed_at, cmdDeleted: !!c.cmd_deleted, lastError: c.last_error, progress,
   };
@@ -158,7 +159,7 @@ export async function requestFile(ctx: Ctx, fileId: string, opts: { force?: bool
   if (f.deleted_at) throw new CommandError("file_in_bin", "the file is in the recovery bin");
   if (!getDevice(ctx, f.device_id)) throw new CommandError("device_revoked", "the file's device is no longer paired");
   if (!opts.force) {
-    const open = ctx.db.prepare("SELECT * FROM commands WHERE file_id = ? AND status IN ('queued','sent','uploaded') ORDER BY issued_at DESC LIMIT 1").get(fileId) as CommandRow | undefined;
+    const open = ctx.db.prepare("SELECT * FROM commands WHERE file_id = ? AND status IN ('queued','sent','transferring','uploaded') ORDER BY issued_at DESC LIMIT 1").get(fileId) as CommandRow | undefined;
     if (open) return { command: commandView(ctx, open), reused: true };
     if (f.status === "cached" && f.local_path) return { command: null, reused: false, alreadyCached: true };
   }

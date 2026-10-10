@@ -3,7 +3,7 @@
  * Run the IVY Mac service from source (Node 25 strips the types):
  *   node src/main.ts [--data ./data] [--port 4777] [--static ./public] [--poll-ms 120000]
  * Environment equivalents: IVY_DATA_DIR, IVY_PORT, IVY_STATIC_DIR, IVY_POLL_INTERVAL_MS,
- * IVY_AUTO_LOCK_MINUTES, IVY_OCR_COMMAND, IVY_THUMBNAILS=0.
+ * IVY_AUTO_LOCK_MINUTES, IVY_OCR=0, IVY_OCR_COMMAND, IVY_OCR_CONCURRENCY, IVY_THUMBNAILS=0.
  */
 import { createService } from "./service.ts";
 import type { ServiceConfig } from "./config.ts";

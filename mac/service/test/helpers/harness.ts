@@ -73,19 +73,19 @@ export async function api(svc: Service, method: string, url: string, body?: unkn
 }
 
 /** Service + mock + initialized key store + R2 config. */
-export async function fullStack(cfg: Partial<ServiceConfig> = {}) {
+export async function fullStack(cfg: Partial<ServiceConfig> = {}, opts: ServiceOptions = {}) {
   const tokens = makeTokens();
   const s3 = await startS3(tokens);
   const dataDir = tempDir();
-  const svc = await makeService(dataDir, cfg);
-  svc.ctx.keystore.initialize(PASS);
+  const svc = await makeService(dataDir, cfg, opts);
+  await svc.ctx.keystore.initialize(PASS);
   svc.ctx.setR2Config(r2ConfigFor(s3.mock.url, tokens));
   return {
     svc, tokens, s3, dataDir,
-    async restart(extra: Partial<ServiceConfig> = {}) {
+    async restart(extra: Partial<ServiceConfig> = {}, extraOpts: ServiceOptions = {}) {
       await this.svc.close();
-      this.svc = await makeService(dataDir, { ...cfg, ...extra });
-      this.svc.ctx.keystore.unlock(PASS);
+      this.svc = await makeService(dataDir, { ...cfg, ...extra }, { ...opts, ...extraOpts });
+      await this.svc.ctx.keystore.unlock(PASS);
       return this.svc;
     },
     async cleanup() {

@@ -205,6 +205,7 @@ export class MediaProcessor {
         if (thumb) haveThumb = true;
         this.ocrAvailable = true;
         this.done++;
+        this.ctx.events.emit("media.ocr", { mediaId, status: "done", chars: r.text.length });
       } catch (e) {
         if (ocr.isUnavailableError?.(e)) {
           // the helper is gone, not the file: stay pending and fall back to sips for the thumbnail
@@ -213,6 +214,7 @@ export class MediaProcessor {
         } else {
           this.ctx.db.prepare("UPDATE media SET ocr_status = 'failed' WHERE id = ?").run(mediaId);
           this.failed++;
+          this.ctx.events.emit("media.ocr", { mediaId, status: "failed", code: String((e as { code?: unknown }).code ?? "error") });
         }
       }
     }

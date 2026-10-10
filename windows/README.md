@@ -121,6 +121,8 @@ windows/
   - Reparse points (junctions, symlinks) are never followed. The agent's own data directory is always excluded.
 - **Thumbnails** (`Thumbnails/`): images are decoded with SkiaSharp, with EXIF orientation applied. PDF first pages are rendered with PDFtoImage (PDFium). The long edge is 256 px; the output is JPEG with transparent areas on white. Each thumbnail goes up as a chunked blob and is reused while the quick hash is unchanged.
 - **`file_cache.file_id`** is set to the oid of the latest `file_meta` for that path, so a `file_request.fileId` naming that oid resolves.
+- **Import progress** (`device_report.collectors[]` `importTotal` / `importDone` / `phase`, PROTOCOL.md §6): every scan first runs a metadata-only counting walk (same walker and exclusions, no file reads, budgeted per tick), then reports files scanned of that total. `phase` is `initial` while no full scan has completed, `rescan` for later full or scoped scans, and `incremental` afterwards (with the last full scan's count as both numbers). The total is absent until counted and is persisted with the scan state. `CollectorBase.Import` carries it; the host stores it in `collector_state` (`import_total`, `import_done`, `import_phase`, added by schema v2) and `DeviceReporter` sends it.
+- **Originals for a `file_request`** are uploaded with the command's id in the manifest (`commandId`, PROTOCOL.md §2.2), so the Mac shows the command as transferring with part progress before the `uploaded` status arrives.
 
 **Screenshots:**
 - **Debounce:** a file is uploaded only after it is seen twice, at least `debounceSeconds` apart, with the same size and mtime. It must also be non-empty and open with `FileShare.Read`, which fails on Windows while a writer still holds it.

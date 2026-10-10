@@ -40,6 +40,9 @@ importers:
       '@fastify/websocket':
         specifier: 11.3.4
         version: 11.3.4
+      '@ivy/mac-ocr':
+        specifier: workspace:*
+        version: link:../ocr
       '@ivy/protocol':
         specifier: workspace:*
         version: link:../../packages/protocol

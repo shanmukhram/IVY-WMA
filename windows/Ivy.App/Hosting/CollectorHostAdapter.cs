@@ -79,7 +79,7 @@ public sealed class CollectorHostAdapter : ICollectorHostView
         {
             if (_host.Find(Files) is not FileIndexCollector f) return null;
             var last = f.LastFullScan;
-            if (f.CurrentScan is { } scan) return new FileImportProgress(scan.FilesSeen, last?.FilesSeen ?? 0, Complete: false);
+            if (f.CurrentScan is { } scan) return new FileImportProgress(scan.FilesSeen, scan.FilesTotal is { } t ? Math.Max(t, scan.FilesSeen) : last?.FilesSeen ?? 0, Complete: false);
             return last is null ? null : new FileImportProgress(last.FilesSeen, last.FilesSeen, Complete: true);
         }
     }

@@ -15,7 +15,7 @@ public sealed class DeviceReporterOptions
 }
 
 /// <summary>
-/// Builds <c>device_report</c> (per-collector enabled / lastRunAt / cursor / queueDepth, PRD principle 4)
+/// Builds <c>device_report</c> (per-collector enabled / lastRunAt / cursor / queueDepth / import progress, PRD principle 4)
 /// from <c>collector_state</c> and the queue, and enqueues it for upload on a timer and on demand.
 /// </summary>
 public sealed class DeviceReporter
@@ -53,6 +53,9 @@ public sealed class DeviceReporter
                 LastRunAt = c.LastRunAt,
                 Cursor = c.Cursor,
                 QueueDepth = depth.TryGetValue(c.Name, out var d) ? d : 0,
+                ImportTotal = c.Import?.Total,
+                ImportDone = c.Import?.Done,
+                Phase = c.Import?.Phase,
             })
             .ToList();
         return new DeviceReportRecord

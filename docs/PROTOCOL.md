@@ -158,6 +158,7 @@ at `up/blob/<oid>/manifest`):
   "chunks": [
     { "index": 0, "ctLen": 304, "sha256": "<hex of the full part bytes>" }
   ],
+  "commandId": "6f1c…",
   "committedParts": [0, 1]
 }
 ```
@@ -172,6 +173,15 @@ at `up/blob/<oid>/manifest`):
 - `chunks[i].sha256` is SHA-256 over the **entire part** (header + ciphertext +
   tag), so the chunk header is covered too.
 - `ctLen` is the full part length.
+- `commandId` is optional. A sender that uploads an original in answer to a
+  `file_request` command (`payloadKind: "file_original"`) SHOULD set it to that
+  command's `commandId`; every other blob omits it. When absent the key is left
+  out of the JSON entirely (not `null`), so manifests without it are unchanged
+  byte-for-byte (the §9 vector has none). Serialized after `chunks`. It lets the
+  receiver link the blob to the command as soon as the manifest arrives and show
+  the command as transferring, with part progress, before the `command_status`
+  (`uploaded`) is reported. A receiver MUST NOT trust it blindly: the Mac links it
+  only to an outstanding `file_request` sent to a device of the bucket's role.
 - `committedParts` is optional receiver-side resume state (which parts the Mac
   has already committed); a sender omits it.
 
@@ -350,7 +360,7 @@ sourceStatus(live|deleted_at_source), attachments[]`. Each attachment:
 (C1–C10, AC2/AC5/AC6; `sentAt` is the source's truth, `captureTime` is ours).
 
 **manifest** — see §2.2 (`objectId, payloadKind, totalSize, chunkSize,
-totalChunks, cek, chunks[], committedParts?`).
+totalChunks, cek, chunks[], commandId?, committedParts?`).
 
 **command** — `commandId, issuedAt, params` where `params` is a discriminated
 union on `type`:
@@ -366,9 +376,20 @@ device's own id is ignored and reported as `error`.
 
 **device_report** — `role(windows|android), appVersion?, queueDepthTotal,
 reportedAt, collectors[]`. Each collector:
-`name, enabled, lastRunAt?, cursor?, queueDepth`. This is what lets the Mac show
-honest coverage: per-collector last run, cursor, enabled flag, and queue depth
-(PRD principle 4; D1–D5).
+`name, enabled, lastRunAt?, cursor?, queueDepth, importTotal?, importDone?,
+phase?`. This is what lets the Mac show honest coverage: per-collector last run,
+cursor, enabled flag, and queue depth (PRD principle 4; D1–D5).
+
+Import progress (all optional, non-negative integers / enum): `importTotal` is
+how many items the collector's current (or last) bulk pass expects,
+`importDone` how many it has processed, and `phase` which pass that is:
+`initial` (the first full index), `rescan` (a later full or scoped pass:
+periodic, settings change, rescan command, lost events), or `incremental` (live
+capture after a completed pass; `importTotal`/`importDone` then describe the
+last completed pass). A sender omits `importTotal` until it has a real count and
+never guesses one; it reports `importTotal >= importDone`. A collector without a
+bulk pass omits all three. The Mac computes its percentage from these numbers
+and shows "counting" when `importTotal` is absent.
 
 **pairing_device** — `role, pairingId, publicKey(base64), fingerprint` (§7).
 

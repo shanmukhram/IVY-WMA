@@ -6,8 +6,9 @@
  * local bearer token from data/session.token (Authorization: Bearer, the
  * `ivy_session` cookie set by POST /api/session, or for WebSockets the
  * `bearer.<token>` subprotocol / `?token=`). Host must be a loopback name (DNS
- * rebinding) and a cross-site Origin is refused. While the vault is locked only
- * health, session and keystore routes answer; everything else is 423.
+ * rebinding) and a cross-site Origin is refused. While the vault is locked (a UI
+ * lock or a full lock) only health, session and keystore routes answer;
+ * everything else is 423. A UI lock keeps the key in memory, so ingest continues.
  */
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
 import fastifyStatic from "@fastify/static";
@@ -30,6 +31,7 @@ import { ITEM_TYPES, TYPE_DEFS, selectList, type ItemType } from "../query/types
 import { parseBound } from "../util/time.ts";
 import { setSetting } from "../db/index.ts";
 import { blobProgress, type BlobRow } from "../ingest/blobs.ts";
+import { registerUiRoutes } from "./ui-routes.ts"; // dashboard UI listings (@ivy/mac-ui)
 
 const LOOPBACK = new Set(["localhost", "127.0.0.1", "[::1]", "::1"]);
 const OPEN_ROUTES = new Set(["/api/health", "/api/session"]);
@@ -134,7 +136,7 @@ export async function buildServer(svc: Service): Promise<FastifyInstance> {
     const tok = bearer ?? cookieToken(req) ?? (url === "/events" || url === "/api/events" ? wsToken(req) : undefined);
     if (!tok || !eq(tok, svc.token)) return reply.status(401).send({ error: "unauthorized", message: "missing or wrong session token" });
     if (!url.startsWith("/api/keystore") && url !== "/events" && url !== "/api/events") {
-      if (!ctx.keystore.isUnlocked()) return reply.status(423).send({ error: "locked", message: "the vault is locked", keystore: ctx.keystore.state() });
+      if (!ctx.keystore.contentUnlocked()) return reply.status(423).send({ error: "locked", message: "the vault is locked", keystore: ctx.keystore.state() });
       ctx.keystore.touch(); // user activity resets the auto-lock timer
     }
   });
@@ -153,31 +155,44 @@ export async function buildServer(svc: Service): Promise<FastifyInstance> {
   });
 
   // ---------------------------------------------------------------- keystore (S8)
-  app.get("/api/keystore", async () => ({ ...ctx.keystore.status(), saltBackup: SALT_NOTE }));
+  app.get("/api/keystore", async () => ({ ...svc.keystoreStatus(), saltBackup: SALT_NOTE }));
   app.post("/api/keystore/initialize", async (req) => {
     const b = req.body as { passphrase?: string; salt?: string } | undefined;
-    const r = ctx.keystore.initialize(b?.passphrase ?? "", b?.salt);
+    const r = await ctx.keystore.initialize(b?.passphrase ?? "", b?.salt);
     svc.onUnlocked();
     return { ...r, state: ctx.keystore.state(), saltBackup: SALT_NOTE };
   });
   app.post("/api/keystore/unlock", async (req) => {
-    const r = ctx.keystore.unlock((req.body as { passphrase?: string } | undefined)?.passphrase ?? "");
+    const r = await ctx.keystore.unlock((req.body as { passphrase?: string } | undefined)?.passphrase ?? "");
     svc.onUnlocked();
     return { ...r, state: ctx.keystore.state() };
   });
-  app.post("/api/keystore/lock", async () => { ctx.keystore.lock("manual"); ctx.dropR2(); return { state: ctx.keystore.state() }; });
+  // { full?: boolean }: false (default) = UI lock, content 423 but the key stays and ingest runs;
+  // true = the key is zeroed and ingest stops until the next unlock.
+  app.post("/api/keystore/lock", async (req) => {
+    const full = (req.body as { full?: unknown } | undefined)?.full;
+    if (full !== undefined && typeof full !== "boolean") throw new HttpError(400, "bad_value", "full must be a boolean");
+    ctx.keystore.lock("manual", { full: full === true });
+    return svc.keystoreStatus();
+  });
   app.post("/api/keystore/change-passphrase", async (req) => {
     const b = req.body as { current?: string; next?: string } | undefined;
-    if (!ctx.keystore.isUnlocked()) throw new KeystoreError("locked", "unlock first");
-    return { ...ctx.keystore.changePassphrase(b?.current ?? "", b?.next ?? ""), saltBackup: SALT_NOTE };
+    if (!ctx.keystore.contentUnlocked()) throw new KeystoreError("locked", "unlock first");
+    return { ...(await ctx.keystore.changePassphrase(b?.current ?? "", b?.next ?? "")), saltBackup: SALT_NOTE };
   });
   app.put("/api/keystore/settings", async (req) => {
-    if (!ctx.keystore.isUnlocked()) throw new KeystoreError("locked", "unlock first");
-    const m = num((req.body as { autoLockMinutes?: unknown } | undefined)?.autoLockMinutes);
-    if (m === undefined || m < 0 || m > 24 * 60) throw new HttpError(400, "bad_value", "autoLockMinutes must be 0..1440 (0 = never)");
-    ctx.keystore.setAutoLockMinutes(m);
-    setSetting(ctx.db, "keystore.autoLockMinutes", String(m));
-    return ctx.keystore.status();
+    if (!ctx.keystore.contentUnlocked()) throw new KeystoreError("locked", "unlock first");
+    const b = req.body as { autoLockMinutes?: unknown; autoLockMode?: unknown } | undefined;
+    if (b?.autoLockMinutes === undefined && b?.autoLockMode === undefined) throw new HttpError(400, "bad_value", "autoLockMinutes or autoLockMode is required");
+    let m: number | undefined;
+    if (b?.autoLockMinutes !== undefined) {
+      m = num(b.autoLockMinutes);
+      if (m === undefined || m < 0 || m > 24 * 60) throw new HttpError(400, "bad_value", "autoLockMinutes must be 0..1440 (0 = never)");
+    }
+    if (b?.autoLockMode !== undefined && b.autoLockMode !== "ui" && b.autoLockMode !== "full") throw new HttpError(400, "bad_value", 'autoLockMode must be "ui" or "full"');
+    if (m !== undefined) { ctx.keystore.setAutoLockMinutes(m); setSetting(ctx.db, "keystore.autoLockMinutes", String(m)); }
+    if (b?.autoLockMode !== undefined) { ctx.keystore.setAutoLockMode(b.autoLockMode as "ui" | "full"); setSetting(ctx.db, "keystore.autoLockMode", b.autoLockMode as string); }
+    return svc.keystoreStatus();
   });
 
   // ---------------------------------------------------------------- R2
@@ -384,7 +399,7 @@ export async function buildServer(svc: Service): Promise<FastifyInstance> {
     socket.send(JSON.stringify({ type: "hello", at: new Date().toISOString(), data: { keystore: ctx.keystore.state() } }));
     const off = ctx.events.on((ev) => {
       // while locked only lock-state events go out
-      if (!ctx.keystore.isUnlocked() && !ev.type.startsWith("keystore.")) return;
+      if (!ctx.keystore.contentUnlocked() && !ev.type.startsWith("keystore.")) return;
       if (socket.readyState === socket.OPEN) socket.send(JSON.stringify(ev));
     });
     socket.on("close", off);
@@ -392,6 +407,9 @@ export async function buildServer(svc: Service): Promise<FastifyInstance> {
   };
   app.get("/events", { websocket: true }, wsHandler);
   app.get("/api/events", { websocket: true }, wsHandler);
+
+  // ---------------------------------------------------------------- dashboard UI listings (added for @ivy/mac-ui; see ui-routes.ts)
+  registerUiRoutes(app, svc);
 
   // ---------------------------------------------------------------- static UI
   const staticDir = ctx.config.staticDir;

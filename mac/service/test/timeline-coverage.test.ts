@@ -20,7 +20,7 @@ const report = (at: string, cols: Array<{ name: string; lastRunAt?: string; enab
 beforeEach(async () => {
   dir = tempDir();
   svc = await makeService(dir);
-  svc.ctx.keystore.initialize(PASS);
+  await svc.ctx.keystore.initialize(PASS);
   svc.ctx.db.prepare("INSERT INTO devices(id, role, public_key, fingerprint, paired_at) VALUES (?, 'windows', 'k', 'FP', ?)").run(DEV, T(0));
 });
 afterEach(async () => { await svc.close(); rm(dir); });
@@ -158,6 +158,28 @@ describe("coverage (D1-D5)", () => {
   it("without a device-reported total the import state says so instead of guessing", () => {
     report(T(11, 59), [{ name: "files", lastRunAt: T(11, 59), cursor: "scan:2026-09-24T11:00:00.000Z" }]);
     expect(col("files").import).toMatchObject({ total: null, percent: null, state: "full_scan_reported", lastFullScanAt: "2026-09-24T11:00:00.000Z" });
+  });
+
+  it("uses the device-reported importTotal / importDone / phase for a real percentage", () => {
+    const rep = (at: string, cols: Array<Record<string, unknown>>) => commitDeviceReport(svc.ctx.db, {
+      ...base("device_report", at), kind: "device_report", role: "windows", queueDepthTotal: 0, reportedAt: at,
+      collectors: cols.map((c) => ({ name: "files", enabled: true, lastRunAt: at, queueDepth: 0, ...c })) as never,
+    });
+    rep(T(11, 50), [{ importTotal: 4000, importDone: 1000, phase: "initial" }, { name: "screenshots", importDone: 12, phase: "rescan" }]);
+    expect(col("files").import).toMatchObject({ source: "device", phase: "initial", total: 4000, done: 1000, percent: 25, state: "in_progress" });
+    expect(col("files").phase).toBe("initial");
+    // a collector the vault does not count still shows what the device reported; no total = no percentage
+    expect(col("screenshots").import).toMatchObject({ source: "device", phase: "rescan", total: null, done: 12, percent: null, state: "counting" });
+    rep(T(11, 55), [{ importTotal: 4000, importDone: 4000, phase: "initial" }]);
+    expect(col("files").import).toMatchObject({ percent: 100, state: "complete" });
+    rep(T(11, 58), [{ importTotal: 4100, importDone: 4100, phase: "incremental" }]);
+    expect(col("files").import).toMatchObject({ phase: "incremental", percent: 100, state: "complete" });
+    // an OLDER report does not roll the progress back
+    rep(T(11, 52), [{ importTotal: 4000, importDone: 10, phase: "initial" }]);
+    expect(col("files").import).toMatchObject({ phase: "incremental", done: 4100 });
+    // a newer report without progress fields falls back to the vault count
+    rep(T(11, 59), [{}]);
+    expect(col("files").import).toMatchObject({ source: "vault", percent: null });
   });
 
   it("is served at /api/coverage", async () => {

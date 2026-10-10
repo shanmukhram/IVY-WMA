@@ -11,7 +11,7 @@ namespace Ivy.Core.Storage;
 public sealed class VaultDb : IDisposable
 {
     public const string FileName = "vault-agent.db";
-    private const int SchemaVersion = 1;
+    private const int SchemaVersion = 2;
     private readonly string _connectionString;
 
     public string Path { get; }
@@ -127,10 +127,27 @@ public sealed class VaultDb : IDisposable
             );
             """;
         cmd.ExecuteNonQuery();
+
+        // v2: import progress for device_report (PROTOCOL.md §6 importTotal/importDone/phase).
+        var have = new HashSet<string>(StringComparer.Ordinal);
+        cmd.CommandText = "PRAGMA table_info(collector_state)";
+        using (var r = cmd.ExecuteReader()) while (r.Read()) have.Add(r.GetString(1));
+        foreach (var (col, type) in new[] { ("import_total", "INTEGER"), ("import_done", "INTEGER"), ("import_phase", "TEXT") })
+        {
+            if (have.Contains(col)) continue;
+            cmd.CommandText = $"ALTER TABLE collector_state ADD COLUMN {col} {type}";
+            cmd.ExecuteNonQuery();
+        }
+
         cmd.CommandText = "SELECT COUNT(*) FROM schema_info";
         if ((long)cmd.ExecuteScalar()! == 0)
         {
             cmd.CommandText = $"INSERT INTO schema_info(version) VALUES ({SchemaVersion})";
+            cmd.ExecuteNonQuery();
+        }
+        else
+        {
+            cmd.CommandText = $"UPDATE schema_info SET version = {SchemaVersion} WHERE version < {SchemaVersion}";
             cmd.ExecuteNonQuery();
         }
         tx.Commit();

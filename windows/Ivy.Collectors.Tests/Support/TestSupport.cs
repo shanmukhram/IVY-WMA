@@ -200,7 +200,7 @@ public sealed class FakeSink : IRecordSink, IDeviceIdProvider
         return Enqueue(record.RecordKind, ObjectKeys.UpPrefix(record.RecordKind), IvyJson.Serialize(record), collector);
     }
 
-    public EnqueuedBlob EnqueueBlob(Stream stream, string payloadKind, string? collector = null, long? length = null)
+    public EnqueuedBlob EnqueueBlob(Stream stream, string payloadKind, string? collector = null, long? length = null, string? commandId = null)
     {
         using var ms = new MemoryStream();
         stream.CopyTo(ms);

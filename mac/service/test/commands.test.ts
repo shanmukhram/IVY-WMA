@@ -63,6 +63,70 @@ describe("commands (F2, F3, PLAN decision 4)", () => {
     expect(content.status).toBe(200);
   });
 
+  it("a manifest carrying the commandId marks the command transferring with part progress before command_status", async () => {
+    await dev.put("file_meta", { path: "C:\\a\\big.bin", name: "big.bin", ext: "bin", size: 1000, mtime: iso(), quickHash: "b" });
+    await st.svc.ingester.poll();
+    const id = (db().prepare("SELECT id FROM files WHERE name = 'big.bin'").get() as { id: string }).id;
+    const cmdId = (await requestFile(st.svc.ctx, id)).command!.id;
+    const original = new Uint8Array(randomBytes(1000));
+    const b = dev.blob(original, "file_original", 256, { commandId: cmdId });
+    expect(b.parts).toHaveLength(4);
+    const seen: Array<{ type: string; data: Record<string, unknown> }> = [];
+    const off = st.svc.ctx.events.on((e) => { if (e.type.startsWith("command.")) seen.push(e); });
+    await dev.up.put(b.manifest.key, b.manifest.bytes);
+    await dev.up.put(b.parts[0]!.key, b.parts[0]!.bytes);
+    await dev.up.put(b.parts[1]!.key, b.parts[1]!.bytes);
+    await st.svc.ingester.poll();
+    let view = (await api(st.svc, "GET", `/api/commands/${cmdId}`)).json;
+    expect(view).toMatchObject({ status: "transferring", display: "transferring", waitingOn: "transfer", resultOid: b.oid,
+      progress: { committedParts: 2, totalChunks: 4, committedBytes: 512, totalSize: 1000 } });
+    expect((await api(st.svc, "GET", `/api/commands?status=transferring`)).json.commands.map((c: { id: string }) => c.id)).toContain(cmdId);
+    expect(seen.find((e) => e.type === "command.transferring")!.data).toMatchObject({ commandId: cmdId, resultOid: b.oid, committedParts: 0, totalChunks: 4 });
+    expect(seen.filter((e) => e.type === "command.progress").map((e) => e.data.committedParts)).toEqual([1, 2]);
+    // a repeat request for the same file reuses the transferring command
+    expect((await requestFile(st.svc.ctx, id)).reused).toBe(true);
+    // the rest of the parts: the original is placed and the command completes even before its status
+    await dev.up.put(b.parts[2]!.key, b.parts[2]!.bytes);
+    await dev.up.put(b.parts[3]!.key, b.parts[3]!.bytes);
+    await st.svc.ingester.poll();
+    view = (await api(st.svc, "GET", `/api/commands/${cmdId}`)).json;
+    expect(view).toMatchObject({ status: "done", progress: { committedParts: 4, totalChunks: 4 } });
+    const f = db().prepare("SELECT status, local_path FROM files WHERE id = ?").get(id) as { status: string; local_path: string };
+    expect(f.status).toBe("cached");
+    expect(sha(readFileSync(f.local_path))).toBe(sha(original));
+    // the late "uploaded" never downgrades it, and the cmd object is cleaned up
+    await dev.put("command_status", { commandId: cmdId, status: "uploaded", resultOid: b.oid, reportedAt: iso() });
+    await st.svc.ingester.poll();
+    expect(db().prepare("SELECT status, cmd_deleted FROM commands WHERE id = ?").get(cmdId)).toEqual({ status: "done", cmd_deleted: 1 });
+    off();
+  });
+
+  it("a transfer whose part fails verification turns its command into an honest error", async () => {
+    await dev.put("file_meta", { path: "C:\\a\\bad.bin", name: "bad.bin", ext: "bin", size: 300, mtime: iso(), quickHash: "x" });
+    await st.svc.ingester.poll();
+    const id = (db().prepare("SELECT id FROM files WHERE name = 'bad.bin'").get() as { id: string }).id;
+    const cmdId = (await requestFile(st.svc.ctx, id)).command!.id;
+    const b = dev.blob(new Uint8Array(randomBytes(300)), "file_original", 128, { commandId: cmdId });
+    const tampered = new Uint8Array(b.parts[1]!.bytes);
+    tampered[tampered.length - 1]! ^= 1;
+    await dev.up.put(b.manifest.key, b.manifest.bytes);
+    await dev.up.put(b.parts[0]!.key, b.parts[0]!.bytes);
+    await dev.up.put(b.parts[1]!.key, tampered);
+    await st.svc.ingester.poll();
+    expect((await api(st.svc, "GET", `/api/commands/${cmdId}`)).json).toMatchObject({ status: "error", detail: expect.stringMatching(/^transfer failed: part 1/) });
+  });
+
+  it("a manifest naming an unknown, finished or other-role command is not linked", async () => {
+    const c = await issueCommand(st.svc.ctx, dev.deviceId, { type: "rescan", collector: "files" });
+    for (const commandId of ["no-such-command", c.id]) {
+      const b = dev.blob(new TextEncoder().encode("x".repeat(10)), "file_original", 64, { commandId });
+      await dev.up.put(b.manifest.key, b.manifest.bytes);
+      await st.svc.ingester.poll();
+      expect(db().prepare("SELECT command_id FROM blobs WHERE oid = ?").get(b.oid)).toEqual({ command_id: null });
+    }
+    expect(db().prepare("SELECT status FROM commands WHERE id = ?").get(c.id)).toEqual({ status: "sent" });
+  });
+
   it("the original can arrive before its command_status and is placed when the status names it", async () => {
     await dev.put("file_meta", { path: "C:\\a\\notes.txt", name: "notes.txt", ext: "txt", size: 5, mtime: iso(), quickHash: "n" });
     await st.svc.ingester.poll();

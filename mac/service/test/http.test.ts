@@ -52,7 +52,7 @@ describe("HTTP API guards", () => {
     expect(init.json).toMatchObject({ state: "unlocked", fingerprint: expect.stringMatching(/^[0-9A-F]{4}(-[0-9A-F]{4}){3}$/) });
     expect(init.json.saltBackup).toMatch(/identity\.json/);
     expect((await api(svc, "GET", "/api/coverage")).status).toBe(200);
-    expect((await api(svc, "POST", "/api/keystore/lock")).json).toEqual({ state: "locked" });
+    expect((await api(svc, "POST", "/api/keystore/lock")).json).toMatchObject({ state: "locked", locked: true, uiLocked: true, ingestRunning: true });
     expect((await api(svc, "GET", "/api/coverage")).status).toBe(423);
     expect((await api(svc, "POST", "/api/keystore/unlock", { passphrase: "wrong passphrase" })).status).toBe(401);
     expect((await api(svc, "POST", "/api/keystore/unlock", { passphrase: PASS })).json).toMatchObject({ state: "unlocked" });
@@ -91,6 +91,58 @@ describe("HTTP API guards", () => {
     expect((await svc.app.inject({ method: "GET", url: "/app.js", headers: { host: "127.0.0.1" } })).body).toContain("console.log");
     expect((await svc.app.inject({ method: "GET", url: "/timeline/2026-09-24", headers: { host: "127.0.0.1" } })).body).toContain("IVY UI");
     expect((await api(svc, "GET", "/api/nope")).status).toBe(404);
+  });
+});
+
+describe("lock semantics (S8 vs freshness)", () => {
+  const PASS2 = "another long passphrase";
+
+  it("a UI lock (default) answers 423 for content but keeps the key and ingest", async () => {
+    expect((await api(svc, "GET", "/api/coverage")).status).toBe(200);
+    const lock = await api(svc, "POST", "/api/keystore/lock", {});
+    expect(lock.json).toMatchObject({ state: "locked", locked: true, uiLocked: true, keyInMemory: true, ingestRunning: true });
+    expect((await api(svc, "GET", "/api/search?q=abc")).status).toBe(423);
+    expect((await api(svc, "PUT", "/api/keystore/settings", { autoLockMode: "full" })).status).toBe(423);
+    expect(svc.ctx.keystore.isUnlocked()).toBe(true); // ingest still decrypts
+    expect((await api(svc, "GET", "/api/keystore")).json).toMatchObject({ locked: true, uiLocked: true, ingestRunning: true });
+    expect((await api(svc, "POST", "/api/keystore/unlock", { passphrase: "wrong passphrase" })).status).toBe(401);
+    expect((await api(svc, "POST", "/api/keystore/unlock", { passphrase: PASS2 })).json).toMatchObject({ state: "unlocked" });
+    expect((await api(svc, "GET", "/api/coverage")).status).toBe(200);
+  });
+
+  it("full: true drops the key and stops ingest", async () => {
+    const lock = await api(svc, "POST", "/api/keystore/lock", { full: true });
+    expect(lock.json).toMatchObject({ state: "locked", locked: true, uiLocked: false, keyInMemory: false, ingestRunning: false });
+    expect(svc.ctx.keystore.isUnlocked()).toBe(false);
+    expect((await svc.ingester.poll()).skipped).toBe("locked");
+    expect((await api(svc, "GET", "/api/coverage")).status).toBe(423);
+    expect((await api(svc, "POST", "/api/keystore/lock", { full: "yes" })).status).toBe(400);
+    expect((await api(svc, "POST", "/api/keystore/unlock", { passphrase: PASS2 })).json).toMatchObject({ state: "unlocked" });
+    expect((await api(svc, "GET", "/api/keystore")).json).toMatchObject({ locked: false, uiLocked: false, ingestRunning: true });
+  });
+
+  it("autoLockMode is a persisted setting; auto-lock is a UI lock by default", async () => {
+    expect((await api(svc, "GET", "/api/keystore")).json.autoLockMode).toBe("ui");
+    expect((await api(svc, "PUT", "/api/keystore/settings", { autoLockMode: "sometimes" })).status).toBe(400);
+    expect((await api(svc, "PUT", "/api/keystore/settings", {})).status).toBe(400);
+    const put = await api(svc, "PUT", "/api/keystore/settings", { autoLockMode: "full" });
+    expect(put.json).toMatchObject({ autoLockMode: "full", autoLockMinutes: 5 });
+    const row = svc.ctx.db.prepare("SELECT value FROM settings WHERE key = 'keystore.autoLockMode'").get() as { value: string };
+    expect(row.value).toBe("full");
+    expect((await api(svc, "PUT", "/api/keystore/settings", { autoLockMode: "ui" })).json.autoLockMode).toBe("ui");
+  });
+
+  it("serves requests while an unlock derives the key (Argon2id on a worker thread)", async () => {
+    await api(svc, "POST", "/api/keystore/lock", { full: true });
+    const order: string[] = [];
+    const unlock = api(svc, "POST", "/api/keystore/unlock", { passphrase: PASS2 }).then((r) => { order.push("unlock"); return r; });
+    await new Promise((r) => setTimeout(r, 20)); // the derivation is now under way
+    const health = await api(svc, "GET", "/api/health").then((r) => { order.push("health"); return r; });
+    const ks = await api(svc, "GET", "/api/keystore").then((r) => { order.push("keystore"); return r; });
+    expect(health.status).toBe(200);
+    expect(ks.json.state).toBe("locked"); // answered before the unlock finished
+    expect((await unlock).json.state).toBe("unlocked");
+    expect(order).toEqual(["health", "keystore", "unlock"]);
   });
 });
 

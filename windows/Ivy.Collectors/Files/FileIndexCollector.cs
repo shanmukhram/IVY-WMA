@@ -22,6 +22,10 @@ public sealed class FileScanState
     public string? Checkpoint { get; set; }
     public long FilesSeen { get; set; }
     public long FilesEmitted { get; set; }
+    /// <summary>Admitted files under the scan's roots, from a metadata-only counting walk; null until counted.</summary>
+    public long? FilesTotal { get; set; }
+    /// <summary>True when no full scan had completed before this one (the initial index), false for a rescan.</summary>
+    public bool Initial { get; init; }
     /// <summary>Fingerprint of roots + exclusion rules the scan was started with.</summary>
     public string? Config { get; init; }
 }
@@ -78,6 +82,10 @@ public sealed class FileIndexCollector : Collector<FileIndexSettings>
     private string? _usnNote;
     private FileScanSummary? _lastFullScan;
     private DateTimeOffset _lastProgressLog = DateTimeOffset.MinValue;
+    // counting walk for the import total (enumeration only: no hashing, no records)
+    private IEnumerator<DirectoryBatch>? _count;
+    private int _countRoot;
+    private long _counted;
 
     public FileIndexCollector(CollectorContext context, IFileSystemSource? fs = null, IFileChangeSourceFactory? changes = null,
         IUsnJournal? usn = null, IThumbnailGenerator? thumbnails = null, FileIndexSettings? settings = null)
@@ -200,17 +208,48 @@ public sealed class FileIndexCollector : Collector<FileIndexSettings>
         PollUsn();
         StartScanIfDue();
         ProcessChanges(sink, flushAll: false);
-        if (_scan is not null) ScanStep(sink, Settings.ScanBatchSize, ct);
+        if (_scan is not null)
+        {
+            CountStep(Settings.ScanBatchSize * CountBudgetFactor, ct);
+            ScanStep(sink, Settings.ScanBatchSize, ct);
+        }
         UpdateCursorAndDetail();
         return Task.CompletedTask;
     }
+
+    /// <summary>Directory entries counted per tick, as a multiple of the scan batch (counting does not read files).</summary>
+    private const int CountBudgetFactor = 20;
 
     /// <summary>Test/maintenance helper: run the full scan to completion now.</summary>
     public void RunScanToCompletion(CancellationToken ct = default)
     {
         var sink = Sink ?? throw new InvalidOperationException("no sink (not paired)");
         StartScanIfDue();
-        while (_scan is not null && !ct.IsCancellationRequested) ScanStep(sink, Settings.ScanBatchSize, ct);
+        while (_scan is not null && !ct.IsCancellationRequested)
+        {
+            CountStep(Settings.ScanBatchSize * CountBudgetFactor, ct);
+            ScanStep(sink, Settings.ScanBatchSize, ct);
+        }
+        UpdateCursorAndDetail();
+    }
+
+    /// <summary>Test helper: run only the counting walk of the current scan to completion (no files are read).</summary>
+    public void RunCountToCompletion()
+    {
+        while (_scan is { FilesTotal: null }) CountStep(int.MaxValue, default);
+        UpdateCursorAndDetail();
+    }
+
+    /// <summary>Test helper: process one tick's worth of the scan (count + scan batch) without the host.</summary>
+    public void ScanTick()
+    {
+        var sink = Sink ?? throw new InvalidOperationException("no sink (not paired)");
+        StartScanIfDue();
+        if (_scan is not null)
+        {
+            CountStep(Settings.ScanBatchSize * CountBudgetFactor, default);
+            ScanStep(sink, Settings.ScanBatchSize, default);
+        }
         UpdateCursorAndDetail();
     }
 
@@ -245,6 +284,7 @@ public sealed class FileIndexCollector : Collector<FileIndexSettings>
         _pendingScope = null;
         _walk?.Dispose();
         _walk = null;
+        ResetCount();
         var roots = scope is not null ? new[] { PathUtil.Full(scope) } : Settings.Roots.Select(PathUtil.Full).Distinct().ToArray();
         _scan = new FileScanState
         {
@@ -253,6 +293,7 @@ public sealed class FileIndexCollector : Collector<FileIndexSettings>
             Reason = scope is not null ? reason + ":scope" : reason,
             Roots = roots,
             Config = config,
+            Initial = LastFullScan is null,
         };
         SaveScan();
         Activity(CollectorActivity.ScanStarted, $"scan {_scan.ScanId} ({_scan.Reason}) of {roots.Length} root(s)");
@@ -326,11 +367,52 @@ public sealed class FileIndexCollector : Collector<FileIndexSettings>
             _lastFullScan = summary;
         }
         _scan = null;
+        ResetCount();
         Context.Settings.Save<FileScanState>(Name, ScanKey, null);
         Activity(CollectorActivity.ScanCompleted, $"scan {scan.ScanId} ({scan.Reason}): {scan.FilesSeen} files, {scan.FilesEmitted} new/changed");
     }
 
     private void SaveScan() => Context.Settings.Save(Name, ScanKey, _scan);
+
+    private void ResetCount()
+    {
+        _count?.Dispose();
+        _count = null;
+        _countRoot = 0;
+        _counted = 0;
+    }
+
+    /// <summary>
+    /// Advance the counting walk (same walker and rules as the scan, so the total matches what the scan will see)
+    /// by up to <paramref name="budget"/> files. When every root is counted, the total is stored in the scan state.
+    /// After a restart the count starts over (it is cheap); a stored total is kept.
+    /// </summary>
+    private void CountStep(int budget, CancellationToken ct)
+    {
+        var scan = _scan;
+        if (scan is null || scan.FilesTotal is not null) return;
+        var n = 0;
+        while (n < budget && !ct.IsCancellationRequested)
+        {
+            if (_countRoot >= scan.Roots.Count)
+            {
+                scan.FilesTotal = _counted;
+                ResetCount();
+                SaveScan();
+                return;
+            }
+            _count ??= new ScanWalker(_fs, _exclusions, Settings.IncludeHidden, Settings.IncludeSystem).Walk(scan.Roots[_countRoot], null).GetEnumerator();
+            if (!_count.MoveNext())
+            {
+                _count.Dispose();
+                _count = null;
+                _countRoot++;
+                continue;
+            }
+            _counted += _count.Current.Files.Count;
+            n += Math.Max(1, _count.Current.Files.Count);
+        }
+    }
 
     /// <summary>Cached files under a fully walked root that the scan did not see: deleted, or now excluded.</summary>
     private int SweepRoot(IRecordSink sink, string root, string scanStartedAt, IReadOnlyList<string> failedDirs)
@@ -590,13 +672,28 @@ public sealed class FileIndexCollector : Collector<FileIndexSettings>
     {
         if (_usnPositions.Count > 0) Cursor = UsnCursor.Format(_usnPositions);
         else if (LastFullScan is { } l) Cursor = $"scan:{l.CompletedAt}";
+        Import = CurrentImport();
         var parts = new List<string>();
-        if (_scan is { } s) parts.Add($"scanning ({s.Reason}): root {Math.Min(s.RootIndex + 1, s.Roots.Count)}/{s.Roots.Count}, {s.FilesSeen} files seen, {s.FilesEmitted} new/changed");
+        if (_scan is { } s) parts.Add($"scanning ({s.Reason}): root {Math.Min(s.RootIndex + 1, s.Roots.Count)}/{s.Roots.Count}, {s.FilesSeen}{(s.FilesTotal is { } t ? $" of {Math.Max(t, s.FilesSeen)}" : "")} files seen, {s.FilesEmitted} new/changed");
         else if (LastFullScan is { } last) parts.Add($"last full scan {last.CompletedAt}: {last.FilesSeen} files");
         if (_usnNote is not null) parts.Add(_usnNote);
         else if (_usn is null) parts.Add(OperatingSystem.IsWindows() ? "USN journal off; FileSystemWatcher only" : "FileSystemWatcher only (no USN journal on this platform)");
         if (Settings.Roots.Count == 0) parts.Add("no folders selected");
         Detail = string.Join("; ", parts);
+    }
+
+    /// <summary>
+    /// Import progress for the device report (§6): during a scan, files scanned / counted total with phase
+    /// <c>initial</c> (no full scan completed before) or <c>rescan</c>; afterwards <c>incremental</c> with the last
+    /// full scan's file count as both numbers. The total is never below what was already scanned (files appear
+    /// while scanning).
+    /// </summary>
+    private ImportProgress? CurrentImport()
+    {
+        if (_scan is { } s)
+            return new ImportProgress(s.FilesTotal is { } t ? Math.Max(t, s.FilesSeen) : null, s.FilesSeen, s.Initial ? ImportPhases.Initial : ImportPhases.Rescan);
+        if (LastFullScan is { } last) return new ImportProgress(last.FilesSeen, last.FilesSeen, ImportPhases.Incremental);
+        return null;
     }
 
     private List<string> ExistingRoots() =>

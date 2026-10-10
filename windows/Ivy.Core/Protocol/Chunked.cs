@@ -41,6 +41,18 @@ public sealed class ChunkedEncryptor : IDisposable
     public int ChunkSize { get; }
     public int TotalChunks { get; }
 
+    /// <summary>Optional <c>commandId</c> written into the manifest (§2.2): set it for an original uploaded for a command.</summary>
+    public string? CommandId
+    {
+        get => _commandId;
+        init
+        {
+            if (value is not null && value.Length == 0) throw new ArgumentException("commandId must be non-empty when present", nameof(CommandId));
+            _commandId = value;
+        }
+    }
+    private readonly string? _commandId;
+
     public ChunkedEncryptor(byte[] recipientPublicKey, string oid, byte[] objectId, string payloadKind, long totalSize, int chunkSize, IRandomSource? random = null)
         : this(recipientPublicKey, oid, objectId, payloadKind, totalSize, chunkSize, null, random) { }
 
@@ -116,6 +128,7 @@ public sealed class ChunkedEncryptor : IDisposable
             TotalChunks = TotalChunks,
             Cek = Bytes.ToBase64(_cek),
             Chunks = chunks,
+            CommandId = CommandId,
         };
         var key = ObjectKeys.BlobManifest(Oid);
         var json = IvyJson.SerializeToUtf8(manifest);

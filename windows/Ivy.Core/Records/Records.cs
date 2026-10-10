@@ -273,6 +273,22 @@ public sealed record CommandStatusRecord() : IvyRecord(Protocol.Kind.CommandStat
     }
 }
 
+/// <summary>Wire values for <c>device_report.collectors[].phase</c> (§6).</summary>
+public static class ImportPhases
+{
+    /// <summary>The first full index of the collector's sources.</summary>
+    public const string Initial = "initial";
+    /// <summary>Live capture after a completed pass (watcher, journal, polling).</summary>
+    public const string Incremental = "incremental";
+    /// <summary>A later full or scoped pass (periodic, settings change, rescan command, lost events).</summary>
+    public const string Rescan = "rescan";
+
+    public static bool IsValid(string s) => s is Initial or Incremental or Rescan;
+}
+
+/// <summary>Import progress of a collector's current (or last) bulk pass. <see cref="Total"/> is null until counted.</summary>
+public sealed record ImportProgress(long? Total, long Done, string Phase);
+
 /// <summary>One collector row in a device report.</summary>
 public sealed record CollectorStateRecord
 {
@@ -281,6 +297,12 @@ public sealed record CollectorStateRecord
     [JsonPropertyName("lastRunAt")] public string? LastRunAt { get; init; }
     [JsonPropertyName("cursor")] public string? Cursor { get; init; }
     [JsonPropertyName("queueDepth")] public required int QueueDepth { get; init; }
+    /// <summary>Optional (§6): items the current/last bulk pass expects; omitted while unknown.</summary>
+    [JsonPropertyName("importTotal")] public long? ImportTotal { get; init; }
+    /// <summary>Optional (§6): items that pass has processed so far.</summary>
+    [JsonPropertyName("importDone")] public long? ImportDone { get; init; }
+    /// <summary>Optional (§6): <c>initial</c>, <c>incremental</c> or <c>rescan</c> (<see cref="ImportPhases"/>).</summary>
+    [JsonPropertyName("phase")] public string? Phase { get; init; }
 }
 
 /// <summary><c>device_report</c> (D1–D5): honest per-collector coverage.</summary>
@@ -297,7 +319,13 @@ public sealed record DeviceReportRecord() : IvyRecord(Protocol.Kind.DeviceReport
         base.Validate();
         if (Role is not ("windows" or "android")) throw new RecordValidationException($"invalid role '{Role}'");
         NonNegative(QueueDepthTotal, "queueDepthTotal");
-        foreach (var c in Collectors) NonNegative(c.QueueDepth, "queueDepth");
+        foreach (var c in Collectors)
+        {
+            NonNegative(c.QueueDepth, "queueDepth");
+            if (c.ImportTotal is { } t) NonNegative(t, "importTotal");
+            if (c.ImportDone is { } d) NonNegative(d, "importDone");
+            if (c.Phase is not null && !ImportPhases.IsValid(c.Phase)) throw new RecordValidationException($"invalid phase '{c.Phase}'");
+        }
     }
 }
 
@@ -329,6 +357,12 @@ public sealed record ManifestRecord
     /// <summary>Base64 content key. Only ever exists inside the encrypted manifest envelope.</summary>
     [JsonPropertyName("cek")] public required string Cek { get; init; }
     [JsonPropertyName("chunks")] public required IReadOnlyList<ManifestChunk> Chunks { get; init; }
+    /// <summary>
+    /// Optional (§2.2): the <c>commandId</c> of the <c>file_request</c> this blob answers, so the Mac can show
+    /// the transfer before <c>command_status</c> arrives. Omitted when null (the reference serializes it after
+    /// <c>chunks</c>, and so does this record's property order).
+    /// </summary>
+    [JsonPropertyName("commandId")] public string? CommandId { get; init; }
     /// <summary>Receiver-side resume state; senders omit it.</summary>
     [JsonPropertyName("committedParts")] public IReadOnlyList<int>? CommittedParts { get; init; }
 }

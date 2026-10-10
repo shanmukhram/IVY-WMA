@@ -1,8 +1,9 @@
 using Ivy.Core.Protocol;
+using Ivy.Core.Records;
 
 namespace Ivy.Core.Storage;
 
-public sealed record CollectorStateRow(string Name, bool Enabled, string? LastRunAt, string? Cursor);
+public sealed record CollectorStateRow(string Name, bool Enabled, string? LastRunAt, string? Cursor, ImportProgress? Import = null);
 
 /// <summary><c>collector_state</c>: per-collector enabled flag, last run and cursor (feeds device_report).</summary>
 public sealed class CollectorStateStore
@@ -14,10 +15,15 @@ public sealed class CollectorStateStore
     {
         using var c = _db.Open();
         using var cmd = c.CreateCommand();
-        cmd.CommandText = "SELECT name, enabled, last_run_at, cursor FROM collector_state ORDER BY name";
+        cmd.CommandText = "SELECT name, enabled, last_run_at, cursor, import_total, import_done, import_phase FROM collector_state ORDER BY name";
         using var r = cmd.ExecuteReader();
         var list = new List<CollectorStateRow>();
-        while (r.Read()) list.Add(new CollectorStateRow(r.GetString(0), r.GetInt64(1) != 0, r.IsDBNull(2) ? null : r.GetString(2), r.IsDBNull(3) ? null : r.GetString(3)));
+        while (r.Read())
+        {
+            ImportProgress? import = r.IsDBNull(6) ? null
+                : new ImportProgress(r.IsDBNull(4) ? null : r.GetInt64(4), r.IsDBNull(5) ? 0 : r.GetInt64(5), r.GetString(6));
+            list.Add(new CollectorStateRow(r.GetString(0), r.GetInt64(1) != 0, r.IsDBNull(2) ? null : r.GetString(2), r.IsDBNull(3) ? null : r.GetString(3), import));
+        }
         return list;
     }
 
@@ -56,6 +62,29 @@ public sealed class CollectorStateStore
         cmd.Parameters.AddWithValue("$n", name);
         cmd.Parameters.AddWithValue("$t", IvyTime.Format(at));
         cmd.Parameters.AddWithValue("$c", (object?)cursor ?? DBNull.Value);
+        cmd.ExecuteNonQuery();
+    }
+
+    /// <summary>Record a run together with the collector's import progress (null clears it): what the device report sends (§6).</summary>
+    public void RecordRun(string name, DateTimeOffset at, string? cursor, ImportProgress? import)
+    {
+        RecordRun(name, at, cursor);
+        SetImport(name, import);
+    }
+
+    /// <summary>Set (or clear, with null) the import progress reported for <paramref name="name"/>.</summary>
+    public void SetImport(string name, ImportProgress? import)
+    {
+        using var c = _db.Open();
+        using var cmd = c.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO collector_state(name, enabled, import_total, import_done, import_phase) VALUES ($n, 1, $t, $d, $p)
+            ON CONFLICT(name) DO UPDATE SET import_total = excluded.import_total, import_done = excluded.import_done, import_phase = excluded.import_phase
+            """;
+        cmd.Parameters.AddWithValue("$n", name);
+        cmd.Parameters.AddWithValue("$t", (object?)import?.Total ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("$d", import is null ? DBNull.Value : import.Done);
+        cmd.Parameters.AddWithValue("$p", (object?)import?.Phase ?? DBNull.Value);
         cmd.ExecuteNonQuery();
     }
 }

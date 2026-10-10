@@ -52,6 +52,7 @@ public sealed class CollectorHost : IRescanHandler, ICollectorConfigHandler, IAs
         public bool Paused { get; set; }
         public DateTimeOffset LastRecorded { get; set; } = DateTimeOffset.MinValue;
         public string? LastRecordedCursor { get; set; }
+        public ImportProgress? LastRecordedImport { get; set; }
     }
 
     private readonly CollectorContext _ctx;
@@ -280,17 +281,19 @@ public sealed class CollectorHost : IRescanHandler, ICollectorConfigHandler, IAs
         Raise(slot);
     }
 
-    /// <summary>collector_state.last_run_at/cursor (device report): when the cursor moves, or once a minute.</summary>
+    /// <summary>collector_state.last_run_at/cursor/import progress (device report): when the cursor or progress moves, or once a minute.</summary>
     private void RecordRun(Slot slot, bool force)
     {
         var c = slot.Collector;
         if (c.LastRunAt is not { } at) return;
-        if (!force && c.Cursor == slot.LastRecordedCursor && at - slot.LastRecorded < TimeSpan.FromMinutes(1)) return;
+        var import = c.Import;
+        if (!force && c.Cursor == slot.LastRecordedCursor && import == slot.LastRecordedImport && at - slot.LastRecorded < TimeSpan.FromMinutes(1)) return;
         try
         {
-            _ctx.States.RecordRun(c.Name, at, c.Cursor);
+            _ctx.States.RecordRun(c.Name, at, c.Cursor, import);
             slot.LastRecorded = at;
             slot.LastRecordedCursor = c.Cursor;
+            slot.LastRecordedImport = import;
         }
         catch (Exception e) { _logger.LogWarning(e, "recording run for {Collector} failed", c.Name); }
     }

@@ -248,6 +248,11 @@ public class HostTests : IDisposable
         Assert.True(filesRow.Enabled);
         Assert.Equal(2, filesRow.QueueDepth);
         Assert.NotNull(filesRow.LastRunAt);
+        // import progress (PROTOCOL.md §6) travels with the row the host records
+        Assert.NotNull(filesRow.Phase);
+        Assert.True(Ivy.Core.Records.ImportPhases.IsValid(filesRow.Phase!));
+        Assert.NotNull(filesRow.ImportDone);
+        Assert.Contains("\"phase\":", IvyJson.Serialize(report));
     }
 
     [Fact]

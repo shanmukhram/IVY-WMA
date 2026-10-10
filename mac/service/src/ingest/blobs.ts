@@ -39,7 +39,7 @@ export interface BlobRow {
   payload_kind: string | null; total_size: number | null; chunk_size: number | null; total_chunks: number | null;
   manifest_env: Buffer | null; committed_parts: string; committed_bytes: number; tmp_path: string | null;
   local_path: string | null; ext: string | null; sha256: string | null; first_seen_at: string; updated_at: string;
-  completed_at: string | null; detail: string | null;
+  completed_at: string | null; detail: string | null; command_id: string | null;
 }
 
 /** PROTOCOL §2.2 AAD_chunk(i) = "ivy/v1/chunk" || 0x00 || object_id || u32be(i) || u32be(total) || kind_id(blob_chunk) */
@@ -153,6 +153,31 @@ export function markPartCommitted(ctx: Ctx, row: BlobRow, index: number, bytes: 
 export function quarantineBlob(ctx: Ctx, row: BlobRow, reason: string): void {
   ctx.db.prepare("UPDATE blobs SET status = 'quarantined', detail = ?, updated_at = ? WHERE rid = ?").run(reason, nowIso(), row.rid);
   removeQuietly(row.tmp_path);
+  // a command whose transfer this was is not waiting any more: say so (principle 4)
+  const cmdId = row.command_id ?? (ctx.db.prepare("SELECT command_id FROM blobs WHERE rid = ?").get(row.rid) as { command_id: string | null } | undefined)?.command_id;
+  if (cmdId) {
+    const r = ctx.db.prepare(`UPDATE commands SET status = 'error', detail = ?, status_at = ?, completed_at = ? WHERE id = ? AND status IN ('sent','transferring','uploaded')`)
+      .run(`transfer failed: ${reason}`, nowIso(), nowIso(), cmdId);
+    if (r.changes) ctx.events.emit("command.status", { commandId: cmdId, status: "error", detail: "transfer failed" });
+  }
+}
+
+/**
+ * PROTOCOL §2.2 manifest `commandId`: link a file_original blob to the command it
+ * answers as soon as its manifest is in, so the command shows "transferring" with
+ * part progress before the device's command_status arrives. Only a file_request
+ * sent to a device of the bucket's role, still waiting, can be claimed.
+ * Inside the manifest's transaction. Returns the command id when linked.
+ */
+export function linkManifestCommand(ctx: Ctx, bucket: string, role: string, oid: string, m: ManifestRecordT): string | null {
+  if (!m.commandId || m.payloadKind !== "file_original") return null;
+  const c = ctx.db.prepare(`SELECT c.id, c.status, c.result_oid, d.role FROM commands c JOIN devices d ON d.id = c.device_id WHERE c.id = ? AND c.type = 'file_request'`)
+    .get(m.commandId) as { id: string; status: string; result_oid: string | null; role: string } | undefined;
+  if (!c || c.role !== role || !["queued", "sent", "transferring"].includes(c.status)) return null;
+  if (c.result_oid && c.result_oid !== oid) return null;
+  ctx.db.prepare("UPDATE blobs SET command_id = ? WHERE bucket = ? AND oid = ?").run(c.id, bucket, oid);
+  ctx.db.prepare("UPDATE commands SET status = 'transferring', result_oid = ?, status_at = ? WHERE id = ?").run(oid, nowIso(), c.id);
+  return c.id;
 }
 
 /** All parts committed: verify the reassembled file and move it home. */

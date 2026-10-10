@@ -63,6 +63,59 @@ public class FileIndexTests : IDisposable
     private IReadOnlyList<string> DeletedNames() => _env.Sink.Of(Kind.FileMeta).Where(IsDeletion).Select(r => r.Str("name")).OrderBy(n => n, StringComparer.Ordinal).ToList();
 
     [Fact]
+    public async Task Import_progress_reports_scanned_of_counted_total_per_phase()
+    {
+        for (var i = 0; i < 12; i++) _dir.Write($"tree/d{i % 3}/f{i:00}.txt", $"file {i}", T0);
+        _dir.Write("tree/node_modules/x.js", "excluded, never counted", T0);
+        var c = NewCollector(batch: 5);
+        await c.StartAsync(default);
+        Assert.Null(c.Import); // nothing scanned yet, no pass started
+
+        // the counting walk runs first in the tick (enumeration only), then one batch of the scan
+        c.ScanTick();
+        var p = Assert.IsType<Ivy.Core.Records.ImportProgress>(c.Import);
+        Assert.Equal(Ivy.Core.Records.ImportPhases.Initial, p.Phase);
+        Assert.Equal(12, p.Total);
+        Assert.InRange(p.Done, 1, 11);
+        Assert.Equal(12, c.CurrentScan!.FilesTotal);
+
+        c.RunScanToCompletion();
+        Assert.Equal(new Ivy.Core.Records.ImportProgress(12, 12, Ivy.Core.Records.ImportPhases.Incremental), c.Import);
+
+        // a rescan command: phase rescan, counted again (a file was added meanwhile)
+        _dir.Write("tree/d0/new.txt", "13th", T0);
+        await c.RescanAsync(null, default);
+        c.ScanTick();
+        p = c.Import!;
+        Assert.Equal(Ivy.Core.Records.ImportPhases.Rescan, p.Phase);
+        Assert.Equal(13, p.Total);
+        Assert.True(p.Done < 13);
+        c.RunScanToCompletion();
+        Assert.Equal(new Ivy.Core.Records.ImportProgress(13, 13, Ivy.Core.Records.ImportPhases.Incremental), c.Import);
+    }
+
+    [Fact]
+    public async Task Import_total_is_counted_again_after_a_restart_mid_scan()
+    {
+        for (var i = 0; i < 9; i++) _dir.Write($"tree/d{i}/f{i}.txt", $"{i}", T0);
+        var c = NewCollector(batch: 4);
+        await c.StartAsync(default);
+        c.ScanTick();
+        Assert.Equal(9, c.Import!.Total);
+        var done = c.Import.Done;
+        await c.StopAsync();
+
+        var again = NewCollector(ctx: _env.Restart(), batch: 4);
+        await again.StartAsync(default);
+        Assert.Equal(9, again.CurrentScan!.FilesTotal); // persisted with the scan state
+        again.ScanTick();
+        Assert.Equal(Ivy.Core.Records.ImportPhases.Initial, again.Import!.Phase);
+        Assert.True(again.Import.Done > done);
+        again.RunScanToCompletion();
+        Assert.Equal(new Ivy.Core.Records.ImportProgress(9, 9, Ivy.Core.Records.ImportPhases.Incremental), again.Import);
+    }
+
+    [Fact]
     public async Task Initial_scan_emits_file_meta_for_admitted_files_only()
     {
         BuildTree();

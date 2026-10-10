@@ -407,6 +407,43 @@ CREATE VIEW items AS
     FROM calls cl;
 `;
 
+// v2: import progress from device_report (PROTOCOL §6 importTotal/importDone/phase);
+// manifest commandId (§2.2): blobs remember the command they answer and commands get
+// a 'transferring' status while its parts arrive (the CHECK needs a table rebuild).
+const v2 = `
+ALTER TABLE collector_state ADD COLUMN import_total INTEGER;
+ALTER TABLE collector_state ADD COLUMN import_done INTEGER;
+ALTER TABLE collector_state ADD COLUMN phase TEXT;
+ALTER TABLE blobs ADD COLUMN command_id TEXT;
+
+CREATE TABLE commands_v2 (
+  rid INTEGER PRIMARY KEY,
+  id TEXT NOT NULL UNIQUE,                 -- commandId
+  device_id TEXT NOT NULL,
+  oid TEXT NOT NULL,
+  object_key TEXT NOT NULL,                -- cmd/<oid> in the device's cmd-bucket
+  type TEXT NOT NULL,
+  params TEXT NOT NULL,                    -- JSON
+  file_id TEXT,                            -- vault files.id for file_request
+  status TEXT NOT NULL CHECK (status IN ('queued','sent','transferring','uploaded','done','not_found','access_denied','too_large','error','expired','cancelled')),
+  detail TEXT,
+  result_oid TEXT,
+  issued_at TEXT NOT NULL,
+  sent_at TEXT,
+  status_at TEXT,
+  completed_at TEXT,
+  cmd_deleted INTEGER NOT NULL DEFAULT 0,
+  send_attempts INTEGER NOT NULL DEFAULT 0,
+  last_error TEXT
+);
+INSERT INTO commands_v2 SELECT * FROM commands;
+DROP TABLE commands;
+ALTER TABLE commands_v2 RENAME TO commands;
+CREATE INDEX commands_status ON commands(status, issued_at);
+CREATE INDEX commands_result ON commands(result_oid);
+`;
+
 export const MIGRATIONS: Migration[] = [
   { version: 1, name: "initial vault schema", sql: v1 },
+  { version: 2, name: "import progress, manifest commandId, transferring commands", sql: v2 },
 ];

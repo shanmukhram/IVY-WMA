@@ -34,9 +34,10 @@ public interface IRecordSink
     /// <summary>
     /// Encrypt a stream as a chunked blob (manifest first, then parts, uploaded in that order).
     /// The stream must be seekable (or <paramref name="length"/> given) because every chunk's AAD binds
-    /// the total chunk count.
+    /// the total chunk count. <paramref name="commandId"/> (an original uploaded for a <c>file_request</c>) is
+    /// written into the manifest so the Mac can track the transfer before the status arrives (§2.2).
     /// </summary>
-    EnqueuedBlob EnqueueBlob(Stream stream, string payloadKind, string? collector = null, long? length = null);
+    EnqueuedBlob EnqueueBlob(Stream stream, string payloadKind, string? collector = null, long? length = null, string? commandId = null);
 }
 
 public sealed class RecordSinkOptions
@@ -141,7 +142,7 @@ public sealed class RecordSink : IRecordSink
         return new EnqueuedRecord(oid, key, envelope.Length);
     }
 
-    public EnqueuedBlob EnqueueBlob(Stream stream, string payloadKind, string? collector = null, long? length = null)
+    public EnqueuedBlob EnqueueBlob(Stream stream, string payloadKind, string? collector = null, long? length = null, string? commandId = null)
     {
         var total = length ?? (stream.CanSeek ? stream.Length - stream.Position : throw new ArgumentException("stream must be seekable or length given", nameof(stream)));
         var oid = Oids.New(_time, _random);
@@ -151,7 +152,7 @@ public sealed class RecordSink : IRecordSink
         try
         {
             using var sha = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
-            using var enc = new ChunkedEncryptor(_macPublicKey, oid, objectId, payloadKind, total, _options.ChunkSize, _random);
+            using var enc = new ChunkedEncryptor(_macPublicKey, oid, objectId, payloadKind, total, _options.ChunkSize, _random) { CommandId = commandId };
             for (var i = 0; i < enc.TotalChunks; i++)
             {
                 var want = enc.ChunkLength(i);

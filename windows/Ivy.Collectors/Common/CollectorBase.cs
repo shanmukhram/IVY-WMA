@@ -36,6 +36,12 @@ public abstract class CollectorBase
     /// <summary>Progress marker persisted to <c>collector_state.cursor</c> (USN, max notification id, ...).</summary>
     public string? Cursor { get; protected set; }
 
+    /// <summary>
+    /// Import progress of the current (or last) bulk pass, reported in <c>device_report</c> as
+    /// <c>importTotal</c>/<c>importDone</c>/<c>phase</c> (PROTOCOL.md §6). Null: the collector has no bulk pass.
+    /// </summary>
+    public ImportProgress? Import { get; protected set; }
+
     /// <summary>One human-readable status line (scan progress, fallback notes).</summary>
     public string? Detail { get; protected set; }
 

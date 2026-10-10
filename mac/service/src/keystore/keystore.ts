@@ -56,7 +56,7 @@ export interface IdentityFile {
 }
 
 export class KeystoreError extends Error {
-  readonly code: "locked" | "uninitialized" | "already_initialized" | "wrong_passphrase" | "weak_passphrase" | "bad_salt" | "cooldown" | "corrupt" | "busy";
+  readonly code: "locked" | "uninitialized" | "already_initialized" | "wrong_passphrase" | "weak_passphrase" | "bad_salt" | "cooldown" | "corrupt";
   constructor(code: KeystoreError["code"], message: string) {
     super(message);
     this.code = code;

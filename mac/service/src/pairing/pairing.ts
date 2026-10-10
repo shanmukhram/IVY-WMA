@@ -180,13 +180,13 @@ export async function revokeDevice(ctx: Ctx, id: string): Promise<{ revoked: boo
   const d = getDevice(ctx, id);
   const tokenWarning = "The device's R2 tokens remain valid until you rotate them in the Cloudflare dashboard.";
   if (!d) return { revoked: false, cancelledCommands: 0, tokenWarning };
-  const open = ctx.db.prepare("SELECT id, object_key, cmd_deleted FROM commands WHERE device_id = ? AND status IN ('queued','sent','uploaded')").all(id) as Array<{ id: string; object_key: string; cmd_deleted: number }>;
+  const open = ctx.db.prepare("SELECT id, object_key, cmd_deleted FROM commands WHERE device_id = ? AND status IN ('queued','sent','transferring','uploaded')").all(id) as Array<{ id: string; object_key: string; cmd_deleted: number }>;
   const cmd = ctx.r2()?.bucket("cmd", d.role);
   for (const c of open) {
     if (cmd && !c.cmd_deleted) { try { await cmd.delete(c.object_key); ctx.db.prepare("UPDATE commands SET cmd_deleted = 1 WHERE id = ?").run(c.id); } catch { /* lifecycle is the backstop */ } }
   }
   ctx.db.transaction(() => {
-    ctx.db.prepare("UPDATE commands SET status = 'cancelled', detail = 'device revoked', status_at = ? WHERE device_id = ? AND status IN ('queued','sent','uploaded')").run(nowIso(), id);
+    ctx.db.prepare("UPDATE commands SET status = 'cancelled', detail = 'device revoked', status_at = ? WHERE device_id = ? AND status IN ('queued','sent','transferring','uploaded')").run(nowIso(), id);
     ctx.db.prepare("DELETE FROM collector_state WHERE device_id = ?").run(id);
     ctx.db.prepare("DELETE FROM devices WHERE id = ?").run(id);
   })();

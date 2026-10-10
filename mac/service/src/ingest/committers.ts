@@ -220,11 +220,14 @@ export function commitDeviceReport(db: DB, r: DeviceReportRecordT): CommitResult
     const lastRun = normTs(c.lastRunAt);
     const prev = getState.get(r.deviceId, c.name) as { reported_at: string } | undefined;
     if (!prev) {
-      db.prepare(`INSERT INTO collector_state(device_id, name, enabled, last_run_at, cursor, queue_depth, reported_at, first_reported_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
-        .run(r.deviceId, c.name, c.enabled ? 1 : 0, lastRun, c.cursor ?? null, c.queueDepth, reported, reported);
+      db.prepare(`INSERT INTO collector_state(device_id, name, enabled, last_run_at, cursor, queue_depth, reported_at, first_reported_at, import_total, import_done, phase)
+                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+        .run(r.deviceId, c.name, c.enabled ? 1 : 0, lastRun, c.cursor ?? null, c.queueDepth, reported, reported, c.importTotal ?? null, c.importDone ?? null, c.phase ?? null);
     } else if (prev.reported_at <= reported) {
-      db.prepare(`UPDATE collector_state SET enabled = ?, last_run_at = COALESCE(?, last_run_at), cursor = COALESCE(?, cursor), queue_depth = ?, reported_at = ? WHERE device_id = ? AND name = ?`)
-        .run(c.enabled ? 1 : 0, lastRun, c.cursor ?? null, c.queueDepth, reported, r.deviceId, c.name);
+      // import progress is a snapshot: what the newest report says (absent = not reported)
+      db.prepare(`UPDATE collector_state SET enabled = ?, last_run_at = COALESCE(?, last_run_at), cursor = COALESCE(?, cursor), queue_depth = ?, reported_at = ?,
+                    import_total = ?, import_done = ?, phase = ? WHERE device_id = ? AND name = ?`)
+        .run(c.enabled ? 1 : 0, lastRun, c.cursor ?? null, c.queueDepth, reported, c.importTotal ?? null, c.importDone ?? null, c.phase ?? null, r.deviceId, c.name);
     }
     // history only when something that matters for gaps changed
     const h = lastHist.get(r.deviceId, c.name) as { last_run_at: string | null; enabled: number } | undefined;

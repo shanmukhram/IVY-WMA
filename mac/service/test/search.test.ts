@@ -14,7 +14,7 @@ const b = (deviceId: string, kind: string, t = "2026-09-24T10:00:00.000Z") => ({
 beforeAll(async () => {
   dir = tempDir();
   svc = await makeService(dir);
-  svc.ctx.keystore.initialize(PASS);
+  await svc.ctx.keystore.initialize(PASS);
   const db = svc.ctx.db;
   db.prepare("INSERT INTO devices(id, role, public_key, fingerprint, paired_at) VALUES (?, 'windows', 'k', 'f', 't'), (?, 'android', 'k', 'f', 't')").run(WIN, AND);
   commitFileMeta(db, { ...b(WIN, "file_meta"), kind: "file_meta", path: "C:\\Docs\\Robotics Collaboration Offer.pdf", name: "Robotics Collaboration Offer.pdf", ext: "pdf", size: 10, mtime: "2026-09-23T09:00:00.000Z", quickHash: "a" });

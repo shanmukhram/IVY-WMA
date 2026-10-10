@@ -64,10 +64,10 @@ export class SimDevice {
     return s.key;
   }
 
-  blob(plaintext: Uint8Array, payloadKind: PayloadKind, chunkSize = 256) {
-    const objectId = concatBytes(u48be(Date.now()), new Uint8Array(randomBytes(10)));
+  blob(plaintext: Uint8Array, payloadKind: PayloadKind, chunkSize = 256, opts: { commandId?: string; ms?: number } = {}) {
+    const objectId = concatBytes(u48be(opts.ms ?? Date.now()), new Uint8Array(randomBytes(10)));
     const oid = toCrockford(objectId);
-    const r = encryptChunkedObject({ recipientPublicKey: this.macPub, oid, objectId, payloadKind, plaintext, chunkSize });
+    const r = encryptChunkedObject({ recipientPublicKey: this.macPub, oid, objectId, payloadKind, plaintext, chunkSize, commandId: opts.commandId });
     return {
       oid,
       manifest: { key: blobManifestKey(oid), bytes: r.manifestEnvelope },

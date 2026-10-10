@@ -15,9 +15,9 @@
     "ivy-mac-service": "./src/main.ts"
   },
   "scripts": {
-    "prestart": "pnpm --filter @ivy/protocol build",
+    "prestart": "pnpm --filter @ivy/protocol --filter @ivy/mac-ocr build",
     "start": "node src/main.ts",
-    "pretest": "pnpm --filter @ivy/protocol build",
+    "pretest": "pnpm --filter @ivy/protocol --filter @ivy/mac-ocr build",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit"
@@ -26,6 +26,7 @@
     "@aws-sdk/client-s3": "3.1149.0",
     "@fastify/static": "10.1.6",
     "@fastify/websocket": "11.3.4",
+    "@ivy/mac-ocr": "workspace:*",
     "@ivy/protocol": "workspace:*",
     "better-sqlite3": "13.0.3",
     "fastify": "5.12.5",

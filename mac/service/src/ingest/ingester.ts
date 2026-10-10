@@ -36,7 +36,7 @@ import {
 } from "./committers.ts";
 import {
   committedSet, finalizeBlob, getBlob, markPartCommitted, noteAwaitingManifest, openManifest, placeAndLink,
-  quarantineBlob, recordManifest, writePart, blobProgress,
+  quarantineBlob, recordManifest, writePart, blobProgress, linkManifestCommand,
 } from "./blobs.ts";
 import { acceptDeviceRecord, expireStalePairings, finishPairing } from "../pairing/pairing.ts";
 import { deleteCommandObject, maintainCommands, sendQueued } from "../commands/commands.ts";
@@ -455,12 +455,16 @@ export class Ingester {
     if (existing && existing.status !== "awaiting_manifest") {
       return this.quarantine(src, key, "manifest", `a manifest for this blob was already recorded (${existing.status})`, bytes);
     }
+    let commandId: string | null = null;
     this.ctx.db.transaction(() => {
       recordManifest(this.ctx, src.bucketName, src.role, oid, bytes, m);
-      this.insertLedger(src.bucketName, key, "manifest", "committed", bytes, null, `payloadKind=${m.payloadKind} parts=${m.totalChunks} size=${m.totalSize}`);
+      commandId = linkManifestCommand(this.ctx, src.bucketName, src.role, oid, m);
+      this.insertLedger(src.bucketName, key, "manifest", "committed", bytes, null, `payloadKind=${m.payloadKind} parts=${m.totalChunks} size=${m.totalSize}${commandId ? ` command=${commandId}` : ""}`);
     })();
     await this.remove(src, key);
-    this.ctx.events.emit("blob.progress", { ...blobProgress(getBlob(this.ctx, src.bucketName, oid)!) });
+    const prog = blobProgress(getBlob(this.ctx, src.bucketName, oid)!);
+    this.ctx.events.emit("blob.progress", { ...prog });
+    if (commandId) this.ctx.events.emit("command.transferring", { commandId, ...transferOf(prog) });
     return "committed";
   }
 
@@ -506,7 +510,9 @@ export class Ingester {
     })();
     await this.remove(src, key);
     const fresh = getBlob(this.ctx, src.bucketName, oid)!;
-    this.ctx.events.emit("blob.progress", { ...blobProgress(fresh) });
+    const prog = blobProgress(fresh);
+    this.ctx.events.emit("blob.progress", { ...prog });
+    if (fresh.command_id) this.ctx.events.emit("command.progress", { commandId: fresh.command_id, ...transferOf(prog) });
     if (count === fresh.total_chunks) await this.finalize(src, oid);
     return "committed";
   }
@@ -545,6 +551,10 @@ export class Ingester {
     this.ctx.db.prepare("UPDATE quarantine SET resolved_at = ?, resolution = ? WHERE id = ?").run(nowIso(), `retried: ${outcome}`, id);
     return { outcome };
   }
+}
+
+function transferOf(p: ReturnType<typeof blobProgress>) {
+  return { resultOid: p.oid, committedParts: p.committedParts, totalChunks: p.totalChunks, committedBytes: p.committedBytes, totalSize: p.totalSize };
 }
 
 function validOid(oid: string): boolean {

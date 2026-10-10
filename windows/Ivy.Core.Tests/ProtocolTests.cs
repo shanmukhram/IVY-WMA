@@ -235,3 +235,52 @@ public class RecordTests
         Assert.Throws<RecordValidationException>(() => new DeviceReportRecord { DeviceId = "d", EventTime = t, CaptureTime = t, Role = "mac", QueueDepthTotal = 0, ReportedAt = t, Collectors = Array.Empty<CollectorStateRecord>() }.Validate());
     }
 }
+
+public class ProtocolAdditionsTests
+{
+    // packages/protocol encryptChunkedObject({ objectId: 0x00*16, payloadKind: "file_original", plaintext: 0x00*10,
+    // chunkSize: 8, commandId: "cmd-1", options: { contentKey: 0x00*32 } }).manifest, JSON.stringify'd.
+    private const string TsManifestWithCommandId =
+        """{"v":1,"objectId":"00000000000000000000000000000000","payloadKind":"file_original","totalSize":10,"chunkSize":8,"totalChunks":2,"cek":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=","chunks":[{"index":0,"ctLen":56,"sha256":"14fbf7e709fa08a849f6f3a92feff3ed078d8336f1835c053500dba638ac7566"},{"index":1,"ctLen":50,"sha256":"156c28c54b0b3a4c6091ac3646f22388692c64b969678f480e87bc7a0c0d0feb"}],"commandId":"cmd-1"}""";
+
+    [Fact]
+    public void Manifest_commandId_serializes_like_the_reference_and_is_omitted_when_null()
+    {
+        var (_, pub) = X25519.GenerateKeyPair();
+        ManifestRecord Build(string? commandId)
+        {
+            using var enc = new ChunkedEncryptor(pub, "01HZZZCHUNKED000000000000B", new byte[16], PayloadKinds.FileOriginal, 10, 8,
+                new ChunkedTestInputs(ContentKey: new byte[32])) { CommandId = commandId };
+            enc.EncryptChunk(0, new byte[8]);
+            enc.EncryptChunk(1, new byte[2]);
+            return enc.Finish().Manifest;
+        }
+        Assert.Equal(TsManifestWithCommandId, IvyJson.Serialize(Build("cmd-1")));
+        var without = IvyJson.Serialize(Build(null));
+        Assert.DoesNotContain("commandId", without);
+        Assert.Equal(TsManifestWithCommandId.Replace(",\"commandId\":\"cmd-1\"", ""), without);
+        Assert.Equal("cmd-1", IvyJson.Deserialize<ManifestRecord>(TsManifestWithCommandId).CommandId);
+        Assert.Throws<ArgumentException>(() => new ChunkedEncryptor(pub, "01HZZZCHUNKED000000000000B", new byte[16], PayloadKinds.FileOriginal, 10, 8) { CommandId = "" });
+    }
+
+    [Fact]
+    public void Device_report_import_progress_fields_and_validation()
+    {
+        const string t = "2026-10-10T08:00:00.000Z";
+        DeviceReportRecord Report(params CollectorStateRecord[] c) => new() { DeviceId = "d", EventTime = t, CaptureTime = t, Role = "windows", QueueDepthTotal = 0, ReportedAt = t, Collectors = c };
+        var r = Report(
+            new CollectorStateRecord { Name = "files", Enabled = true, QueueDepth = 0, ImportTotal = 1200, ImportDone = 300, Phase = ImportPhases.Initial },
+            new CollectorStateRecord { Name = "usage", Enabled = true, QueueDepth = 0 });
+        r.Validate();
+        var json = IvyJson.Serialize(r);
+        Assert.Contains("""{"name":"files","enabled":true,"queueDepth":0,"importTotal":1200,"importDone":300,"phase":"initial"}""", json);
+        Assert.Contains("""{"name":"usage","enabled":true,"queueDepth":0}""", json); // absent when unknown
+        var back = RecordJson.Parse<DeviceReportRecord>(Bytes.Utf8.GetBytes(json));
+        Assert.Equal(300, back.Collectors[0].ImportDone);
+        Assert.Equal("initial", back.Collectors[0].Phase);
+        Assert.Throws<RecordValidationException>(() => Report(new CollectorStateRecord { Name = "files", Enabled = true, QueueDepth = 0, Phase = "bulk" }).Validate());
+        Assert.Throws<RecordValidationException>(() => Report(new CollectorStateRecord { Name = "files", Enabled = true, QueueDepth = 0, ImportTotal = -1 }).Validate());
+        Assert.Throws<RecordValidationException>(() => Report(new CollectorStateRecord { Name = "files", Enabled = true, QueueDepth = 0, ImportDone = -1 }).Validate());
+        Assert.All(new[] { "initial", "incremental", "rescan" }, p => Assert.True(ImportPhases.IsValid(p)));
+    }
+}

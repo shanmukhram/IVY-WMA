@@ -40,6 +40,7 @@ export function ageDot(ctx: Ctx, iso: string | null, now: number): Dot {
 export interface CollectorRow {
   device_id: string; name: string; enabled: number; last_run_at: string | null; cursor: string | null;
   queue_depth: number; reported_at: string; first_reported_at: string;
+  import_total: number | null; import_done: number | null; phase: string | null;
 }
 
 export function collectorStatus(ctx: Ctx, c: CollectorRow, deviceLastReport: string | null, now: number): { dot: Dot; reason: string } {
@@ -61,24 +62,47 @@ export function fmtAge(ms: number): string {
   return `${Math.round(h / 24)} days`;
 }
 
-/** Import progress from what the device reported, if it reported a total (cursor JSON with total/expected). */
+/**
+ * Import progress. Preferred source: the device's own `importTotal` / `importDone`
+ * / `phase` (PROTOCOL §6 device_report.collectors[]), which gives a real
+ * percentage of the device's pass. Older devices: a total in a JSON cursor, else
+ * only what the vault holds (and no percentage).
+ */
 function importProgress(ctx: Ctx, deviceId: string, c: CollectorRow) {
-  if (c.name !== "files" && c.name !== "messages" && c.name !== "photos") return null;
-  let indexed = 0;
+  const reported = c.import_total !== null || c.import_done !== null || c.phase !== null;
+  const vaultKind = c.name === "files" || c.name === "messages" || c.name === "photos";
+  if (!reported && !vaultKind) return null;
+  let indexed: number | null = null;
   if (c.name === "files") indexed = (ctx.db.prepare("SELECT COUNT(*) AS n FROM files WHERE device_id = ? AND source_status = 'live' AND deleted_at IS NULL").get(deviceId) as { n: number }).n;
   if (c.name === "messages") indexed = (ctx.db.prepare("SELECT COUNT(*) AS n FROM messages WHERE device_id = ?").get(deviceId) as { n: number }).n;
   if (c.name === "photos") indexed = (ctx.db.prepare("SELECT COUNT(*) AS n FROM media WHERE device_id = ? AND kind = 'photo'").get(deviceId) as { n: number }).n;
+  const fullScan = c.cursor?.startsWith("scan:") ? c.cursor.slice(5) : null;
+
+  if (reported) {
+    const total = c.import_total;
+    const done = c.import_done;
+    const percent = total !== null && done !== null ? (total === 0 ? 100 : Math.min(100, Math.floor((done / total) * 100))) : null;
+    return {
+      source: "device" as const,
+      phase: c.phase, done, total, indexed, percent,
+      state: total === null || done === null ? (c.phase === "incremental" ? "live" : "counting") : done >= total ? "complete" : "in_progress",
+      lastFullScanAt: fullScan,
+      note: total === null ? "the device has not counted the items of this pass yet" : null,
+    };
+  }
+
   let total: number | null = null;
   try {
     const cur = c.cursor ? (JSON.parse(c.cursor) as Record<string, unknown>) : null;
     const t = cur && (cur.total ?? cur.expected ?? cur.totalFiles);
     if (typeof t === "number" && t >= 0) total = t;
   } catch { /* cursor is not JSON (e.g. "scan:<time>") */ }
-  const fullScan = c.cursor?.startsWith("scan:") ? c.cursor.slice(5) : null;
+  const n = indexed ?? 0;
   return {
-    indexed, total,
-    percent: total ? Math.min(100, Math.round((indexed / total) * 100)) : null,
-    state: total !== null ? (indexed >= total ? "complete" : "in_progress") : fullScan ? "full_scan_reported" : "unknown",
+    source: total !== null ? ("cursor" as const) : ("vault" as const),
+    phase: null, done: null, total, indexed: n,
+    percent: total ? Math.min(100, Math.round((n / total) * 100)) : null,
+    state: total !== null ? (n >= total ? "complete" : "in_progress") : fullScan ? "full_scan_reported" : "unknown",
     lastFullScanAt: fullScan,
     note: total === null ? "the device does not report a total for this collector; the count is what the vault holds" : null,
   };
@@ -120,7 +144,7 @@ export function coverage(ctx: Ctx, now = Date.now()) {
       if (s.dot === "red" || s.dot === "amber") problems.push({ severity: s.dot, source: { deviceId: d.id, role: d.role, collector: c.name }, message: `${d.role} ${c.name}: ${s.reason}` });
       return {
         name: c.name, enabled: !!c.enabled, lastRunAt: c.last_run_at, lastReportAt: c.reported_at, firstReportedAt: c.first_reported_at,
-        queueDepth: c.queue_depth, cursor: c.cursor, status: s.dot, statusReason: s.reason,
+        queueDepth: c.queue_depth, cursor: c.cursor, status: s.dot, statusReason: s.reason, phase: c.phase,
         captures: COLLECTOR_INFO[c.name]?.captures ?? "Reported by the device; no description on the Mac yet.",
         captureKind: COLLECTOR_INFO[c.name]?.kind ?? "unknown",
         import: importProgress(ctx, d.id, c),
@@ -141,7 +165,7 @@ export function coverage(ctx: Ctx, now = Date.now()) {
     const failedCommands = ctx.db.prepare("SELECT id, type, status, detail FROM commands WHERE device_id = ? AND status IN ('error','not_found','access_denied','too_large','expired') AND issued_at > ?")
       .all(d.id, new Date(now - 7 * 86400_000).toISOString()) as Array<{ id: string; type: string; status: string; detail: string | null }>;
     for (const c of failedCommands) problems.push({ severity: "amber", source: { deviceId: d.id, role }, message: `${c.type} command ${c.status}${c.detail ? `: ${c.detail}` : ""}` });
-    const queuedCommands = (ctx.db.prepare("SELECT COUNT(*) AS n FROM commands WHERE device_id = ? AND status IN ('queued','sent','uploaded')").get(d.id) as { n: number }).n;
+    const queuedCommands = (ctx.db.prepare("SELECT COUNT(*) AS n FROM commands WHERE device_id = ? AND status IN ('queued','sent','transferring','uploaded')").get(d.id) as { n: number }).n;
     const counts = {
       files: (ctx.db.prepare("SELECT COUNT(*) AS n FROM files WHERE device_id = ? AND deleted_at IS NULL").get(d.id) as { n: number }).n,
       media: (ctx.db.prepare("SELECT COUNT(*) AS n FROM media WHERE device_id = ? AND deleted_at IS NULL").get(d.id) as { n: number }).n,

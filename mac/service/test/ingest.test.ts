@@ -226,14 +226,14 @@ describe("ingest of every Windows kind (S1-S5)", () => {
   it("locking mid-pass leaves objects in the bucket instead of quarantining them", async () => {
     const key = await dev.put("usage_event", { app: "WhileLocked", startedAt: iso(), endedAt: iso() });
     const bucket = st.svc.ctx.r2()!.bucket("up", "windows");
-    st.svc.ctx.keystore.lock("test");
+    st.svc.ctx.keystore.lock("test", { full: true });
     const r = await (st.svc.ingester as unknown as { pollBucket: (s: unknown, f: boolean) => Promise<{ quarantined: number; errors: number }> })
       .pollBucket({ bucket, bucketName: "ivy-up-windows", role: "windows" }, false);
     expect(r.quarantined).toBe(0);
     expect(r.errors).toBe(1);
     expect(upKeys()).toContain(key);
     expect((await st.svc.ingester.poll()).skipped).toBe("locked");
-    st.svc.ctx.keystore.unlock(PASS);
+    await st.svc.ctx.keystore.unlock(PASS);
     await st.svc.ingester.poll();
     expect(ledger(key)).toMatchObject({ status: "committed" });
   });
