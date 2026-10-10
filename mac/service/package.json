@@ -1,0 +1,43 @@
+{
+  "name": "@ivy/mac-service",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "IVY Mac local service: key store, R2 ingest with ledger and quarantine, vault database with FTS5, search, timeline, coverage, commands, recovery bin, HTTP + WebSocket API for the dashboard UI.",
+  "engines": {
+    "node": ">=25"
+  },
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "bin": {
+    "ivy-mac-service": "./src/main.ts"
+  },
+  "scripts": {
+    "prestart": "pnpm --filter @ivy/protocol build",
+    "start": "node src/main.ts",
+    "pretest": "pnpm --filter @ivy/protocol build",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "3.1149.0",
+    "@fastify/static": "10.1.6",
+    "@fastify/websocket": "11.3.4",
+    "@ivy/protocol": "workspace:*",
+    "better-sqlite3": "13.0.3",
+    "fastify": "5.12.5",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@ivy/s3-mock": "workspace:*",
+    "@types/better-sqlite3": "9.6.0",
+    "@types/node": "26.6.5",
+    "@types/ws": "8.18.2",
+    "typescript": "7.0.2",
+    "vitest": "5.0.3",
+    "ws": "8.22.0"
+  }
+}

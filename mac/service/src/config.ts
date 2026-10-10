@@ -1,0 +1,125 @@
+/**
+ * Service configuration. Precedence: defaults < environment (IVY_*) < explicit
+ * overrides (CLI flags or the object passed to createService in tests).
+ *
+ * Settings the user changes at runtime (auto-lock minutes, bin retention, R2)
+ * live in the vault database `settings` table, not here; the values below are
+ * only their first-run defaults.
+ */
+import { resolve, join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+
+export interface ServiceConfig {
+  /** root of everything the service writes */
+  dataDir: string;
+  /** SQLite vault; default <dataDir>/vault.db */
+  dbPath: string;
+  /** Mac identity (salt, public key, sealed private key); default <dataDir>/identity.json */
+  identityPath: string;
+  /** local bearer token for the HTTP API; default <dataDir>/session.token */
+  tokenPath: string;
+  /** directory served at / (the dashboard web app) */
+  staticDir: string;
+  host: string;
+  port: number;
+  /** S1: poll both up-buckets this often (ms); 0 disables the timer */
+  pollIntervalMs: number;
+  /** first-run default for auto-lock (S8); 0 = never */
+  autoLockMinutes: number;
+  /** pairing code lifetime (PROTOCOL §7: 10 minutes) */
+  pairingTtlMs: number;
+  /** a device object written up to this long after exp is still accepted (clock skew) */
+  pairingGraceMs: number;
+  /**
+   * Listing starts at (marker - lookback) rather than at the marker itself: devices
+   * upload out of oid order (small records overtake bulk blobs, offline queues
+   * drain late), so a strict "after marker" listing would silently skip objects.
+   * Default 8 days, longer than the 7-day up-bucket lifecycle.
+   */
+  listLookbackMs: number;
+  /** a full listing of the bucket (catches unrecognised keys) at most this often */
+  fullSweepEveryMs: number;
+  /** chunk parts whose manifest never arrives are quarantined after this long (7 days) */
+  orphanPartMs: number;
+  /** refuse to buffer a single part bigger than this (bounded memory) */
+  maxPartBytes: number;
+  /** quarantined ciphertext bigger than this is recorded but not kept on disk */
+  maxQuarantineBytes: number;
+  /** coverage: amber when a collector's last run is older than this */
+  amberAfterMs: number;
+  /** coverage: red when a collector's last run / last report is older than this */
+  redAfterMs: number;
+  /** timeline: consecutive collector runs further apart than this are a gap */
+  gapThresholdMs: number;
+  /** first-run default for the recovery-bin retention (days) */
+  binRetentionDays: number;
+  /** how many activity events to keep in the database */
+  activityKeep: number;
+  /** optional OCR helper: executable called as `<cmd> <imagePath>`, prints text on stdout */
+  ocrCommand?: string;
+  /** generate image thumbnails with macOS `sips` (default true on darwin) */
+  thumbnails: boolean;
+}
+
+const here = dirname(fileURLToPath(import.meta.url));
+const MIN = 60_000;
+const DAY = 24 * 60 * MIN;
+
+function envInt(name: string): number | undefined {
+  const v = process.env[name];
+  if (v === undefined || v === "") return undefined;
+  const n = Number(v);
+  if (!Number.isFinite(n)) throw new Error(`${name} must be a number`);
+  return n;
+}
+
+export function loadConfig(overrides: Partial<ServiceConfig> = {}): ServiceConfig {
+  const dataDir = resolve(overrides.dataDir ?? process.env.IVY_DATA_DIR ?? "./data");
+  const base: ServiceConfig = {
+    dataDir,
+    dbPath: process.env.IVY_DB_PATH ? resolve(process.env.IVY_DB_PATH) : join(dataDir, "vault.db"),
+    identityPath: join(dataDir, "identity.json"),
+    tokenPath: join(dataDir, "session.token"),
+    staticDir: resolve(process.env.IVY_STATIC_DIR ?? join(here, "..", "public")),
+    host: process.env.IVY_HOST ?? "127.0.0.1",
+    port: envInt("IVY_PORT") ?? 4777,
+    pollIntervalMs: envInt("IVY_POLL_INTERVAL_MS") ?? 2 * MIN,
+    autoLockMinutes: envInt("IVY_AUTO_LOCK_MINUTES") ?? 30,
+    pairingTtlMs: 10 * MIN,
+    pairingGraceMs: 5 * MIN,
+    listLookbackMs: envInt("IVY_LIST_LOOKBACK_MS") ?? 8 * DAY,
+    fullSweepEveryMs: 60 * MIN,
+    orphanPartMs: 7 * DAY,
+    maxPartBytes: 64 * 1024 * 1024,
+    maxQuarantineBytes: 64 * 1024 * 1024,
+    amberAfterMs: 15 * MIN,
+    redAfterMs: 60 * MIN,
+    gapThresholdMs: 15 * MIN,
+    binRetentionDays: 30,
+    activityKeep: 5000,
+    ocrCommand: process.env.IVY_OCR_COMMAND || undefined,
+    thumbnails: process.platform === "darwin" && process.env.IVY_THUMBNAILS !== "0",
+  };
+  const merged = { ...base, ...stripUndefined(overrides) };
+  // derived paths follow an overridden dataDir unless set explicitly
+  if (overrides.dataDir && !overrides.dbPath && !process.env.IVY_DB_PATH) merged.dbPath = join(merged.dataDir, "vault.db");
+  if (overrides.dataDir && !overrides.identityPath) merged.identityPath = join(merged.dataDir, "identity.json");
+  if (overrides.dataDir && !overrides.tokenPath) merged.tokenPath = join(merged.dataDir, "session.token");
+  return merged;
+}
+
+function stripUndefined<T extends object>(o: T): Partial<T> {
+  const out: Partial<T> = {};
+  for (const [k, v] of Object.entries(o)) if (v !== undefined) (out as Record<string, unknown>)[k] = v;
+  return out;
+}
+
+/** Local directories under dataDir. */
+export const dirs = (c: ServiceConfig) => ({
+  media: join(c.dataDir, "media"),
+  thumbs: join(c.dataDir, "thumbs"),
+  files: join(c.dataDir, "files"),
+  attachments: join(c.dataDir, "attachments"),
+  blobsTmp: join(c.dataDir, "blobs"),
+  quarantine: join(c.dataDir, "quarantine"),
+});
