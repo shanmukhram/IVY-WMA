@@ -35,6 +35,30 @@ internal static class CollectorDb
                 first_path  TEXT NOT NULL,
                 captured_at TEXT NOT NULL
             );
+            -- Media-policy originals (PLAN decision 8), one row per content (quick hash + size), so a moved or
+            -- copied file is not uploaded again. blob_oid is chosen when the first file_meta naming it is emitted
+            -- (file_meta.originalBlobOid) and the blob is enqueued later in the bulk lane under that oid.
+            CREATE TABLE IF NOT EXISTS file_originals (
+                quick_hash   TEXT NOT NULL,
+                size         INTEGER NOT NULL,
+                payload_kind TEXT NOT NULL,              -- photo | document
+                blob_oid     TEXT NOT NULL,
+                source_path  TEXT NOT NULL,              -- the file read for the upload
+                status       TEXT NOT NULL,              -- pending | enqueuing | failed | uploaded
+                attempts     INTEGER NOT NULL DEFAULT 0,
+                last_error   TEXT,
+                queued_at    TEXT NOT NULL,
+                uploaded_at  TEXT,
+                PRIMARY KEY (quick_hash, size)
+            );
+            CREATE INDEX IF NOT EXISTS ix_file_originals_status ON file_originals(status, queued_at);
+            -- The original the newest file_meta of a path named, so an unchanged file is linked exactly once.
+            CREATE TABLE IF NOT EXISTS file_original_links (
+                path       TEXT PRIMARY KEY,
+                quick_hash TEXT NOT NULL,
+                blob_oid   TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS ix_file_original_links_oid ON file_original_links(blob_oid);
             -- Files already examined (path + size + mtime), so sweeps do not re-hash them.
             CREATE TABLE IF NOT EXISTS screenshot_files (
                 path   TEXT PRIMARY KEY,

@@ -63,7 +63,9 @@ import { parseKey } from "./objectkeys.js";
 /**
  * The logical kind of a reconstructed chunked object, as recorded in a manifest's
  * `payloadKind` (PROTOCOL.md §2.2). `file_original` is an original file uploaded in
- * answer to a `file_request`; the rest describe the media a blob holds.
+ * answer to a `file_request`; `photo` and `document` are originals a device uploads
+ * on its own under its media policy (PLAN decision 8), linked from `file_meta.originalBlobOid`;
+ * the rest describe the media a blob holds.
  */
 export type PayloadKind =
   | "file_original"
@@ -71,7 +73,13 @@ export type PayloadKind =
   | "thumbnail"
   | "photo"
   | "attachment"
-  | "media";
+  | "media"
+  | "document";
+
+/** Every `payloadKind` a receiver accepts (PROTOCOL.md §2.2). */
+export const PAYLOAD_KINDS: readonly PayloadKind[] = [
+  "file_original", "screenshot", "thumbnail", "photo", "attachment", "media", "document",
+];
 
 export const MAGIC = utf8("IVY1");
 export const VERSION = 1;

@@ -1,11 +1,14 @@
+using System.Globalization;
 using Ivy.App.Core.Hosting;
+using Ivy.Core.Policy;
 
 namespace Ivy.App.Core.ViewModels;
 
 /// <summary>
 /// Capture and network settings (the only settings Windows has, PRD "App UI"): indexed roots, screenshot
-/// roots, window-title capture and its exclusion list, bandwidth cap, run at login. Capture settings are
-/// applied to the collector host immediately on every change.
+/// roots, window-title capture and its exclusion list, the media policy (PLAN decision 8: auto-upload of images
+/// and documents, their size caps and extension lists), bandwidth cap, run at login. Capture settings are
+/// applied to the collector host immediately on every change (the caps when Apply is pressed).
 /// </summary>
 public sealed class SettingsViewModel : ObservableObject
 {
@@ -20,6 +23,13 @@ public sealed class SettingsViewModel : ObservableObject
     private string _bandwidthStatus = "";
     private string _settingsError = "";
     private bool _runAtLogin;
+    private bool _autoUploadImages = MediaPolicyDefaults.AutoUploadImages;
+    private bool _autoUploadDocuments = MediaPolicyDefaults.AutoUploadDocuments;
+    private double _imageCapMB = MediaPolicyDefaults.ImageCapMB;
+    private double _documentCapMB = MediaPolicyDefaults.DocumentCapMB;
+    private string _imageCapText = FormatMB(MediaPolicyDefaults.ImageCapMB);
+    private string _documentCapText = FormatMB(MediaPolicyDefaults.DocumentCapMB);
+    private string _capsStatus = "";
 
     public SettingsViewModel(ICollectorHostView host, IAgentView agent, IStartupRegistration startup, string exePath,
         Func<Task<string?>> pickFolder)
@@ -31,13 +41,50 @@ public sealed class SettingsViewModel : ObservableObject
         IndexedRoots = new StringListViewModel(Apply, pickFolder);
         ScreenshotRoots = new StringListViewModel(Apply, pickFolder);
         TitleExclusions = new StringListViewModel(Apply);
+        ImageExtensions = new StringListViewModel(Apply, normalize: MediaPolicyDefaults.NormalizeExtension);
+        DocumentExtensions = new StringListViewModel(Apply, normalize: MediaPolicyDefaults.NormalizeExtension);
+        ImageExtensions.Load(MediaPolicyDefaults.ImageExtensions);
+        DocumentExtensions.Load(MediaPolicyDefaults.DocumentExtensions);
         ApplyBandwidthCommand = new RelayCommand(ApplyBandwidth);
+        ApplyCapsCommand = new RelayCommand(ApplyCaps);
     }
 
     public StringListViewModel IndexedRoots { get; }
     public StringListViewModel ScreenshotRoots { get; }
     public StringListViewModel TitleExclusions { get; }
     public RelayCommand ApplyBandwidthCommand { get; }
+
+    /// <summary>Extensions whose originals upload automatically as images (no dot).</summary>
+    public StringListViewModel ImageExtensions { get; }
+    /// <summary>Extensions whose originals upload automatically as documents (no dot).</summary>
+    public StringListViewModel DocumentExtensions { get; }
+    public RelayCommand ApplyCapsCommand { get; }
+
+    public bool AutoUploadImages
+    {
+        get => _autoUploadImages;
+        set
+        {
+            if (Set(ref _autoUploadImages, value)) Apply();
+        }
+    }
+
+    public bool AutoUploadDocuments
+    {
+        get => _autoUploadDocuments;
+        set
+        {
+            if (Set(ref _autoUploadDocuments, value)) Apply();
+        }
+    }
+
+    /// <summary>Image size cap in MB as typed; applied by <see cref="ApplyCapsCommand"/>.</summary>
+    public string ImageCapText { get => _imageCapText; set => Set(ref _imageCapText, value ?? ""); }
+    /// <summary>Document size cap in MB as typed; applied by <see cref="ApplyCapsCommand"/>.</summary>
+    public string DocumentCapText { get => _documentCapText; set => Set(ref _documentCapText, value ?? ""); }
+    public string CapsStatus { get => _capsStatus; private set => Set(ref _capsStatus, value); }
+    public double ImageCapMB => _imageCapMB;
+    public double DocumentCapMB => _documentCapMB;
 
     public bool WindowTitleCapture
     {
@@ -86,6 +133,17 @@ public sealed class SettingsViewModel : ObservableObject
             TitleExclusions.Load(s.TitleExclusions);
             _windowTitleCapture = s.WindowTitleCapture;
             Raise(nameof(WindowTitleCapture));
+            _autoUploadImages = s.AutoUploadImages;
+            _autoUploadDocuments = s.AutoUploadDocuments;
+            _imageCapMB = s.ImageCapMB;
+            _documentCapMB = s.DocumentCapMB;
+            ImageCapText = FormatMB(s.ImageCapMB);
+            DocumentCapText = FormatMB(s.DocumentCapMB);
+            ImageExtensions.Load(s.ImageExtensions);
+            DocumentExtensions.Load(s.DocumentExtensions);
+            CapsStatus = CapsSummary();
+            Raise(nameof(AutoUploadImages));
+            Raise(nameof(AutoUploadDocuments));
         }
         catch (Exception e)
         {
@@ -150,6 +208,37 @@ public sealed class SettingsViewModel : ObservableObject
         }
     }
 
+    private void ApplyCaps()
+    {
+        var img = ParseMB(_imageCapText);
+        var doc = ParseMB(_documentCapText);
+        if (img is null || doc is null)
+        {
+            CapsStatus = $"enter sizes in MB, more than 0 and at most {FormatMB(MediaPolicyDefaults.MaxCapMB)}";
+            return;
+        }
+        _imageCapMB = img.Value;
+        _documentCapMB = doc.Value;
+        ImageCapText = FormatMB(img.Value);
+        DocumentCapText = FormatMB(doc.Value);
+        CapsStatus = CapsSummary();
+        Apply();
+    }
+
+    private string CapsSummary() => $"current: images up to {FormatMB(_imageCapMB)} MB, documents up to {FormatMB(_documentCapMB)} MB";
+
+    internal static string FormatMB(double mb) => mb.ToString("0.###", CultureInfo.InvariantCulture);
+
+    /// <summary>A cap in MB (invariant or current-culture decimals), or null when not in (0, max].</summary>
+    internal static double? ParseMB(string? text)
+    {
+        var t = (text ?? "").Trim();
+        if (t.EndsWith("MB", StringComparison.OrdinalIgnoreCase)) t = t[..^2].Trim();
+        if (!double.TryParse(t, NumberStyles.Float, CultureInfo.InvariantCulture, out var v)
+            && !double.TryParse(t, NumberStyles.Float, CultureInfo.CurrentCulture, out v)) return null;
+        return v > 0 && v <= MediaPolicyDefaults.MaxCapMB ? v : null;
+    }
+
     /// <summary>Show an error from the shell (e.g. the folder dialog failed).</summary>
     public void ReportError(string message) => SettingsError = message;
 
@@ -159,6 +248,12 @@ public sealed class SettingsViewModel : ObservableObject
         ScreenshotRoots = ScreenshotRoots.Values,
         WindowTitleCapture = _windowTitleCapture,
         TitleExclusions = TitleExclusions.Values,
+        AutoUploadImages = _autoUploadImages,
+        ImageCapMB = _imageCapMB,
+        AutoUploadDocuments = _autoUploadDocuments,
+        DocumentCapMB = _documentCapMB,
+        ImageExtensions = ImageExtensions.Values,
+        DocumentExtensions = DocumentExtensions.Values,
     };
 
     /// <summary>Completes when the most recent change has been applied (tests and the shell can await it).</summary>

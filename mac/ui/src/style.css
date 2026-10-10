@@ -89,3 +89,16 @@ dl { display: grid; grid-template-columns: 90px 1fr; gap: 2px 8px; margin: 6px 0
 .req { font-size: 11px; } .req-done { color: var(--green); } .req-failed { color: var(--red); } .req-queued, .req-in_progress { color: var(--amber); }
 progress { display: block; width: 100%; height: 6px; accent-color: var(--green); }
 .confirm { display: inline-block; border: 1px solid var(--red); padding: 4px; }
+.ai-toggle { margin: 2px 0 6px; }
+.ai-drawer { position: fixed; top: 0; right: 0; bottom: 0; width: min(440px, 96vw); z-index: 20; background: var(--panel); border-left: 1px solid var(--green); padding: 8px 10px; overflow: auto; }
+.ai-answer { border: 1px solid var(--line); padding: 6px 8px; margin: 6px 0; }
+.ai-q { margin: 0 0 4px; color: var(--muted); }
+.ai-a { margin: 0 0 6px; }
+.ai-facts, .ai-missing, .ai-inferences ul { margin: 2px 0 6px; padding-left: 18px; }
+.chip-rec { cursor: pointer; border-color: var(--green); color: var(--green); background: transparent; }
+.chip-rec.active { background: #0f2a18; }
+.inference { font-style: italic; color: #c9b27a; }
+.ai-ask { display: flex; gap: 6px; margin: 6px 0; }
+.ai-ask input { flex: 1; }
+.ai-off { border: 1px dashed var(--line); padding: 8px; }
+.ai-record { margin: 4px 0 8px 12px; }

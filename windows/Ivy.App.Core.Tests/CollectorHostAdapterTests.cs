@@ -49,6 +49,26 @@ public class CollectorHostAdapterTests : IDisposable
             Assert.False(back.WindowTitleCapture);
             Assert.Equal(new[] { "secret.exe" }, back.TitleExclusions);
 
+            // media policy (PLAN decision 8) maps onto the files collector's settings
+            Assert.True(back.AutoUploadImages);
+            Assert.Equal(25, back.ImageCapMB);
+            Assert.Equal(10, back.DocumentCapMB);
+            await host.ApplySettingsAsync(back with
+            {
+                AutoUploadImages = false, ImageCapMB = 8, AutoUploadDocuments = true, DocumentCapMB = 0.5,
+                ImageExtensions = new[] { "png", "webp" }, DocumentExtensions = new[] { "pdf" },
+            });
+            var files = ((CollectorHostAdapter)host).Host.Get<Ivy.Collectors.Files.FileIndexCollector>().Settings;
+            Assert.False(files.AutoUploadImages);
+            Assert.Equal(8, files.ImageCapMB);
+            Assert.Equal(0.5, files.DocumentCapMB);
+            Assert.Equal(new[] { "png", "webp" }, files.ImageExtensions);
+            Assert.Equal(new[] { "pdf" }, files.DocumentExtensions);
+            Assert.Equal(new[] { folder }, files.Roots);
+            var bad = await Record.ExceptionAsync(() => host.ApplySettingsAsync(host.GetSettings() with { DocumentCapMB = 0 }));
+            Assert.IsType<ArgumentException>(bad);
+            Assert.Equal(0.5, host.GetSettings().DocumentCapMB);
+
             await host.PauseAsync();
             Assert.True(host.Paused);
             await host.ResumeAsync();
@@ -68,6 +88,8 @@ public class CollectorHostAdapterTests : IDisposable
             var s = host.GetSettings();
             Assert.Equal(new[] { folder }, s.IndexedRoots);
             Assert.False(s.WindowTitleCapture);
+            Assert.False(s.AutoUploadImages);
+            Assert.Equal(new[] { "pdf" }, s.DocumentExtensions);
             Assert.False(host.Collectors().Single(r => r.Name == "usage").Enabled);
             await host.DisposeAsync();
         }

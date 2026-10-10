@@ -209,6 +209,49 @@
                             </StackPanel>
                         </Border>
 
+                        <!-- Originals uploaded automatically (PLAN decision 8 media policy) -->
+                        <Border BorderBrush="{StaticResource IvyBorder}" BorderThickness="1" Background="{StaticResource IvyPanel}" Padding="12">
+                            <StackPanel Spacing="6">
+                                <TextBlock Text="Originals uploaded from indexed folders" FontWeight="SemiBold" />
+                                <TextBlock Text="Images go to the Mac for OCR, documents for text search. Other files: metadata and thumbnail, original on request."
+                                           Foreground="{StaticResource IvyMuted}" TextWrapping="Wrap" />
+                                <ToggleSwitch Header="Upload images" IsOn="{x:Bind ViewModel.Settings.AutoUploadImages, Mode=TwoWay}" />
+                                <ToggleSwitch Header="Upload documents" IsOn="{x:Bind ViewModel.Settings.AutoUploadDocuments, Mode=TwoWay}" />
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <TextBox Header="Image cap (MB)" Width="140"
+                                             Text="{x:Bind ViewModel.Settings.ImageCapText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                             FontFamily="{StaticResource IvyMono}" BorderBrush="{StaticResource IvyBorder}" BorderThickness="1" />
+                                    <TextBox Header="Document cap (MB)" Width="140"
+                                             Text="{x:Bind ViewModel.Settings.DocumentCapText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                             FontFamily="{StaticResource IvyMono}" BorderBrush="{StaticResource IvyBorder}" BorderThickness="1" />
+                                    <Button Content="Apply" VerticalAlignment="Bottom" Command="{x:Bind ViewModel.Settings.ApplyCapsCommand}" />
+                                </StackPanel>
+                                <TextBlock Text="{x:Bind ViewModel.Settings.CapsStatus, Mode=OneWay}" FontFamily="{StaticResource IvyMono}" TextWrapping="Wrap" />
+                                <TextBlock Text="Image extensions:" Foreground="{StaticResource IvyMuted}" />
+                                <ListView x:Name="ImageExtensionsList" ItemsSource="{x:Bind ViewModel.Settings.ImageExtensions.Items}" SelectionMode="Single"
+                                          MinHeight="40" MaxHeight="120" FontFamily="{StaticResource IvyMono}"
+                                          BorderBrush="{StaticResource IvyBorder}" BorderThickness="1" />
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <TextBox Width="160" PlaceholderText="e.g. tif"
+                                             Text="{x:Bind ViewModel.Settings.ImageExtensions.NewItem, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                             FontFamily="{StaticResource IvyMono}" BorderBrush="{StaticResource IvyBorder}" BorderThickness="1" />
+                                    <Button Content="Add" Click="AddImageExtension_Click" />
+                                    <Button Content="Remove selected" Click="RemoveImageExtension_Click" />
+                                </StackPanel>
+                                <TextBlock Text="Document extensions:" Foreground="{StaticResource IvyMuted}" />
+                                <ListView x:Name="DocumentExtensionsList" ItemsSource="{x:Bind ViewModel.Settings.DocumentExtensions.Items}" SelectionMode="Single"
+                                          MinHeight="40" MaxHeight="120" FontFamily="{StaticResource IvyMono}"
+                                          BorderBrush="{StaticResource IvyBorder}" BorderThickness="1" />
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <TextBox Width="160" PlaceholderText="e.g. odt"
+                                             Text="{x:Bind ViewModel.Settings.DocumentExtensions.NewItem, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                             FontFamily="{StaticResource IvyMono}" BorderBrush="{StaticResource IvyBorder}" BorderThickness="1" />
+                                    <Button Content="Add" Click="AddDocumentExtension_Click" />
+                                    <Button Content="Remove selected" Click="RemoveDocumentExtension_Click" />
+                                </StackPanel>
+                            </StackPanel>
+                        </Border>
+
                         <!-- Screenshot folders -->
                         <Border BorderBrush="{StaticResource IvyBorder}" BorderThickness="1" Background="{StaticResource IvyPanel}" Padding="12">
                             <StackPanel Spacing="6">

@@ -4,15 +4,16 @@ import { useApi, useLoad } from "../ctx.tsx";
 import { href, navigate, useLocation } from "../router.ts";
 import { Empty, ErrorLine, Pager } from "../ui.tsx";
 import { ItemRow, type Item } from "./items.tsx";
+import { AiDrawer } from "./Ai.tsx";
 
-const TYPES = ["message", "notification", "screenshot", "photo", "file", "usage", "call"];
+const TYPES = ["message", "notification", "screenshot", "photo", "file", "usage", "call", "browsing"];
 const FILTERS = ["device", "app", "account", "person", "conversation", "from", "to", "type", "sort"] as const;
 
 interface SearchResult {
   q: string; page: number; pages: number; total: number; exactTotal: number; fuzzyTotal: number; tookMs: number;
   counts: Record<string, { exact: number; fuzzy: number }>;
   items: Item[];
-  semantic: { enabled: boolean; label: string; items: Array<{ type: string; id: string; score: number }> };
+  semantic: { enabled: boolean; label: string; items: Array<{ type: string; id: string; score: number; title?: string | null; snippet?: string | null; eventTime?: string | null }> };
 }
 
 export function SearchView() {
@@ -108,6 +109,7 @@ export function SearchView() {
           {binMsg && <p className="muted" role="status">{binMsg}</p>}
           {res && (
             <>
+              <AiDrawer context={{ searchQuery: res.q, filters: Object.fromEntries(Object.entries(params).filter(([, v]) => v)) }} />
               <p className="muted small" data-testid="search-summary">{res.total} matches · {res.exactTotal} exact · {res.fuzzyTotal} close (typo-tolerant) · {res.tookMs} ms</p>
               {res.total === 0 && <Empty>No records match “{res.q}”.</Empty>}
               {items.map((it, i) => (
@@ -121,7 +123,7 @@ export function SearchView() {
                 <section aria-label="Semantic matches">
                   <h3 className="divider">{res.semantic.label || "Semantic matches"}</h3>
                   {res.semantic.items.length === 0 ? <Empty>No semantic matches.</Empty> : (
-                    <ul>{res.semantic.items.map((s) => <li key={`${s.type}:${s.id}`}>{s.type} <span className="mono">{s.id}</span> · score {s.score.toFixed(3)}</li>)}</ul>
+                    <ul>{res.semantic.items.map((s) => <li key={`${s.type}:${s.id}`}>{s.type} {s.title ? <strong>{s.title}</strong> : <span className="mono">{s.id}</span>}{s.snippet ? <span className="muted"> · {s.snippet}</span> : null} · score {s.score.toFixed(3)}</li>)}</ul>
                   )}
                 </section>
               )}

@@ -16,8 +16,10 @@ namespace Ivy.App.Hosting;
 /// The one place that knows Ivy.Collectors' API: adapts <see cref="CollectorHost"/> to the window's
 /// <see cref="ICollectorHostView"/>. Capture settings map onto the collectors' own settings objects:
 /// indexed roots = <c>files.roots</c>, screenshot roots = <c>screenshots.roots</c>, window titles =
-/// <c>usage.captureTitles</c> and <c>usage.titleExclusions</c>. Only collectors whose values changed are
-/// updated, because the host restarts a running collector on every settings change.
+/// <c>usage.captureTitles</c> and <c>usage.titleExclusions</c>, media policy (PLAN decision 8) =
+/// <c>files.autoUploadImages</c>, <c>imageCapMB</c>, <c>autoUploadDocuments</c>, <c>documentCapMB</c>,
+/// <c>imageExtensions</c>, <c>documentExtensions</c>. Only collectors whose values changed are updated, because the
+/// host restarts a running collector on every settings change.
 /// </summary>
 public sealed class CollectorHostAdapter : ICollectorHostView
 {
@@ -95,14 +97,27 @@ public sealed class CollectorHostAdapter : ICollectorHostView
             ScreenshotRoots = shots.Roots.ToList(),
             WindowTitleCapture = usage.CaptureTitles,
             TitleExclusions = usage.TitleExclusions.ToList(),
+            AutoUploadImages = files.AutoUploadImages,
+            ImageCapMB = files.ImageCapMB,
+            AutoUploadDocuments = files.AutoUploadDocuments,
+            DocumentCapMB = files.DocumentCapMB,
+            ImageExtensions = files.ImageExtensions.ToList(),
+            DocumentExtensions = files.DocumentExtensions.ToList(),
         };
     }
 
     public async Task ApplySettingsAsync(CollectorSettings settings)
     {
         var current = GetSettings();
-        if (!Same(current.IndexedRoots, settings.IndexedRoots))
-            await UpdateAsync(Files, new() { ["roots"] = JsonSerializer.SerializeToElement(settings.IndexedRoots) });
+        var files = new Dictionary<string, JsonElement>();
+        if (!Same(current.IndexedRoots, settings.IndexedRoots)) files["roots"] = JsonSerializer.SerializeToElement(settings.IndexedRoots);
+        if (current.AutoUploadImages != settings.AutoUploadImages) files["autoUploadImages"] = JsonSerializer.SerializeToElement(settings.AutoUploadImages);
+        if (current.ImageCapMB != settings.ImageCapMB) files["imageCapMB"] = JsonSerializer.SerializeToElement(settings.ImageCapMB);
+        if (current.AutoUploadDocuments != settings.AutoUploadDocuments) files["autoUploadDocuments"] = JsonSerializer.SerializeToElement(settings.AutoUploadDocuments);
+        if (current.DocumentCapMB != settings.DocumentCapMB) files["documentCapMB"] = JsonSerializer.SerializeToElement(settings.DocumentCapMB);
+        if (!Same(current.ImageExtensions, settings.ImageExtensions)) files["imageExtensions"] = JsonSerializer.SerializeToElement(settings.ImageExtensions);
+        if (!Same(current.DocumentExtensions, settings.DocumentExtensions)) files["documentExtensions"] = JsonSerializer.SerializeToElement(settings.DocumentExtensions);
+        if (files.Count > 0) await UpdateAsync(Files, files);
         if (!Same(current.ScreenshotRoots, settings.ScreenshotRoots))
             await UpdateAsync(Screenshots, new() { ["roots"] = JsonSerializer.SerializeToElement(settings.ScreenshotRoots) });
         var usage = new Dictionary<string, JsonElement>();

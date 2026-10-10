@@ -100,7 +100,7 @@ public static class Schema
     private static readonly Dictionary<string, (string[] Required, string[] Optional)> Fields = new()
     {
         // file_meta: size/mtime/quickHash are required only for a live record; a deletion (deleted:true) may omit them.
-        ["file_meta"] = (new[] { "path", "name", "ext" }, new[] { "size", "mtime", "quickHash", "thumbBlobOid", "deleted" }),
+        ["file_meta"] = (new[] { "path", "name", "ext" }, new[] { "size", "mtime", "quickHash", "thumbBlobOid", "originalBlobOid", "deleted" }),
         ["screenshot"] = (new[] { "sourcePath", "sha256", "blobOid" }, new[] { "width", "height", "takenAt", "savedAt" }),
         ["usage_event"] = (new[] { "app", "startedAt", "endedAt" }, new[] { "exe", "title" }),
         ["windows_notification"] = (new[] { "app", "title", "text", "postedAt" }, new[] { "sender" }),
@@ -165,7 +165,7 @@ public sealed record CapturedRecord(Kind Kind, string Oid, string Json, string? 
     public bool IsNull(string field) => Root.TryGetProperty(field, out var v) && v.ValueKind == JsonValueKind.Null;
 }
 
-public sealed record CapturedBlob(string Oid, string PayloadKind, byte[] Data, string? Collector);
+public sealed record CapturedBlob(string Oid, string PayloadKind, byte[] Data, string? Collector, bool Bulk = false);
 
 /// <summary>Captures records/blobs and validates every record against the §6 field names.</summary>
 public sealed class FakeSink : IRecordSink, IDeviceIdProvider
@@ -200,14 +200,20 @@ public sealed class FakeSink : IRecordSink, IDeviceIdProvider
         return Enqueue(record.RecordKind, ObjectKeys.UpPrefix(record.RecordKind), IvyJson.Serialize(record), collector);
     }
 
-    public EnqueuedBlob EnqueueBlob(Stream stream, string payloadKind, string? collector = null, long? length = null, string? commandId = null)
+    public EnqueuedBlob EnqueueBlob(Stream stream, string payloadKind, string? collector = null, long? length = null, string? commandId = null,
+        string? oid = null, bool bulk = false)
     {
         using var ms = new MemoryStream();
         stream.CopyTo(ms);
         var data = ms.ToArray();
-        if (length is { } l) Assert.Equal(l, data.Length);
-        var oid = Oids.New(_time);
-        Blobs.Enqueue(new CapturedBlob(oid, payloadKind, data, collector));
+        if (length is { } l && l != data.Length) throw new IOException($"stream length {data.Length} != declared {l}");
+        if (oid is not null)
+        {
+            Assert.True(Oids.IsValid(oid), $"invalid preallocated oid {oid}");
+            Assert.DoesNotContain(Blobs, b => b.Oid == oid); // a preallocated oid is enqueued at most once
+        }
+        oid ??= Oids.New(_time);
+        Blobs.Enqueue(new CapturedBlob(oid, payloadKind, data, collector, bulk));
         return new EnqueuedBlob(oid, ObjectKeys.BlobManifest(oid), 1, data.Length, Bytes.ToHex(SHA256.HashData(data)));
     }
 }

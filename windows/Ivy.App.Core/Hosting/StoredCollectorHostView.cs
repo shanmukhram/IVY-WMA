@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Ivy.Core.Policy;
 using Ivy.Core.Storage;
 
 namespace Ivy.App.Core.Hosting;
@@ -87,6 +88,12 @@ public static class CollectorSettingsCodec
         [JsonPropertyName("screenshotRoots")] public List<string>? ScreenshotRoots { get; set; }
         [JsonPropertyName("windowTitleCapture")] public bool WindowTitleCapture { get; set; } = true;
         [JsonPropertyName("titleExclusions")] public List<string>? TitleExclusions { get; set; }
+        [JsonPropertyName("autoUploadImages")] public bool? AutoUploadImages { get; set; }
+        [JsonPropertyName("imageCapMB")] public double? ImageCapMB { get; set; }
+        [JsonPropertyName("autoUploadDocuments")] public bool? AutoUploadDocuments { get; set; }
+        [JsonPropertyName("documentCapMB")] public double? DocumentCapMB { get; set; }
+        [JsonPropertyName("imageExtensions")] public List<string>? ImageExtensions { get; set; }
+        [JsonPropertyName("documentExtensions")] public List<string>? DocumentExtensions { get; set; }
     }
 
     public static string Encode(CollectorSettings s) => JsonSerializer.Serialize(new Dto
@@ -95,6 +102,12 @@ public static class CollectorSettingsCodec
         ScreenshotRoots = s.ScreenshotRoots.ToList(),
         WindowTitleCapture = s.WindowTitleCapture,
         TitleExclusions = s.TitleExclusions.ToList(),
+        AutoUploadImages = s.AutoUploadImages,
+        ImageCapMB = s.ImageCapMB,
+        AutoUploadDocuments = s.AutoUploadDocuments,
+        DocumentCapMB = s.DocumentCapMB,
+        ImageExtensions = s.ImageExtensions.ToList(),
+        DocumentExtensions = s.DocumentExtensions.ToList(),
     });
 
     /// <summary>Null when absent or unreadable (the caller falls back to defaults).</summary>
@@ -111,6 +124,13 @@ public static class CollectorSettingsCodec
             ScreenshotRoots = d.ScreenshotRoots ?? new List<string>(),
             WindowTitleCapture = d.WindowTitleCapture,
             TitleExclusions = d.TitleExclusions ?? new List<string>(),
+            // absent (settings saved before the media policy): the defaults
+            AutoUploadImages = d.AutoUploadImages ?? MediaPolicyDefaults.AutoUploadImages,
+            ImageCapMB = d.ImageCapMB ?? MediaPolicyDefaults.ImageCapMB,
+            AutoUploadDocuments = d.AutoUploadDocuments ?? MediaPolicyDefaults.AutoUploadDocuments,
+            DocumentCapMB = d.DocumentCapMB ?? MediaPolicyDefaults.DocumentCapMB,
+            ImageExtensions = d.ImageExtensions ?? MediaPolicyDefaults.ImageExtensions.ToList(),
+            DocumentExtensions = d.DocumentExtensions ?? MediaPolicyDefaults.DocumentExtensions.ToList(),
         };
     }
 }

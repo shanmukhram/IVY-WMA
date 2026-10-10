@@ -36,8 +36,12 @@ public interface IRecordSink
     /// The stream must be seekable (or <paramref name="length"/> given) because every chunk's AAD binds
     /// the total chunk count. <paramref name="commandId"/> (an original uploaded for a <c>file_request</c>) is
     /// written into the manifest so the Mac can track the transfer before the status arrives (§2.2).
+    /// <paramref name="oid"/> lets the caller pick the blob's oid ahead of time (a record that references the
+    /// blob was already emitted); it must never have been enqueued before. <paramref name="bulk"/> puts the
+    /// blob in the bulk lane of the upload queue, which drains after every normal item (records first).
     /// </summary>
-    EnqueuedBlob EnqueueBlob(Stream stream, string payloadKind, string? collector = null, long? length = null, string? commandId = null);
+    EnqueuedBlob EnqueueBlob(Stream stream, string payloadKind, string? collector = null, long? length = null, string? commandId = null,
+        string? oid = null, bool bulk = false);
 }
 
 public sealed class RecordSinkOptions
@@ -142,10 +146,12 @@ public sealed class RecordSink : IRecordSink
         return new EnqueuedRecord(oid, key, envelope.Length);
     }
 
-    public EnqueuedBlob EnqueueBlob(Stream stream, string payloadKind, string? collector = null, long? length = null, string? commandId = null)
+    public EnqueuedBlob EnqueueBlob(Stream stream, string payloadKind, string? collector = null, long? length = null, string? commandId = null,
+        string? oid = null, bool bulk = false)
     {
         var total = length ?? (stream.CanSeek ? stream.Length - stream.Position : throw new ArgumentException("stream must be seekable or length given", nameof(stream)));
-        var oid = Oids.New(_time, _random);
+        if (oid is not null && !Oids.IsValid(oid)) throw new ArgumentException("invalid blob oid", nameof(oid));
+        oid ??= Oids.New(_time, _random);
         var objectId = Oids.ToBytes(oid);
         var written = new List<PartFile>();
         var buffer = ArrayPool<byte>.Shared.Rent(_options.ChunkSize);
@@ -174,7 +180,7 @@ public sealed class RecordSink : IRecordSink
             var manifestFile = _queue.WritePartFile(manifestKey, Kind.Manifest, manifestEnvelope);
             var ordered = new List<PartFile>(written.Count + 1) { manifestFile };
             ordered.AddRange(written);
-            _queue.Enqueue(ordered, groupKey: oid, collector);
+            _queue.Enqueue(ordered, groupKey: oid, collector, bulk ? UploadQueue.BulkLane : UploadQueue.NormalLane);
             var digest = Bytes.ToHex(sha.GetHashAndReset());
             _activity?.Append(collector, ActivityEvents.Encrypted, $"blob {oid} {payloadKind} {total} bytes in {enc.TotalChunks} chunks");
             _activity?.Append(collector, ActivityEvents.Queued, $"{manifestKey} + {enc.TotalChunks} parts");

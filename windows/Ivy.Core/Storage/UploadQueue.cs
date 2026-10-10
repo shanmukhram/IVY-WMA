@@ -42,12 +42,17 @@ public sealed class BackoffPolicy
 /// <item>A row is deleted only after the upload is confirmed (<see cref="Complete"/>): status→done, file deleted, row deleted.</item>
 /// <item>Items sharing a <c>group_key</c> upload strictly in <c>seq</c> order (a blob's manifest before its parts,
 /// a file_request's status after the blob).</item>
+/// <item>Two lanes: <see cref="NormalLane"/> (records, thumbnails, screenshots, requested originals) drains before
+/// <see cref="BulkLane"/> (originals the media policy uploads on its own), so metadata stays fresh while bulk is
+/// slow. A group never spans lanes.</item>
 /// <item><see cref="Reconcile"/> repairs any crash window at startup.</item>
 /// </list>
 /// </summary>
 public sealed class UploadQueue
 {
     public const string PartExtension = ".ivy";
+    public const int NormalLane = 0;
+    public const int BulkLane = 1;
     private const string TempExtension = ".tmp";
     private readonly VaultDb _db;
     private readonly TimeProvider _time;
@@ -102,8 +107,9 @@ public sealed class UploadQueue
     }
 
     /// <summary>Insert rows for already-written part files, in list order, in one transaction.</summary>
-    public IReadOnlyList<string> Enqueue(IReadOnlyList<PartFile> files, string? groupKey = null, string? collector = null)
+    public IReadOnlyList<string> Enqueue(IReadOnlyList<PartFile> files, string? groupKey = null, string? collector = null, int lane = NormalLane)
     {
+        if (lane is not (NormalLane or BulkLane)) throw new ArgumentOutOfRangeException(nameof(lane));
         var ids = new List<string>(files.Count);
         var now = IvyTime.Now(_time);
         using (var c = _db.Open())
@@ -116,8 +122,8 @@ public sealed class UploadQueue
             using var ins = c.CreateCommand();
             ins.Transaction = tx;
             ins.CommandText = """
-                INSERT INTO pending_uploads(id, seq, object_key, part_path, size, attempts, status, kind, group_key, collector, created_at, next_attempt_ms)
-                VALUES ($id, $seq, $key, $path, $size, 0, 'queued', $kind, $group, $collector, $created, 0)
+                INSERT INTO pending_uploads(id, seq, object_key, part_path, size, attempts, status, kind, group_key, collector, created_at, next_attempt_ms, lane)
+                VALUES ($id, $seq, $key, $path, $size, 0, 'queued', $kind, $group, $collector, $created, 0, $lane)
                 """;
             foreach (var f in files)
             {
@@ -133,6 +139,7 @@ public sealed class UploadQueue
                 ins.Parameters.AddWithValue("$group", (object?)groupKey ?? DBNull.Value);
                 ins.Parameters.AddWithValue("$collector", (object?)collector ?? DBNull.Value);
                 ins.Parameters.AddWithValue("$created", now);
+                ins.Parameters.AddWithValue("$lane", lane);
                 ins.ExecuteNonQuery();
                 ids.Add(id);
             }
@@ -157,8 +164,8 @@ public sealed class UploadQueue
         r.GetInt64(11), r.IsDBNull(12) ? null : r.GetString(12), r.IsDBNull(13) ? null : r.GetString(13), r.IsDBNull(14) ? null : r.GetInt64(14));
 
     /// <summary>
-    /// The next item to upload: lowest <c>seq</c> that is queued, past its backoff gate, and not behind an
-    /// unfinished earlier item of the same group.
+    /// The next item to upload: the normal lane before the bulk lane, then lowest <c>seq</c>, among items that are
+    /// queued, past their backoff gate, and not behind an unfinished earlier item of the same group.
     /// </summary>
     public QueueItem? NextDue()
     {
@@ -169,7 +176,7 @@ public sealed class UploadQueue
             WHERE p.status = 'queued' AND p.next_attempt_ms <= $now
               AND (p.group_key IS NULL OR NOT EXISTS (
                     SELECT 1 FROM pending_uploads q WHERE q.group_key = p.group_key AND q.seq < p.seq AND q.status <> 'done'))
-            ORDER BY p.seq LIMIT 1
+            ORDER BY p.lane, p.seq LIMIT 1
             """;
         cmd.Parameters.AddWithValue("$now", _time.GetUtcNow().ToUnixTimeMilliseconds());
         using var r = cmd.ExecuteReader();
@@ -216,6 +223,27 @@ public sealed class UploadQueue
             : "SELECT COUNT(*) FROM pending_uploads WHERE status <> 'done' AND collector = $c";
         if (collector is not null) cmd.Parameters.AddWithValue("$c", collector);
         return (int)(long)cmd.ExecuteScalar()!;
+    }
+
+    /// <summary>Ciphertext bytes still queued in the bulk lane for <paramref name="collector"/> (media-policy originals).</summary>
+    public long BulkBytes(string collector)
+    {
+        using var c = _db.Open();
+        using var cmd = c.CreateCommand();
+        cmd.CommandText = "SELECT COALESCE(SUM(size), 0) FROM pending_uploads WHERE status <> 'done' AND lane = $l AND collector = $c";
+        cmd.Parameters.AddWithValue("$l", BulkLane);
+        cmd.Parameters.AddWithValue("$c", collector);
+        return (long)cmd.ExecuteScalar()!;
+    }
+
+    /// <summary>True when an object with this key is still in the queue (any status).</summary>
+    public bool Contains(string objectKey)
+    {
+        using var c = _db.Open();
+        using var cmd = c.CreateCommand();
+        cmd.CommandText = "SELECT 1 FROM pending_uploads WHERE object_key = $k";
+        cmd.Parameters.AddWithValue("$k", objectKey);
+        return cmd.ExecuteScalar() is not null;
     }
 
     public IReadOnlyDictionary<string, int> DepthByCollector()

@@ -166,8 +166,12 @@ at `up/blob/<oid>/manifest`):
 - `objectId` is the hex of the same 16 bytes as the `oid` in the blob's object key (`up/blob/<oid>/…`); receivers read it from the manifest and MUST check it against the key.
 - `payloadKind` is the logical kind of the reconstructed object, one of:
   `file_original` (an original file uploaded in answer to a `file_request`),
-  `screenshot`, `thumbnail`, `photo`, `attachment`, `media`. It is a string in its
-  own namespace, distinct from the record kinds of §5.
+  `screenshot`, `thumbnail`, `photo` (an image original a device uploads on its own,
+  e.g. a Windows image outside the Screenshots folder, PLAN decision 8), `attachment`,
+  `media`, `document` (a document original a device uploads on its own under its
+  media policy, PLAN decision 8). It is a string in its own namespace, distinct from
+  the record kinds of §5. `photo` and `document` blobs are referenced from
+  `file_meta.originalBlobOid` (§6).
 - `cek` is the object content key. It is only ever present inside the encrypted
   manifest envelope, so it never exists as plaintext at rest.
 - `chunks[i].sha256` is SHA-256 over the **entire part** (header + ciphertext +
@@ -327,7 +331,13 @@ The authoritative schemas are the zod definitions in
 `packages/protocol/src/schemas.ts`. Summary:
 
 **file_meta** — `path, name, ext, size, mtime, quickHash, thumbBlobOid?,
-deleted?` (WC1/WC2; metadata only, original on request). `deleted` is an optional
+originalBlobOid?, deleted?` (WC1/WC2; metadata, plus the original when the
+device's media policy uploads it, PLAN decision 8). `originalBlobOid` is optional:
+when present it is the oid of a chunked blob (§2.2, payloadKind `photo` or
+`document`) holding the file's original bytes, uploaded by the device on its own;
+the blob MAY arrive before or after the record, and several records (copies or a
+moved file with the same content) MAY name the same blob. When absent the original
+is available on request (`file_request`) only. `deleted` is an optional
 boolean (default false). When `deleted` is true the file has been observed removed
 (watcher delete, USN delete reason, or missing in a rescan); `size`, `mtime` and
 `quickHash` MAY then be omitted, and `eventTime` is when the deletion was observed.

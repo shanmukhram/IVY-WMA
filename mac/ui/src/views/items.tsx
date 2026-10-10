@@ -21,6 +21,7 @@ export const AVAILABILITY: Record<string, string> = {
 
 const TYPE_LABEL: Record<string, string> = {
   message: "Message", notification: "Notification", screenshot: "Screenshot", photo: "Photo", file: "File", usage: "App usage", call: "Call",
+  browsing: "Google activity",
 };
 
 export function ItemRow({ it, devices, onBin }: { it: Item; devices?: DeviceLite[]; onBin?: (it: Item) => void }) {
@@ -31,10 +32,11 @@ export function ItemRow({ it, devices, onBin }: { it: Item; devices?: DeviceLite
       <div className="item-head">
         <strong>{TYPE_LABEL[it.type] ?? it.type}</strong>
         <Time at={it.eventTime} field={it.timeField} captured={it.capturedAt} imported={d.importedAt} />
-        <DeviceChip id={it.deviceId} devices={devices} />
+        {it.type !== "browsing" && <DeviceChip id={it.deviceId} devices={devices} />}
         {it.app && <Chip kind="app">{it.app}</Chip>}
         {account && <Chip kind="account">{account}</Chip>}
         {it.type === "notification" && <Chip kind="partial">preview · partial record</Chip>}
+        {it.type === "browsing" && <Chip kind="ref">Activity Vault import</Chip>}
         {it.match === "fuzzy" && <Chip kind="fuzzy">close match{it.typos ? ` (${it.typos} edit${it.typos > 1 ? "s" : ""})` : ""}</Chip>}
         {d.sourceStatus === "deleted_at_source" && <Chip kind="warn">deleted at source</Chip>}
         <span className="spacer" />
@@ -81,6 +83,10 @@ function Access({ it }: { it: Item }) {
   }
   if (it.type === "notification") {
     return <p className="small"><Link to={href("/notifications", { app: it.app ?? undefined })}>All {it.app} notifications</Link>{d.linkedMessageId ? ` · linked message (${d.linkConfidence ?? "uncertain"})` : ""}</p>;
+  }
+  if (it.type === "browsing") {
+    // the link is captured activity data: shown as text, opened only in a new window with no referrer
+    return d.link ? <p className="small">{d.subtitle ? `${d.subtitle} · ` : ""}<a href={String(d.link)} target="_blank" rel="noreferrer noopener" className="mono">{String(d.link)}</a></p> : d.subtitle ? <p className="small">{d.subtitle}</p> : null;
   }
   if (it.type === "screenshot" || it.type === "photo") {
     return <p className="small"><Link to={href("/media", { focus: it.id })}>Open in media</Link>{d.ocrStatus && d.ocrStatus !== "done" ? ` · OCR ${d.ocrStatus}` : ""}{!d.original ? " · original not yet received" : ""}</p>;

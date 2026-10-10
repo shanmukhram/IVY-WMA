@@ -42,6 +42,8 @@ public class StateMigrationTests : IDisposable
         using var c2 = again.Open();
         using var v = c2.CreateCommand();
         v.CommandText = "SELECT version FROM schema_info";
-        Assert.Equal(2L, (long)v.ExecuteScalar()!);
+        Assert.Equal(3L, (long)v.ExecuteScalar()!);
+        v.CommandText = "SELECT COUNT(*) FROM pragma_table_info('pending_uploads') WHERE name = 'lane'";
+        Assert.Equal(1L, (long)v.ExecuteScalar()!);
     }
 }

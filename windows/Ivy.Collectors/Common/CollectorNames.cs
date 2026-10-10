@@ -20,6 +20,8 @@ public static class CollectorActivity
     public const string ScanProgress = "scan_progress";
     public const string ScanCompleted = "scan_completed";
     public const string Error = "collector_error";
+    /// <summary>A media-policy original could not be read (locked, access denied); its metadata stays, the upload is retried on the next rescan.</summary>
+    public const string OriginalFailed = "original_failed";
     public const string Started = "collector_started";
     public const string Stopped = "collector_stopped";
     public const string Config = "collector_config";

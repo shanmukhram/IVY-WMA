@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { errText } from "../api.ts";
 import { useApi, useLoad } from "../ctx.tsx";
 import { Dot, ErrorLine, Mono } from "../ui.tsx";
+import { ActivityVaultSettings, AiSettings } from "./AiSettings.tsx";
 
 const TOKEN_FIELDS: Array<[string, string]> = [
   ["macTokens.all", "Mac token, all four buckets (fallback)"],
@@ -45,6 +46,7 @@ export function SettingsView() {
       <BinSettings />
       <PassphraseChange />
       <AiSettings />
+      <ActivityVaultSettings />
     </div>
   );
 }
@@ -182,27 +184,6 @@ function PassphraseChange() {
         <button type="submit" disabled={!cur || !next}>Change passphrase</button>
       </form>
       {msg && <p role="status" className="small">{msg}</p>}
-    </section>
-  );
-}
-
-function AiSettings() {
-  const api = useApi();
-  const s = useLoad<any>((a) => a.get("/api/ui-settings"), []);
-  const on = !!s.data?.settings?.["ai.cloudEnabled"];
-  const [msg, setMsg] = useState<string | null>(null);
-  const toggle = async () => {
-    try { await api.put("/api/ui-settings", { "ai.cloudEnabled": !on }); s.reload(); setMsg(null); } catch (x) { setMsg(errText(x)); }
-  };
-  return (
-    <section className="panel" aria-label="AI">
-      <h2>AI (cloud)</h2>
-      <ErrorLine error={s.error} />
-      <p><strong>Cloud AI is {on ? "ON" : "off"}.</strong> {on ? "" : "Nothing leaves this Mac. Search, timeline, OCR and browsing work fully without it."}</p>
-      <p className="small">When on, only the minimum would be sent to the OpenAI API: the search passage or timeline excerpt you ask a question about, and the image being described for visual search. Never the whole archive, never keys or tokens.</p>
-      <p className="small muted">The AI layer (overview, follow-up questions, embeddings) is not built yet. This switch is stored now and has no effect until it is.</p>
-      <label className="check"><input type="checkbox" checked={on} onChange={() => void toggle()} disabled={!s.data} /> Allow cloud AI processing</label>
-      {msg && <p className="error">{msg}</p>}
     </section>
   );
 }

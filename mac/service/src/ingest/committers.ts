@@ -52,22 +52,29 @@ export function commitFileMeta(db: DB, r: FileMetaRecordT): CommitResult {
     return { summary: { fileId: id, deletedAtSource: true } };
   }
   const thumb = r.thumbBlobOid ?? null;
+  // PLAN decision 8: an original the device uploaded on its own (payloadKind photo / document). The blob may
+  // land before or after this record; placeAndLink (called for every returned oid) marks the file cached.
+  const original = r.originalBlobOid ?? null;
   let id: string;
   if (existing) {
     id = existing.id;
     db.prepare(`UPDATE files SET name = ?, ext = ?, size = ?, mtime = ?, quick_hash = ?, source_status = 'live', source_deleted_at = NULL,
                   thumb_blob_oid = COALESCE(?, thumb_blob_oid), event_time = ?, captured_at = ?, updated_at = ?,
-                  status = CASE WHEN quick_hash IS NOT ? THEN 'reference' ELSE status END
+                  original_blob_oid = CASE WHEN quick_hash IS NOT ? THEN ? ELSE COALESCE(?, original_blob_oid) END,
+                  extract_status = CASE WHEN ? IS NOT NULL AND original_blob_oid IS NOT ? THEN NULL ELSE extract_status END,
+                  status = CASE WHEN quick_hash IS NOT ? OR (? IS NOT NULL AND original_blob_oid IS NOT ?) THEN 'reference' ELSE status END
                 WHERE id = ?`)
-      // a changed file keeps its older local copy (local_path) but is no longer "cached": the copy is stale
-      .run(name, ext, r.size, normTs(r.mtime), r.quickHash, thumb, ev, normTs(r.captureTime), now, r.quickHash, id);
+      // a changed file keeps its older local copy (local_path) but is no longer "cached": the copy is stale.
+      // A new original (other content) also waits for its blob before the file is "cached" again.
+      .run(name, ext, r.size, normTs(r.mtime), r.quickHash, thumb, ev, normTs(r.captureTime), now,
+        r.quickHash, original, original, original, original, r.quickHash, original, original, id);
   } else {
     id = randomUUID();
-    db.prepare(`INSERT INTO files(id, device_id, path, name, ext, size, mtime, quick_hash, thumb_blob_oid, event_time, captured_at, first_seen_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-      .run(id, r.deviceId, r.path, name, ext, r.size, normTs(r.mtime), r.quickHash, thumb, ev, normTs(r.captureTime), now, now);
+    db.prepare(`INSERT INTO files(id, device_id, path, name, ext, size, mtime, quick_hash, thumb_blob_oid, original_blob_oid, event_time, captured_at, first_seen_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(id, r.deviceId, r.path, name, ext, r.size, normTs(r.mtime), r.quickHash, thumb, original, ev, normTs(r.captureTime), now, now);
   }
-  return { summary: { fileId: id }, blobs: thumb ? [thumb] : [] };
+  return { summary: { fileId: id, ...(original ? { originalBlobOid: original } : {}) }, blobs: [thumb, original].filter((x): x is string => !!x) };
 }
 
 // ---------------------------------------------------------------- media

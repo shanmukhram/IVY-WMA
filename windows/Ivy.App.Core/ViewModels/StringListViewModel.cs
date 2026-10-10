@@ -3,19 +3,28 @@ using System.Collections.ObjectModel;
 namespace Ivy.App.Core.ViewModels;
 
 /// <summary>
-/// Editable list of strings (indexed roots, screenshot roots, title exclusions). Values are trimmed,
-/// blanks ignored, duplicates rejected case-insensitively. Every change calls <c>changed</c> once.
+/// Editable list of strings (indexed roots, screenshot roots, title exclusions, extensions). Values are trimmed
+/// (and passed through <c>normalize</c> when given), blanks ignored, duplicates rejected case-insensitively. Every
+/// change calls <c>changed</c> once.
 /// </summary>
 public sealed class StringListViewModel : ObservableObject
 {
     private readonly Action _changed;
     private readonly Func<Task<string?>>? _pick;
+    private readonly Func<string, string>? _normalize;
     private string _newItem = "";
 
-    public StringListViewModel(Action changed, Func<Task<string?>>? pick = null)
+    public StringListViewModel(Action changed, Func<Task<string?>>? pick = null, Func<string, string>? normalize = null)
     {
         _changed = changed;
         _pick = pick;
+        _normalize = normalize;
+    }
+
+    private string Clean(string? v)
+    {
+        var t = (v ?? "").Trim();
+        return _normalize is null ? t : _normalize(t).Trim();
     }
 
     public ObservableCollection<string> Items { get; } = new();
@@ -31,14 +40,14 @@ public sealed class StringListViewModel : ObservableObject
         Items.Clear();
         foreach (var v in values)
         {
-            var t = v.Trim();
+            var t = Clean(v);
             if (t.Length > 0 && !Contains(t)) Items.Add(t);
         }
     }
 
     public bool Add(string? value)
     {
-        var t = (value ?? "").Trim();
+        var t = Clean(value);
         if (t.Length == 0 || Contains(t)) return false;
         Items.Add(t);
         _changed();

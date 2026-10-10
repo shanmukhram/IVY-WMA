@@ -73,6 +73,10 @@ export function enrich(ctx: Ctx, items: BaseItem[]): Array<BaseItem & { detail: 
       for (const r of db.prepare(`SELECT id, direction, contact, number, started_at, duration_s FROM calls WHERE id IN (${q})`).all(...ids) as Array<Record<string, unknown>>) {
         details.set(String(r.id), { direction: r.direction, contact: r.contact, number: r.number, startedAt: r.started_at, durationS: r.duration_s });
       }
+    } else if (type === "browsing") {
+      for (const r of db.prepare(`SELECT id, source, product, title, subtitle, link, time, imported_at FROM browsing_events WHERE id IN (${q})`).all(...ids) as Array<Record<string, unknown>>) {
+        details.set(String(r.id), { source: r.source, product: r.product, subtitle: r.subtitle, link: r.link, importedAt: r.imported_at, readOnlyImport: true });
+      }
     }
   }
   return items.map((it) => ({ ...it, detail: details.get(it.id) ?? {} }));

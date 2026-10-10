@@ -11,14 +11,16 @@ export type EventType =
   | "ingest.poll" | "ingest.committed" | "ingest.quarantined" | "ingest.replayed" | "ingest.error"
   | "blob.progress" | "blob.complete"
   | "command.issued" | "command.sent" | "command.transferring" | "command.progress" | "command.status" | "command.completed" | "command.cancelled"
-  | "file.cached"
+  | "file.cached" | "file.extracted"
   | "pairing.started" | "pairing.completed" | "pairing.rejected" | "pairing.expired" | "pairing.cancelled"
   | "device.revoked"
   | "keystore.initialized" | "keystore.unlocked" | "keystore.locked" | "keystore.passphrase_changed"
   | "r2.configured"
   | "coverage.changed"
   | "media.ocr"
-  | "bin.deleted" | "bin.restored" | "bin.purged";
+  | "bin.deleted" | "bin.restored" | "bin.purged"
+  | "ai.answered" | "ai.embedded"
+  | "import.completed" | "import.failed";
 
 export interface ServiceEvent {
   id: number;

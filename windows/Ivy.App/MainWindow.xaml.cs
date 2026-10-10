@@ -37,6 +37,16 @@ public sealed partial class MainWindow : Window
 
     private void AddExclusion_Click(object sender, RoutedEventArgs e) => ViewModel.Settings.TitleExclusions.AddNew();
 
+    private void AddImageExtension_Click(object sender, RoutedEventArgs e) => ViewModel.Settings.ImageExtensions.AddNew();
+
+    private void RemoveImageExtension_Click(object sender, RoutedEventArgs e) =>
+        ViewModel.Settings.ImageExtensions.Remove(ImageExtensionsList.SelectedItem as string);
+
+    private void AddDocumentExtension_Click(object sender, RoutedEventArgs e) => ViewModel.Settings.DocumentExtensions.AddNew();
+
+    private void RemoveDocumentExtension_Click(object sender, RoutedEventArgs e) =>
+        ViewModel.Settings.DocumentExtensions.Remove(DocumentExtensionsList.SelectedItem as string);
+
     private void RemoveExclusion_Click(object sender, RoutedEventArgs e) =>
         ViewModel.Settings.TitleExclusions.Remove(ExclusionsList.SelectedItem as string);
 

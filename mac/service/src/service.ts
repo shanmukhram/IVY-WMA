@@ -12,6 +12,7 @@ import { EventBus } from "./events.ts";
 import { Ctx, type OcrProvider, type Thumbnailer } from "./context.ts";
 import { Ingester } from "./ingest/ingester.ts";
 import { MediaProcessor, commandOcr, sipsThumbnailer, visionOcr } from "./ingest/media.ts";
+import { DocumentProcessor } from "./ingest/documents.ts";
 import { sendQueued } from "./commands/commands.ts";
 import { sweep } from "./bin/recovery.ts";
 import { buildServer } from "./http/server.ts";
@@ -27,6 +28,8 @@ export interface ServiceOptions {
   semantic?: SemanticProvider | null;
   /** reuse a token (tests); otherwise read or create data/session.token */
   token?: string;
+  /** pdftotext binary for document text (PLAN decision 8); undefined = look for it, null = none */
+  pdftotext?: string | null;
 }
 
 export interface Service {
@@ -34,6 +37,8 @@ export interface Service {
   config: ServiceConfig;
   ingester: Ingester;
   media: MediaProcessor;
+  /** text extraction for document originals (PLAN decision 8) */
+  documents: DocumentProcessor;
   token: string;
   version: string;
   semantic: SemanticProvider | null;
@@ -87,13 +92,15 @@ export async function createService(overrides: Partial<ServiceConfig> = {}, opts
     : config.ocr === "command" && config.ocrCommand ? commandOcr(config.ocrCommand) : null;
   const media = new MediaProcessor(ctx, { concurrency: config.ocrConcurrency });
   ctx.mediaReady = (id, path) => media.enqueue(id, path);
+  const documents = new DocumentProcessor(ctx, { pdftotext: opts.pdftotext });
+  ctx.documentReady = (oid, path) => documents.enqueue(oid, path);
   const ingester = new Ingester(ctx);
   ingesterRef = ingester;
   const token = opts.token ?? loadToken(config.tokenPath);
 
   let sweepTimer: NodeJS.Timeout | undefined;
   const svc: Service = {
-    ctx, config, ingester, media, token, version: VERSION, semantic: opts.semantic ?? null,
+    ctx, config, ingester, media, documents, token, version: VERSION, semantic: opts.semantic ?? null,
     app: undefined as unknown as FastifyInstance,
     onUnlocked() {
       void sendQueued(ctx).catch(() => 0);
@@ -108,17 +115,19 @@ export async function createService(overrides: Partial<ServiceConfig> = {}, opts
       keystore.startAutoLock();
       ingester.start();
       void media.start().catch(() => undefined); // probe the OCR helper, then the backlog
+      documents.resumePending(); // e.g. PDFs left pending before pdftotext was installed
       try { sweep(ctx); } catch { /* retried on the timer */ }
       sweepTimer = setInterval(() => { try { sweep(ctx); } catch { /* next time */ } }, 6 * 3600_000);
       sweepTimer.unref();
       return addr;
     },
-    async idle() { await media.idle(); },
+    async idle() { await media.idle(); await documents.idle(); await media.idle(); },
     async close() {
       if (sweepTimer) clearInterval(sweepTimer);
       keystore.stopAutoLock();
       await ingester.stop();
       await media.close();
+      await documents.close();
       await svc.app.close();
       ctx.dropR2();
       keystore.lock("shutdown", { full: true });

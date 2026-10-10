@@ -2,8 +2,8 @@
  * Per content-type query definitions shared by search, timeline and the
  * recovery bin. `x` is always the base table alias.
  */
-export type ItemType = "message" | "notification" | "screenshot" | "photo" | "file" | "usage" | "call";
-export const ITEM_TYPES: ItemType[] = ["message", "notification", "screenshot", "photo", "file", "usage", "call"];
+export type ItemType = "message" | "notification" | "screenshot" | "photo" | "file" | "usage" | "call" | "browsing";
+export const ITEM_TYPES: ItemType[] = ["message", "notification", "screenshot", "photo", "file", "usage", "call", "browsing"];
 
 export interface TypeDef {
   type: ItemType;
@@ -57,7 +57,7 @@ export const TYPE_DEFS: Record<ItemType, TypeDef> = {
     device: "x.device_id", app: null, time: "COALESCE(x.mtime, x.event_time)",
     timeField: "CASE WHEN x.mtime IS NOT NULL THEN 'mtime' ELSE 'event_time' END",
     title: "x.name", body: "x.path", person: null, conversation: null, account: null,
-    text: ["x.name", "x.path"],
+    text: ["x.name", "x.path", "x.content_text"],
   },
   usage: {
     type: "usage", table: "usage_events", fts: "usage_events_fts", from: "usage_events x",
@@ -70,6 +70,13 @@ export const TYPE_DEFS: Record<ItemType, TypeDef> = {
     device: "x.device_id", app: null, time: "x.started_at", timeField: "'started_at'",
     title: "x.contact", body: "x.number", person: "x.contact", conversation: null, account: null,
     text: ["x.contact", "x.number"],
+  },
+  // S7: Google activity imported read-only from Activity Vault; no IVY device, `app` is the Google product
+  browsing: {
+    type: "browsing", table: "browsing_events", fts: "browsing_events_fts", from: "browsing_events x",
+    device: "NULL", app: "x.product", time: "x.time", timeField: "'time'",
+    title: "x.title", body: "COALESCE(x.subtitle, x.link)", person: null, conversation: null, account: null,
+    text: ["x.title", "x.subtitle", "x.link"],
   },
 };
 

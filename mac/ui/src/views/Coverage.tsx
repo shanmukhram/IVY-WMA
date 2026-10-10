@@ -2,6 +2,7 @@ import { useState } from "react";
 import { errText } from "../api.ts";
 import { useApi, useDebounced, useEvents, useLoad } from "../ctx.tsx";
 import { Dot, Empty, ErrorLine, Mono, Time, bytes, fmtTime } from "../ui.tsx";
+import { ImportsCoverage } from "./AiSettings.tsx";
 
 interface Gap { collector: string; from: string; to: string; reason: string; open: boolean }
 
@@ -95,6 +96,8 @@ export function CoverageView() {
               </div>
             </section>
           ))}
+
+          <ImportsCoverage imports={c.imports} />
 
           <section aria-label="Buckets">
             <h3>Up-buckets</h3>

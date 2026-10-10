@@ -16,12 +16,14 @@
  * - Hash or auth failure quarantines the part and the blob; parts with no
  *   manifest are left in R2 and quarantined after 7 days (orphans).
  */
+import { randomUUID } from "node:crypto";
 import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, renameSync, statSync, writeSync } from "node:fs";
 import { join, dirname } from "node:path";
 import {
   aesGcmDecrypt, chunkNonce, concatBytes, decryptEnvelope, fromBase64, fromCrockford, fromUtf8, kindId,
   parseChunkHeader, timingSafeEqual, toHex, u32be, utf8, validateManifest,
 } from "@ivy/protocol";
+import { PAYLOAD_KINDS } from "@ivy/protocol";
 import type { ManifestRecordT } from "@ivy/protocol";
 import type { Ctx } from "../context.ts";
 import { dirs } from "../config.ts";
@@ -31,7 +33,7 @@ import { baseName, extOf, sniffFile, IMAGE_EXTS } from "../util/ext.ts";
 
 const CHUNK_HEADER_LEN = 32;
 const GCM_TAG_LEN = 16;
-const KNOWN_PAYLOAD_KINDS = new Set(["file_original", "screenshot", "thumbnail", "photo", "attachment", "media"]);
+const KNOWN_PAYLOAD_KINDS = new Set<string>(PAYLOAD_KINDS);
 
 export interface BlobRow {
   rid: number; oid: string; bucket: string; role: string; device_id: string | null;
@@ -203,7 +205,8 @@ export async function finalizeBlob(ctx: Ctx, bucket: string, oid: string): Promi
   return { ok: true, path: placed ?? holding };
 }
 
-interface Ref { kind: "media" | "thumb" | "file_original" | "attachment"; id: string; devicePath?: string; deviceId?: string }
+/** `original`: a file whose file_meta.originalBlobOid names the blob (PLAN decision 8 photo / document). */
+interface Ref { kind: "media" | "thumb" | "file_original" | "attachment" | "original"; id: string; devicePath?: string; deviceId?: string }
 
 function referencesOf(ctx: Ctx, oid: string): Ref[] {
   const refs: Ref[] = [];
@@ -220,7 +223,27 @@ function referencesOf(ctx: Ctx, oid: string): Ref[] {
   for (const r of ctx.db.prepare("SELECT id, filename FROM attachments WHERE blob_oid = ?").all(oid) as Array<{ id: string; filename: string }>) {
     refs.push({ kind: "attachment", id: r.id, devicePath: r.filename });
   }
+  for (const r of ctx.db.prepare("SELECT id, path, device_id FROM files WHERE original_blob_oid = ? ORDER BY rid").all(oid) as Array<{ id: string; path: string; device_id: string }>) {
+    refs.push({ kind: "original", id: r.id, devicePath: r.path, deviceId: r.device_id });
+  }
   return refs;
+}
+
+/**
+ * A `photo` original (PLAN decision 8) becomes one media row (kind photo), from the first file that names
+ * it, so it is OCR'd and searchable like a screenshot. Copies of the same image share the row (blob_oid is
+ * unique). Inside the caller's flow; idempotent.
+ */
+function ensurePhotoMedia(ctx: Ctx, row: BlobRow): void {
+  if (row.payload_kind !== "photo") return;
+  if (ctx.db.prepare("SELECT 1 FROM media WHERE blob_oid = ?").get(row.oid)) return;
+  const f = ctx.db.prepare("SELECT device_id, path, mtime, captured_at FROM files WHERE original_blob_oid = ? ORDER BY rid LIMIT 1").get(row.oid) as
+    { device_id: string; path: string; mtime: string | null; captured_at: string } | undefined;
+  if (!f) return; // the file_meta naming it has not arrived yet
+  ctx.db.prepare(`INSERT OR IGNORE INTO media(id, device_id, kind, source_path, sha256, blob_oid, saved_at, captured_at, imported_at)
+                  VALUES (?, ?, 'photo', ?, ?, ?, ?, ?, ?)`)
+    .run(randomUUID(), f.device_id, f.path, row.sha256, row.oid, f.mtime, f.captured_at, nowIso());
+  ctx.db.prepare("UPDATE blobs SET device_id = COALESCE(device_id, ?) WHERE rid = ?").run(f.device_id, row.rid);
 }
 
 /** Where a completed blob belongs, given what references it. */
@@ -234,12 +257,17 @@ function homeFor(ctx: Ctx, row: BlobRow, refs: Ref[]): string | null {
     if (!ref) return null; // wait for the command_status that names it
     return join(d.files, row.oid, safeFileName(baseName(ref.devicePath!)));
   }
+  if (kind === "document") {
+    const ref = refs.find((r) => r.kind === "original" && r.devicePath);
+    if (!ref) return null; // wait for the file_meta that names it
+    return join(d.files, row.oid, safeFileName(baseName(ref.devicePath!)));
+  }
   if (kind === "attachment") {
     const ref = refs.find((r) => r.kind === "attachment");
     return join(d.attachments, `${row.oid}.${extOf(ref?.devicePath) ?? sniffed ?? "bin"}`);
   }
   // screenshot / photo / media
-  const ref = refs.find((r) => r.kind === "media");
+  const ref = refs.find((r) => r.kind === "media" || r.kind === "original");
   return join(d.media, `${row.oid}.${sniffed ?? extOf(ref?.devicePath) ?? "bin"}`);
 }
 
@@ -257,6 +285,7 @@ export function placeAndLink(ctx: Ctx, oid: string): string | null {
   const rows = ctx.db.prepare("SELECT * FROM blobs WHERE oid = ? AND status = 'complete'").all(oid) as BlobRow[];
   let placed: string | null = null;
   for (const row of rows) {
+    ensurePhotoMedia(ctx, row);
     const refs = referencesOf(ctx, oid);
     const home = homeFor(ctx, row, refs);
     let path = row.local_path;
@@ -278,6 +307,13 @@ export function placeAndLink(ctx: Ctx, oid: string): string | null {
           ctx.db.prepare("UPDATE files SET thumb_path = ? WHERE id = ?").run(path, r.id);
         } else if (r.kind === "attachment") {
           ctx.db.prepare("UPDATE attachments SET local_path = ?, status = 'cached' WHERE id = ?").run(path, r.id);
+        } else if (r.kind === "original") {
+          // the file's own copy: cached while its newest file_meta still names this blob
+          const u = ctx.db.prepare(`UPDATE files SET local_path = ?, status = 'cached',
+                                      extract_status = CASE WHEN ? = 'document' THEN COALESCE(extract_status, 'pending') ELSE extract_status END
+                                    WHERE id = ? AND original_blob_oid = ? AND (local_path IS NOT ? OR status <> 'cached')`)
+            .run(path, row.payload_kind, r.id, oid, path);
+          if (u.changes) ctx.events.emit("file.cached", { fileId: r.id, blobOid: oid, payloadKind: row.payload_kind });
         } else if (r.kind === "file_original") {
           const c = ctx.db.prepare("SELECT id, file_id, status FROM commands WHERE id = ?").get(r.id) as { id: string; file_id: string | null; status: string };
           if (c.file_id) ctx.db.prepare("UPDATE files SET local_path = ?, status = 'cached' WHERE id = ?").run(path, c.file_id);
@@ -290,6 +326,10 @@ export function placeAndLink(ctx: Ctx, oid: string): string | null {
       }
     })();
     for (const r of refs) if (r.kind === "media" && IMAGE_EXTS.has(extOf(path) ?? "")) ctx.mediaReady?.(r.id, path);
+    if (row.payload_kind === "document" && refs.some((r) => r.kind === "original")) {
+      const waiting = ctx.db.prepare("SELECT 1 FROM files WHERE original_blob_oid = ? AND (extract_status IS NULL OR extract_status = 'pending') LIMIT 1").get(oid);
+      if (waiting) ctx.documentReady?.(oid, path);
+    }
   }
   return placed;
 }

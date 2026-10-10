@@ -57,7 +57,7 @@ public abstract record IvyRecord
     }
 }
 
-/// <summary><c>file_meta</c> (WC1/WC2): metadata only, original on request.</summary>
+/// <summary><c>file_meta</c> (WC1/WC2): metadata, plus the original when the media policy uploads it (PLAN decision 8).</summary>
 public sealed record FileMetaRecord() : IvyRecord(Protocol.Kind.FileMeta)
 {
     [JsonPropertyName("path")] public required string Path { get; init; }
@@ -67,6 +67,12 @@ public sealed record FileMetaRecord() : IvyRecord(Protocol.Kind.FileMeta)
     [JsonPropertyName("mtime")] public string? Mtime { get; init; }
     [JsonPropertyName("quickHash")] public string? QuickHash { get; init; }
     [JsonPropertyName("thumbBlobOid")] public string? ThumbBlobOid { get; init; }
+
+    /// <summary>
+    /// Optional (§6): oid of the chunked blob holding the original bytes, uploaded by the device on its own
+    /// (payload kind <c>photo</c> or <c>document</c>). Absent: original on request only. Omitted when null.
+    /// </summary>
+    [JsonPropertyName("originalBlobOid")] public string? OriginalBlobOid { get; init; }
 
     /// <summary>
     /// True when this record reports a deletion (default false; omitted from the wire when false). When
@@ -80,6 +86,8 @@ public sealed record FileMetaRecord() : IvyRecord(Protocol.Kind.FileMeta)
     {
         base.Validate();
         if (Size is { } sz) NonNegative(sz, "size");
+        Optional(ThumbBlobOid, "thumbBlobOid");
+        Optional(OriginalBlobOid, "originalBlobOid");
         if (!Deleted)
         {
             if (Size is null) throw new RecordValidationException("size is required unless deleted");

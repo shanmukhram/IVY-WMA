@@ -2,8 +2,8 @@ node_modules/
 dist/
 out/
 build/
-bin/
-obj/
+windows/**/bin/
+windows/**/obj/
 .gradle/
 *.db
 *.db-wal
@@ -19,3 +19,4 @@ coverage/
 .fake-mac/
 .build/
 .swiftpm/
+.claude/launch.json

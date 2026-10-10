@@ -112,6 +112,7 @@ The design is deliberately plain (PLAN decision 5): dark background, 1px borders
   - the bandwidth cap (KB/s, 0 = unlimited) with **Apply**;
   - **Sync now**: poll commands, send a device report, drain the queue.
 - **Folder lists**: indexed folders and drives (folder dialog, add/remove) and screenshot folders.
+- **Originals uploaded from indexed folders** (PLAN decision 8): **Upload images** and **Upload documents** switches, the two size caps (MB) with **Apply**, and the image and document extension lists (add/remove, entered without the dot).
 - **App usage**: the window-title capture switch and the title exclusion list.
 - **Startup**: the run-at-login switch.
 - **Activity feed** (right-hand side)
@@ -210,6 +211,19 @@ The design is deliberately plain (PLAN decision 5): dark background, 1px borders
 **Settings**
 
 - [ ] Turning window-title capture off, or adding an exclusion such as `keepass.exe`, adds a `config` line to the feed. The setting survives a restart.
+
+**Media policy (PLAN decision 8)**
+
+- [ ] The new panel shows both switches on, caps 25 and 10, and the default extension lists. `0`, `abc` or `5000` in a cap with **Apply** shows the validation line and changes nothing.
+- [ ] Index a folder with a few photos (jpg, png, HEIC from a phone), a PDF, a .docx, a .txt, a .zip and a photo over 25 MB. The feed shows `file_meta` captures first, then `blob … photo` / `blob … document` lines for the eligible files only. The zip and the large photo get no blob. On the Mac each eligible file becomes "cached", the photos appear under Photos with OCR text, and the PDF and .txt are found by words inside them.
+- [ ] The files row detail shows "originals: N to upload" during the first upload, and the line goes away when it finishes. Pending records (new files) still upload while a big photo library is in the bulk lane. A newly saved .txt reaches the Mac before the remaining photos.
+- [ ] Copy a photo to another indexed folder, and move another. No new `photo` blob appears. Edit the .txt and save it: a new `document` blob appears.
+- [ ] A screenshot (Win+PrtScn) uploads once, as `screenshot`, not also as `photo`. A photo in a subfolder of Screenshots uploads as `photo`.
+- [ ] A document open in Word, or an Outlook `.pst` if it is under a root and in the list, is not uploaded while locked. An `original_failed` line appears with no path in it, and the detail shows "1 unreadable". After closing the file, **Sync now** does not retry it, but a rescan does: change a setting or send a `rescan` from the Mac, and a `document` blob follows.
+- [ ] Turning **Upload images** off stops new photo blobs, and photos already counted wait. Turning it back on resumes them. Raising the image cap to 100 and pressing Apply starts a rescan ("scanning (settings_changed)"), and the large photo then uploads without re-hashing the folder. The rescan finishes much faster than the first index.
+- [ ] A cap of `256` KB/s with a few hundred MB of photos: queue bytes stop growing at about 1 GB of originals waiting ("originals waiting for the uploader" in the detail), and the disk does not fill. Pause, then quit and restart: the counts are the same afterwards, and uploads resume where they stopped.
+- [ ] A `collector_config` from the Mac with `{"documentCapMB": 2, "documentExtensions": ["pdf","txt"]}` takes effect at once: a `config` line appears and the rescan starts. The panel shows the new values after the app restarts (it loads settings at start), and they survive the restart.
+- [ ] If files in a OneDrive folder are cloud-only, check whether uploading their originals downloads them. If it does, decide whether to exclude OneDrive or accept it.
 
 **Quit**
 

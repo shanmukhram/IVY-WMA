@@ -11,6 +11,7 @@ import type { Ctx } from "../context.ts";
 import { getSetting } from "../db/index.ts";
 import { msOf, nowIso } from "../util/time.ts";
 import { ROLES } from "../r2/config.ts";
+import { activityVaultCoverage } from "../imports/activity-vault.ts";
 
 export type Dot = "green" | "amber" | "red" | "off";
 
@@ -184,12 +185,18 @@ export function coverage(ctx: Ctx, now = Date.now()) {
     };
   });
 
+  // S7: imports that are not devices (Activity Vault); shown as their own coverage rows
+  const imports = [activityVaultCoverage(ctx, now)];
+  for (const im of imports) {
+    if (im.enabled && (im.status === "red" || im.status === "amber")) problems.push({ severity: im.status, source: { collector: im.source }, message: `${im.name}: ${im.statusReason}` });
+  }
+
   const missingRoles = ROLES.filter((r) => !devices.some((d) => d.role === r));
   problems.sort((a, b) => (a.severity === b.severity ? 0 : a.severity === "red" ? -1 : 1));
   return {
     at: nowIso(), locked: !unlocked, r2Configured: ctx.r2Configured(),
     status: deviceViews.reduce<Dot>((acc, d) => worst(acc, d.status), devices.length ? "green" : "off"),
-    problems, devices: deviceViews, buckets, unpairedRoles: missingRoles,
+    problems, devices: deviceViews, buckets, unpairedRoles: missingRoles, imports,
     quarantineOpen: openQuarantine.reduce((n, q) => n + q.n, 0),
     thresholds: { amberAfterMs: ctx.config.amberAfterMs, redAfterMs: ctx.config.redAfterMs, gapThresholdMs: ctx.config.gapThresholdMs },
   };

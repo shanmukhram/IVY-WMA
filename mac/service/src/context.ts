@@ -40,6 +40,8 @@ export class Ctx {
   ocr: OcrProvider | null = null;
   /** called when a media original is in place (thumbnail + OCR post-processing) */
   mediaReady: ((mediaId: string, path: string) => void) | null = null;
+  /** called when a document original is in place (text extraction, PLAN decision 8) */
+  documentReady: ((fileId: string, path: string) => void) | null = null;
   private r2cache: R2 | null = null;
 
   constructor(db: DB, config: ServiceConfig, keystore: Keystore, events: EventBus) {

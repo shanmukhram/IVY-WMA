@@ -31,6 +31,8 @@ public static class PayloadKinds
     public const string Photo = "photo";
     public const string Attachment = "attachment";
     public const string Media = "media";
+    /// <summary>A document original uploaded by the device's media policy (PLAN decision 8), linked from <c>file_meta.originalBlobOid</c>.</summary>
+    public const string Document = "document";
 }
 
 public static class Kinds

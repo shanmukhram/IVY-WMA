@@ -1,3 +1,5 @@
+using Ivy.Core.Policy;
+
 namespace Ivy.App.Core.Hosting;
 
 /// <summary>One collector row as the collector host reports it.</summary>
@@ -29,6 +31,14 @@ public sealed record CollectorSettings
     public bool WindowTitleCapture { get; init; } = true;
     /// <summary>Executable names or title substrings whose window titles are never captured.</summary>
     public IReadOnlyList<string> TitleExclusions { get; init; } = Array.Empty<string>();
+
+    // Media policy (PLAN decision 8): originals uploaded automatically from the indexed folders.
+    public bool AutoUploadImages { get; init; } = MediaPolicyDefaults.AutoUploadImages;
+    public double ImageCapMB { get; init; } = MediaPolicyDefaults.ImageCapMB;
+    public bool AutoUploadDocuments { get; init; } = MediaPolicyDefaults.AutoUploadDocuments;
+    public double DocumentCapMB { get; init; } = MediaPolicyDefaults.DocumentCapMB;
+    public IReadOnlyList<string> ImageExtensions { get; init; } = MediaPolicyDefaults.ImageExtensions;
+    public IReadOnlyList<string> DocumentExtensions { get; init; } = MediaPolicyDefaults.DocumentExtensions;
 }
 
 /// <summary>

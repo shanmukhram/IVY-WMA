@@ -259,6 +259,31 @@ public class UploaderTests : IDisposable
     }
 
     [Fact]
+    public async Task Bulk_lane_drains_after_normal_items_and_a_preallocated_oid_is_used()
+    {
+        var server = new FakeBucketServer();
+        using var p = new AgentProcess(_dir.Path);
+        var sink = new RecordSink(p.Queue, _mac.PublicKey, "dev-1", p.Activity, new RecordSinkOptions { ChunkSize = 1024 });
+        var oid = Oids.New();
+        var bulk = sink.EnqueueBlob(new MemoryStream(new byte[2000]), PayloadKinds.Photo, "files", oid: oid, bulk: true);
+        Assert.Equal(oid, bulk.Oid);
+        Assert.Equal(ObjectKeys.BlobManifest(oid), bulk.ManifestKey);
+        Assert.True(p.Queue.Contains(bulk.ManifestKey));
+        Assert.True(p.Queue.BulkBytes("files") > 2000);
+        Assert.Equal(0, p.Queue.BulkBytes("screenshots"));
+        // enqueued later, but in the normal lane: uploads first
+        var rec = sink.Enqueue(Kind.UsageEvent, "up/usg", """{"v":1,"kind":"usage_event","deviceId":"dev-1","eventTime":"t","captureTime":"t","app":"a","startedAt":"t","endedAt":"t"}""", "usage");
+        var shot = sink.EnqueueBlob(new MemoryStream(new byte[10]), PayloadKinds.Screenshot, "screenshots");
+        Assert.Throws<ArgumentException>(() => sink.EnqueueBlob(new MemoryStream(new byte[1]), PayloadKinds.Photo, oid: "not-an-oid"));
+
+        Assert.Equal(6, await new Uploader(p.Queue, new FakeUpClient(server)).DrainAsync());
+        var puts = server.Calls.Select(c => c.Split(' ')[1]).ToList();
+        Assert.Equal(new[] { rec.ObjectKey, shot.ManifestKey, ObjectKeys.BlobChunk(shot.Oid, 0), bulk.ManifestKey, ObjectKeys.BlobChunk(oid, 0), ObjectKeys.BlobChunk(oid, 1) }, puts);
+        Assert.Equal(0, p.Queue.BulkBytes("files"));
+        Assert.False(p.Queue.Contains(bulk.ManifestKey));
+    }
+
+    [Fact]
     public async Task Default_options_send_large_originals_via_multipart()
     {
         var server = new FakeBucketServer();

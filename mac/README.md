@@ -61,6 +61,11 @@ Everything is under the data directory (`<repo>/data` for the app, `--data` for 
 
 Revoking a device (Devices) forgets its key; its R2 tokens stay valid until rotated in Cloudflare.
 
+## AI and Activity Vault (optional)
+
+- Settings > AI (cloud, OpenAI): off by default. Turning it on and saving an OpenAI API key enables Ask AI (nav), the "AI overview" drawer beside search results and the timeline, and optionally embeddings for "Semantic matches". The page states what is sent. With it off nothing leaves the Mac.
+- Settings > Activity Vault import: point it at the Activity Vault archive (SQLite or JSON file, or its folder) and tick "Import daily", or use "Import now". The archive is read-only to IVY. Imported rows appear as "Google activity" in search and on the timeline; Coverage shows the import row.
+
 ## Tests
 
 ```sh

@@ -320,6 +320,85 @@ public class MainViewModelTests
     }
 
     [Fact]
+    public async Task Media_policy_settings_load_validate_and_apply()
+    {
+        _agent.IsPaired = true;
+        _host.Settings = new CollectorSettings
+        {
+            AutoUploadImages = true, ImageCapMB = 25, AutoUploadDocuments = false, DocumentCapMB = 2.5,
+            ImageExtensions = new[] { "png", "jpg" }, DocumentExtensions = new[] { "pdf" },
+        };
+        var vm = Create();
+        await vm.StartAsync();
+        var s = vm.Settings;
+        Assert.True(s.AutoUploadImages);
+        Assert.False(s.AutoUploadDocuments);
+        Assert.Equal("25", s.ImageCapText);
+        Assert.Equal("2.5", s.DocumentCapText);
+        Assert.Equal("current: images up to 25 MB, documents up to 2.5 MB", s.CapsStatus);
+        Assert.Equal(new[] { "png", "jpg" }, s.ImageExtensions.Items);
+        Assert.Equal(new[] { "pdf" }, s.DocumentExtensions.Items);
+        Assert.Empty(_host.Applied); // loading does not write back
+
+        // toggles apply at once
+        s.AutoUploadDocuments = true;
+        await s.LastApply;
+        Assert.True(_host.Applied[^1].AutoUploadDocuments);
+        s.AutoUploadImages = false;
+        await s.LastApply;
+        Assert.False(_host.Settings.AutoUploadImages);
+
+        // caps apply with the button, and only valid values
+        s.ImageCapText = "0";
+        s.ApplyCapsCommand.Execute(null);
+        Assert.Equal("enter sizes in MB, more than 0 and at most 4096", s.CapsStatus);
+        s.ImageCapText = "lots";
+        s.ApplyCapsCommand.Execute(null);
+        Assert.Equal(2, _host.Applied.Count);
+        Assert.Equal(25, _host.Settings.ImageCapMB);
+        s.ImageCapText = " 50 MB ";
+        s.DocumentCapText = "12.25";
+        s.ApplyCapsCommand.Execute(null);
+        await s.LastApply;
+        Assert.Equal(50, _host.Settings.ImageCapMB);
+        Assert.Equal(12.25, _host.Settings.DocumentCapMB);
+        Assert.Equal("50", s.ImageCapText);
+        Assert.Equal("current: images up to 50 MB, documents up to 12.25 MB", s.CapsStatus);
+
+        // extension lists: normalized (no dot, lower case), duplicates rejected
+        s.ImageExtensions.NewItem = " .HEIC ";
+        Assert.True(s.ImageExtensions.AddNew());
+        Assert.False(s.ImageExtensions.Add("heic"));
+        Assert.False(s.ImageExtensions.Add(" . "));
+        await s.LastApply;
+        Assert.Equal(new[] { "png", "jpg", "heic" }, _host.Settings.ImageExtensions);
+        Assert.True(s.DocumentExtensions.Add("TXT"));
+        Assert.True(s.DocumentExtensions.Remove("pdf"));
+        await s.LastApply;
+        Assert.Equal(new[] { "txt" }, _host.Settings.DocumentExtensions);
+        Assert.Equal(new[] { "png", "jpg", "heic" }, _host.Settings.ImageExtensions); // other values carried over
+        Assert.Equal("", s.SettingsError);
+    }
+
+    [Fact]
+    public async Task Media_policy_defaults_match_the_collector_defaults()
+    {
+        _agent.IsPaired = true;
+        var vm = Create(); // the fake host returns new CollectorSettings(): the defaults
+        await vm.StartAsync();
+        var c = new Ivy.Collectors.Files.FileIndexSettings();
+        Assert.Equal(c.AutoUploadImages, vm.Settings.AutoUploadImages);
+        Assert.Equal(c.AutoUploadDocuments, vm.Settings.AutoUploadDocuments);
+        Assert.Equal(c.ImageCapMB, vm.Settings.ImageCapMB);
+        Assert.Equal(c.DocumentCapMB, vm.Settings.DocumentCapMB);
+        Assert.Equal(c.ImageExtensions, vm.Settings.ImageExtensions.Items);
+        Assert.Equal(c.DocumentExtensions, vm.Settings.DocumentExtensions.Items);
+        Assert.True(vm.Settings.AutoUploadImages);
+        Assert.Equal(25, vm.Settings.ImageCapMB);
+        Assert.Equal(10, vm.Settings.DocumentCapMB);
+    }
+
+    [Fact]
     public async Task Bandwidth_cap_validates_and_applies()
     {
         _agent.IsPaired = true;

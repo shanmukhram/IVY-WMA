@@ -14,6 +14,8 @@ const REMOVES: Record<string, string> = {
   file: "the file record, any retrieved local copy, its thumbnail and its search index entries",
   usage: "the usage record and its search index entries",
   call: "the call record and its search index entries",
+  browsing: "the imported Google activity row and its search index entries (it is not imported again; Activity Vault itself is not changed)",
+  ai_conversation: "the AI conversation: questions, answers and the record excerpts its tools retrieved",
 };
 
 export function BinView() {

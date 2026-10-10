@@ -3,6 +3,7 @@ import { useLoad, useEvents, useDebounced } from "../ctx.tsx";
 import { href, navigate, useLocation } from "../router.ts";
 import { Empty, ErrorLine, Pager, fmtTime } from "../ui.tsx";
 import { ItemRow, type Item } from "./items.tsx";
+import { AiDrawer } from "./Ai.tsx";
 
 interface Gap { deviceId: string; role: string; collector: string; from: string; to: string; reason: string; open: boolean }
 interface TimelineResult {
@@ -16,7 +17,7 @@ export function localDate(d = new Date()): string {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 }
 
-const TYPES = ["message", "notification", "screenshot", "photo", "file", "usage", "call"];
+const TYPES = ["message", "notification", "screenshot", "photo", "file", "usage", "call", "browsing"];
 
 export function TimelineView() {
   const { query } = useLocation();
@@ -65,6 +66,7 @@ export function TimelineView() {
             <option value="">all</option>{TYPES.map((x) => <option key={x} value={x}>{x}</option>)}
           </select>
         </label>
+        <AiDrawer context={{ date, timeline: true, tz }} label="AI overview of this day" />
         <span className="muted small">times are original event times in {tz}; hover a time for capture/import time</span>
       </div>
       <ErrorLine error={t.error} />

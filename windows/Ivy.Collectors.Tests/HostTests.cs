@@ -226,9 +226,14 @@ public class HostTests : IDisposable
         await host.UpdateSettingsAsync("files", null, Settings($$"""{"roots":[{{JsonSerializer.Serialize(_root)}}]}"""));
         await host.TickNowAsync("files");
 
-        Assert.Equal(2, _env.Queue.DepthByCollector()["files"]);
-        Assert.Equal(2, host.Status("files").QueueDepth);
+        // two file_meta records, then (media policy, PLAN decision 8) each .txt original as a document blob:
+        // manifest + one part each, in the bulk lane behind the records
+        Assert.Equal(6, _env.Queue.DepthByCollector()["files"]);
+        Assert.Equal(6, host.Status("files").QueueDepth);
         Assert.Equal(2, host.Status("files").CapturesThisSession);
+        Assert.Equal(new[] { "file_meta", "file_meta", "manifest", "blob_chunk", "manifest", "blob_chunk" },
+            _env.Queue.All().Where(i => i.Collector == "files").Select(i => i.Kind));
+        Assert.True(_env.Queue.BulkBytes("files") > 0);
         var item = _env.Queue.All().First(i => i.Collector == "files");
         var plain = Envelope.Decrypt(macSecret, item.ObjectKey, File.ReadAllBytes(_env.Queue.FullPathOf(item)), Kind.FileMeta).Plaintext;
         var json = Encoding.UTF8.GetString(plain);
@@ -246,7 +251,7 @@ public class HostTests : IDisposable
         var report = new DeviceReporter(sink, _env.States, _env.Queue, time: _env.Time).Build();
         var filesRow = report.Collectors.Single(c => c.Name == "files");
         Assert.True(filesRow.Enabled);
-        Assert.Equal(2, filesRow.QueueDepth);
+        Assert.Equal(6, filesRow.QueueDepth);
         Assert.NotNull(filesRow.LastRunAt);
         // import progress (PROTOCOL.md §6) travels with the row the host records
         Assert.NotNull(filesRow.Phase);

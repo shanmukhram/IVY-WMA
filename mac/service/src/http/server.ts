@@ -32,6 +32,7 @@ import { parseBound } from "../util/time.ts";
 import { setSetting } from "../db/index.ts";
 import { blobProgress, type BlobRow } from "../ingest/blobs.ts";
 import { registerUiRoutes } from "./ui-routes.ts"; // dashboard UI listings (@ivy/mac-ui)
+import { registerAiRoutes } from "./ai-routes.ts"; // AI layer (A1-A4) and Activity Vault import (S7)
 
 const LOOPBACK = new Set(["localhost", "127.0.0.1", "[::1]", "::1"]);
 const OPEN_ROUTES = new Set(["/api/health", "/api/session"]);
@@ -410,6 +411,7 @@ export async function buildServer(svc: Service): Promise<FastifyInstance> {
 
   // ---------------------------------------------------------------- dashboard UI listings (added for @ivy/mac-ui; see ui-routes.ts)
   registerUiRoutes(app, svc);
+  registerAiRoutes(app, svc);
 
   // ---------------------------------------------------------------- static UI
   const staticDir = ctx.config.staticDir;

@@ -179,6 +179,28 @@ public class StoredCollectorHostViewTests : IDisposable
         var s = CollectorSettingsCodec.Decode("{\"v\":1}")!;
         Assert.True(s.WindowTitleCapture);
         Assert.Empty(s.IndexedRoots);
+        // saved before the media policy existed: its defaults
+        Assert.True(s.AutoUploadImages);
+        Assert.Equal(25, s.ImageCapMB);
+        Assert.Equal(10, s.DocumentCapMB);
+        Assert.Contains("pdf", s.DocumentExtensions);
+    }
+
+    [Fact]
+    public void Codec_round_trips_the_media_policy()
+    {
+        var s = new CollectorSettings
+        {
+            AutoUploadImages = false, ImageCapMB = 3.5, AutoUploadDocuments = false, DocumentCapMB = 1,
+            ImageExtensions = new[] { "png" }, DocumentExtensions = new[] { "txt", "md" },
+        };
+        var back = CollectorSettingsCodec.Decode(CollectorSettingsCodec.Encode(s))!;
+        Assert.False(back.AutoUploadImages);
+        Assert.Equal(3.5, back.ImageCapMB);
+        Assert.False(back.AutoUploadDocuments);
+        Assert.Equal(1, back.DocumentCapMB);
+        Assert.Equal(new[] { "png" }, back.ImageExtensions);
+        Assert.Equal(new[] { "txt", "md" }, back.DocumentExtensions);
     }
 }
 

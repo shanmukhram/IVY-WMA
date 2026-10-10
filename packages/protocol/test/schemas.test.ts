@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { validateRecord, validateRecordKind, validateManifest } from "../src/index.js";
+import { validateRecord, validateRecordKind, validateManifest, PAYLOAD_KINDS } from "../src/index.js";
 
 const common = {
   v: 1 as const,
@@ -27,6 +27,19 @@ describe("record schemas", () => {
     const parsed = validateRecordKind("file_meta", rec);
     expect(parsed.deleted).toBe(true);
     expect(parsed.mtime).toBeUndefined();
+  });
+
+  it("accepts a file_meta with an optional originalBlobOid (media policy upload)", () => {
+    const rec = {
+      ...common, kind: "file_meta",
+      path: "C:/a/b.pdf", name: "b.pdf", size: 1234, ext: "pdf",
+      mtime: "2026-10-01T00:00:00.000Z", quickHash: "abc123", originalBlobOid: "01JABCDEFGHJKMNPQRSTVWXYZ0",
+    };
+    expect(validateRecordKind("file_meta", rec).originalBlobOid).toBe("01JABCDEFGHJKMNPQRSTVWXYZ0");
+    const { originalBlobOid: _omit, ...without } = rec;
+    expect(validateRecordKind("file_meta", without).originalBlobOid).toBeUndefined();
+    expect(() => validateRecordKind("file_meta", { ...rec, originalBlobOid: "" })).toThrow();
+    expect(() => validateRecordKind("file_meta", { ...rec, originalBlobOid: 7 })).toThrow();
   });
 
   it("rejects a live file_meta missing mtime/size/quickHash", () => {
@@ -92,6 +105,18 @@ describe("record schemas", () => {
       chunks: [{ index: 0, ctLen: 300, sha256: "deadbeef" }],
     };
     expect(validateManifest(m).payloadKind).toBe("file_original");
+  });
+
+  it("accepts photo and document payload kinds (PLAN decision 8)", () => {
+    for (const payloadKind of ["photo", "document"] as const) {
+      const m = {
+        v: 1, objectId: "aabb", payloadKind,
+        totalSize: 1000, chunkSize: 256, totalChunks: 4, cek: "AAAA",
+        chunks: [{ index: 0, ctLen: 300, sha256: "deadbeef" }],
+      };
+      expect(validateManifest(m).payloadKind).toBe(payloadKind);
+      expect(PAYLOAD_KINDS).toContain(payloadKind);
+    }
   });
 
   it("accepts a device_report with collector state", () => {

@@ -443,7 +443,120 @@ CREATE INDEX commands_status ON commands(status, issued_at);
 CREATE INDEX commands_result ON commands(result_oid);
 `;
 
+// v3: Activity Vault import (S7: browsing_events + FTS, import runs, purge tombstones),
+// AI layer (A1-A3: ai_conversations, soft-delete aware) and embeddings (M4/Q6).
+const v3 = `
+CREATE TABLE browsing_events (            -- read-only import from Activity Vault (S7)
+  rid INTEGER PRIMARY KEY,
+  id TEXT NOT NULL UNIQUE,
+  source TEXT NOT NULL CHECK (source IN ('activity_vault')),
+  source_key TEXT NOT NULL,                -- the source's row id, else sha256(time|product|title|link)
+  time TEXT NOT NULL,                      -- original activity time (as the source recorded it)
+  product TEXT NOT NULL,                   -- YouTube, Search, Maps, ...
+  title TEXT NOT NULL,
+  subtitle TEXT,
+  link TEXT,
+  captured_at TEXT NOT NULL,               -- when the source captured it (its own capture time, else imported_at)
+  imported_at TEXT NOT NULL,               -- when the vault imported it
+  deleted_at TEXT,
+  deleted_batch TEXT,
+  UNIQUE (source, source_key)
+);
+CREATE INDEX browsing_time ON browsing_events(time);
+${fts("browsing_events", ["title", "subtitle", "link"])}
+
+-- a permanently deleted browsing row must not come back on the next import (B3);
+-- only the source key (an id or a hash) is kept, never the content
+CREATE TABLE import_tombstones (
+  source TEXT NOT NULL,
+  source_key TEXT NOT NULL,
+  deleted_at TEXT NOT NULL,
+  PRIMARY KEY (source, source_key)
+);
+CREATE TRIGGER browsing_events_tombstone AFTER DELETE ON browsing_events BEGIN
+  INSERT OR IGNORE INTO import_tombstones(source, source_key, deleted_at) VALUES (old.source, old.source_key, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
+END;
+
+CREATE TABLE import_runs (
+  rid INTEGER PRIMARY KEY,
+  id TEXT NOT NULL UNIQUE,
+  source TEXT NOT NULL,                    -- 'activity_vault'
+  adapter TEXT NOT NULL,                   -- 'local' | 'mcp'
+  location TEXT,                           -- path / URL read
+  trigger TEXT NOT NULL,                   -- 'schedule' | 'manual'
+  started_at TEXT NOT NULL,
+  finished_at TEXT,
+  status TEXT NOT NULL CHECK (status IN ('running','ok','error')),
+  rows_seen INTEGER NOT NULL DEFAULT 0,
+  rows_added INTEGER NOT NULL DEFAULT 0,
+  rows_skipped INTEGER NOT NULL DEFAULT 0,
+  error TEXT,
+  capture_status TEXT                      -- JSON: what the source reported about its own capture, verbatim
+);
+CREATE INDEX import_runs_source ON import_runs(source, started_at);
+
+CREATE TABLE ai_conversations (           -- AI history (A1/Q7); in the recovery bin like any record
+  rid INTEGER PRIMARY KEY,
+  id TEXT NOT NULL UNIQUE,
+  kind TEXT NOT NULL CHECK (kind IN ('ask','overview')),
+  title TEXT NOT NULL,
+  model TEXT NOT NULL,
+  context TEXT NOT NULL,                   -- JSON: the search / timeline context of the latest turn
+  transcript TEXT NOT NULL,                -- JSON: chat messages (user, assistant, tool) without the system prompt
+  turns TEXT NOT NULL,                     -- JSON: [{question, context, result, at}]
+  seen TEXT NOT NULL,                      -- JSON: {recordId: type} of every record a tool returned
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  deleted_at TEXT,
+  deleted_batch TEXT
+);
+CREATE INDEX ai_conversations_updated ON ai_conversations(updated_at);
+
+CREATE TABLE embeddings (                 -- M4/Q6: one vector per item and model
+  rid INTEGER PRIMARY KEY,
+  item_type TEXT NOT NULL,                 -- message | screenshot | photo
+  item_id TEXT NOT NULL,
+  provider TEXT NOT NULL,                  -- 'openai' (a local model is a TODO)
+  model TEXT NOT NULL,
+  dims INTEGER NOT NULL,
+  vector BLOB NOT NULL,                    -- float32 little-endian, L2-normalised
+  created_at TEXT NOT NULL,
+  UNIQUE (item_type, item_id, model)
+);
+-- a changed text invalidates its vector; a permanently deleted item takes its vector with it (B3)
+CREATE TRIGGER messages_embed_au AFTER UPDATE OF text ON messages BEGIN
+  DELETE FROM embeddings WHERE item_type = 'message' AND item_id = new.id;
+END;
+CREATE TRIGGER messages_embed_ad AFTER DELETE ON messages BEGIN
+  DELETE FROM embeddings WHERE item_type = 'message' AND item_id = old.id;
+END;
+CREATE TRIGGER media_embed_au AFTER UPDATE OF ocr_text ON media BEGIN
+  DELETE FROM embeddings WHERE item_type IN ('screenshot','photo') AND item_id = new.id;
+END;
+CREATE TRIGGER media_embed_ad AFTER DELETE ON media BEGIN
+  DELETE FROM embeddings WHERE item_type IN ('screenshot','photo') AND item_id = old.id;
+END;
+`;
+
+// v4: Windows media policy (PLAN decision 8). file_meta.originalBlobOid links a file to an
+// original the device uploaded on its own (payloadKind photo / document); document text is
+// extracted into content_text and searched with the name and path (files_fts is rebuilt).
+const v4 = `
+ALTER TABLE files ADD COLUMN original_blob_oid TEXT;
+ALTER TABLE files ADD COLUMN content_text TEXT;
+ALTER TABLE files ADD COLUMN extract_status TEXT CHECK (extract_status IN ('pending','done','failed','unsupported'));
+CREATE INDEX files_original ON files(original_blob_oid);
+DROP TRIGGER files_fts_ai;
+DROP TRIGGER files_fts_ad;
+DROP TRIGGER files_fts_au;
+DROP TABLE files_fts;
+${fts("files", ["name", "path", "content_text"])}
+INSERT INTO files_fts(files_fts) VALUES ('rebuild');
+`;
+
 export const MIGRATIONS: Migration[] = [
   { version: 1, name: "initial vault schema", sql: v1 },
   { version: 2, name: "import progress, manifest commandId, transferring commands", sql: v2 },
+  { version: 3, name: "activity vault import, ai conversations, embeddings", sql: v3 },
+  { version: 4, name: "file originals (media policy) and document text", sql: v4 },
 ];

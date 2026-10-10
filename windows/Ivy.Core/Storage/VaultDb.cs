@@ -11,7 +11,7 @@ namespace Ivy.Core.Storage;
 public sealed class VaultDb : IDisposable
 {
     public const string FileName = "vault-agent.db";
-    private const int SchemaVersion = 2;
+    private const int SchemaVersion = 3;
     private readonly string _connectionString;
 
     public string Path { get; }
@@ -138,6 +138,18 @@ public sealed class VaultDb : IDisposable
             cmd.CommandText = $"ALTER TABLE collector_state ADD COLUMN {col} {type}";
             cmd.ExecuteNonQuery();
         }
+
+        // v3: upload lanes (normal before bulk; PLAN decision 8 media-policy originals go in the bulk lane).
+        have.Clear();
+        cmd.CommandText = "PRAGMA table_info(pending_uploads)";
+        using (var r = cmd.ExecuteReader()) while (r.Read()) have.Add(r.GetString(1));
+        if (!have.Contains("lane"))
+        {
+            cmd.CommandText = "ALTER TABLE pending_uploads ADD COLUMN lane INTEGER NOT NULL DEFAULT 0";
+            cmd.ExecuteNonQuery();
+        }
+        cmd.CommandText = "CREATE INDEX IF NOT EXISTS ix_pending_lane ON pending_uploads(status, lane, seq)";
+        cmd.ExecuteNonQuery();
 
         cmd.CommandText = "SELECT COUNT(*) FROM schema_info";
         if ((long)cmd.ExecuteScalar()! == 0)

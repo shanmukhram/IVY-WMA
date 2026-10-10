@@ -34,6 +34,12 @@ export const FileMetaRecord = z.object({
   quickHash: z.string().optional(),
   thumbBlobOid: z.string().optional(),
   /**
+   * oid of a chunked blob holding the file's original bytes, uploaded by the device
+   * on its own under its media policy (PLAN decision 8; payloadKind `photo` or
+   * `document`). Optional: absent means the original is available on request only.
+   */
+  originalBlobOid: z.string().min(1).optional(),
+  /**
    * True when this record reports a deletion (default false). When true, `size`,
    * `mtime` and `quickHash` MAY be omitted and `eventTime` is when the deletion was
    * observed. A live record (deleted absent/false) still carries all three.

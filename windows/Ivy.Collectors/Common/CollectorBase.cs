@@ -104,10 +104,10 @@ public abstract class CollectorBase
         return r;
     }
 
-    protected EnqueuedBlob EmitBlob(IRecordSink sink, Stream stream, string payloadKind, long length)
+    protected EnqueuedBlob EmitBlob(IRecordSink sink, Stream stream, string payloadKind, long length, string? oid = null, bool bulk = false)
     {
-        var b = sink.EnqueueBlob(stream, payloadKind, Name, length);
-        Context.Activity?.Append(Name, CollectorActivity.Captured, $"blob {b.Oid} {b.TotalSize} bytes");
+        var b = sink.EnqueueBlob(stream, payloadKind, Name, length, oid: oid, bulk: bulk);
+        Context.Activity?.Append(Name, CollectorActivity.Captured, $"blob {b.Oid} {payloadKind} {b.TotalSize} bytes");
         return b;
     }
 

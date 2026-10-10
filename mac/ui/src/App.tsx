@@ -15,10 +15,11 @@ import { DevicesView } from "./views/Devices.tsx";
 import { SettingsView } from "./views/Settings.tsx";
 import { BinView } from "./views/Bin.tsx";
 import { ActivityFeed } from "./views/Activity.tsx";
+import { AiView } from "./views/Ai.tsx";
 
 const NAV: Array<[string, string]> = [
   ["/", "Search"], ["/timeline", "Timeline"], ["/conversations", "Conversations"], ["/notifications", "Notifications"],
-  ["/media", "Media"], ["/files", "Files"], ["/coverage", "Coverage"], ["/devices", "Devices"], ["/settings", "Settings"], ["/bin", "Recovery bin"],
+  ["/media", "Media"], ["/files", "Files"], ["/coverage", "Coverage"], ["/devices", "Devices"], ["/ai", "Ask AI"], ["/settings", "Settings"], ["/bin", "Recovery bin"],
 ];
 
 type Boot = { kind: "checking" } | { kind: "token"; error?: string } | { kind: "error"; error: string } | { kind: "keystore"; status: KeystoreStatus };
@@ -99,6 +100,7 @@ function Shell({ status, onLocked }: { status: KeystoreStatus; onLocked: () => v
   else if (p.startsWith("/devices")) view = <DevicesView />;
   else if (p.startsWith("/settings")) view = <SettingsView />;
   else if (p.startsWith("/bin")) view = <BinView />;
+  else if (p.startsWith("/ai")) view = <AiView />;
   else view = <div><p>Not found: <span className="mono">{p}</span></p><button onClick={() => navigate("/")}>Search</button></div>;
 
   return (

@@ -1,8 +1,11 @@
 using System.Collections.Concurrent;
+using System.Globalization;
 using Ivy.Collectors.Abstractions;
 using Ivy.Collectors.Common;
+using Ivy.Collectors.Screenshots;
 using Ivy.Collectors.Thumbnails;
 using Ivy.Core.Commands;
+using Ivy.Core.Policy;
 using Ivy.Core.Protocol;
 using Ivy.Core.Records;
 using Ivy.Core.Sink;
@@ -43,8 +46,8 @@ public sealed class FileScanSummary
 }
 
 /// <summary>
-/// WC1/WC2/WC6 file index. Emits <c>file_meta</c> (metadata always, originals only on request) for every
-/// admitted file under the configured roots:
+/// WC1/WC2 file index with the PLAN decision 8 media policy. Emits <c>file_meta</c> for every admitted file
+/// under the configured roots:
 /// <list type="bullet">
 /// <item>Full scan (initial, every <see cref="FileIndexSettings.FullRescanHours"/>, on <c>rescan</c>): a
 /// deterministic walk processed <see cref="FileIndexSettings.ScanBatchSize"/> files per tick, with a
@@ -57,6 +60,19 @@ public sealed class FileScanSummary
 /// Deletions: an observed deletion (watcher delete, USN delete reason, or a file missing in a rescan) is
 /// recorded in <c>file_tombstones</c>, the <c>file_cache</c> row is removed, an activity entry is written,
 /// and a <c>file_meta</c> with <c>deleted: true</c> (PROTOCOL.md §6) is emitted to the Mac.
+/// <para>
+/// Media policy (PLAN decision 8, supersedes PRD WC6): an image (<see cref="FileIndexSettings.ImageExtensions"/>, up to
+/// <see cref="FileIndexSettings.ImageCapMB"/>) or a document (<see cref="FileIndexSettings.DocumentExtensions"/>, up to
+/// <see cref="FileIndexSettings.DocumentCapMB"/>) also has its original uploaded, as a chunked blob of payload kind
+/// <c>photo</c> or <c>document</c>, named by <c>file_meta.originalBlobOid</c>. Originals are deduplicated by quick hash +
+/// size in <c>file_originals</c> (a moved or copied file names the existing blob; a modified file uploads again). The
+/// metadata record is emitted first; the original is read and encrypted on a later tick into the upload queue's bulk
+/// lane (records always drain first), with at most <see cref="FileIndexSettings.MaxQueuedOriginalBytes"/> waiting, so
+/// the bandwidth cap and pause hold the bulk back. Images directly in a Screenshots folder are the screenshots
+/// collector's (payload kind <c>screenshot</c>) and are never uploaded here. A file that cannot be read for its
+/// upload (locked, access denied) keeps its metadata, is logged as <c>original_failed</c>, and is retried when the
+/// next full scan starts. Everything else stays metadata + thumbnail, original on request.
+/// </para>
 /// </summary>
 public sealed class FileIndexCollector : Collector<FileIndexSettings>
 {
@@ -86,6 +102,11 @@ public sealed class FileIndexCollector : Collector<FileIndexSettings>
     private IEnumerator<DirectoryBatch>? _count;
     private int _countRoot;
     private long _counted;
+    // media policy
+    private HashSet<string> _imageExts = new(StringComparer.Ordinal);
+    private HashSet<string> _documentExts = new(StringComparer.Ordinal);
+    private (DateTimeOffset At, IReadOnlyList<string> Roots, HashSet<string> Exts)? _screenshotFolders;
+    private string? _originalsNote;
 
     public FileIndexCollector(CollectorContext context, IFileSystemSource? fs = null, IFileChangeSourceFactory? changes = null,
         IUsnJournal? usn = null, IThumbnailGenerator? thumbnails = null, FileIndexSettings? settings = null)
@@ -97,6 +118,7 @@ public sealed class FileIndexCollector : Collector<FileIndexSettings>
         _thumbs = thumbnails;
         _store = new FileIndexStore(context.Db);
         _exclusions = BuildMatcher(Settings);
+        BuildPolicy(Settings);
     }
 
     public override TimeSpan Interval => TimeSpan.FromSeconds(1);
@@ -121,16 +143,39 @@ public sealed class FileIndexCollector : Collector<FileIndexSettings>
         foreach (var r in s.Roots)
             if (string.IsNullOrWhiteSpace(r) || !Path.IsPathFullyQualified(r)) throw new ArgumentException($"root '{r}' must be an absolute path");
         _ = new ExclusionMatcher(s.Exclusions);
+        if (!(s.ImageCapMB > 0 && s.ImageCapMB <= MediaPolicyDefaults.MaxCapMB)) throw new ArgumentException($"imageCapMB must be > 0 and <= {MediaPolicyDefaults.MaxCapMB}");
+        if (!(s.DocumentCapMB > 0 && s.DocumentCapMB <= MediaPolicyDefaults.MaxCapMB)) throw new ArgumentException($"documentCapMB must be > 0 and <= {MediaPolicyDefaults.MaxCapMB}");
+        foreach (var (name, list) in new[] { ("imageExtensions", s.ImageExtensions), ("documentExtensions", s.DocumentExtensions) })
+            foreach (var e in list)
+            {
+                var n = MediaPolicyDefaults.NormalizeExtension(e);
+                if (n.Length == 0 || n.IndexOfAny(new[] { '/', '\\', '*', '?', '.', ' ' }) >= 0) throw new ArgumentException($"{name}: '{e}' is not a file extension");
+            }
+        if (s.OriginalsBytesPerTick < 1) throw new ArgumentException("originalsBytesPerTick must be >= 1");
+        if (s.MaxQueuedOriginalBytes < 0) throw new ArgumentException("maxQueuedOriginalBytes must be >= 0");
     }
 
-    protected override void OnSettingsChanged(FileIndexSettings previous, FileIndexSettings current) => _exclusions = BuildMatcher(current);
+    protected override void OnSettingsChanged(FileIndexSettings previous, FileIndexSettings current)
+    {
+        _exclusions = BuildMatcher(current);
+        BuildPolicy(current);
+    }
+
+    private void BuildPolicy(FileIndexSettings s)
+    {
+        _imageExts = s.ImageExtensions.Select(MediaPolicyDefaults.NormalizeExtension).Where(e => e.Length > 0).ToHashSet(StringComparer.Ordinal);
+        _documentExts = s.DocumentExtensions.Select(MediaPolicyDefaults.NormalizeExtension).Where(e => e.Length > 0).ToHashSet(StringComparer.Ordinal);
+    }
 
     /// <summary>What a full scan depends on. A scan or summary with a different fingerprint is stale (folders or rules changed).</summary>
     private string ConfigFingerprint() => string.Join("|",
         string.Join(";", Settings.Roots.Select(PathUtil.Full)),
         string.Join(";", Settings.Exclusions),
         Settings.IncludeHidden ? "h" : "-",
-        Settings.IncludeSystem ? "s" : "-");
+        Settings.IncludeSystem ? "s" : "-",
+        // media policy: a change rescans, so unchanged files that now qualify get their original (cheap: no re-hash)
+        string.Create(CultureInfo.InvariantCulture, $"img:{(Settings.AutoUploadImages ? 1 : 0)}:{Settings.ImageCapMB}:{string.Join(",", _imageExts.Order(StringComparer.Ordinal))}"),
+        string.Create(CultureInfo.InvariantCulture, $"doc:{(Settings.AutoUploadDocuments ? 1 : 0)}:{Settings.DocumentCapMB}:{string.Join(",", _documentExts.Order(StringComparer.Ordinal))}"));
 
     private ExclusionMatcher BuildMatcher(FileIndexSettings s)
     {
@@ -213,6 +258,8 @@ public sealed class FileIndexCollector : Collector<FileIndexSettings>
             CountStep(Settings.ScanBatchSize * CountBudgetFactor, ct);
             ScanStep(sink, Settings.ScanBatchSize, ct);
         }
+        // after this tick's metadata: originals go to the bulk lane, which drains after every record
+        ProcessOriginals(sink, ct);
         UpdateCursorAndDetail();
         return Task.CompletedTask;
     }
@@ -250,6 +297,14 @@ public sealed class FileIndexCollector : Collector<FileIndexSettings>
             CountStep(Settings.ScanBatchSize * CountBudgetFactor, default);
             ScanStep(sink, Settings.ScanBatchSize, default);
         }
+        UpdateCursorAndDetail();
+    }
+
+    /// <summary>Test helper: enqueue every due original now (still honouring the queued-bytes limit and the policy).</summary>
+    public void RunOriginalsToCompletion()
+    {
+        var sink = Sink ?? throw new InvalidOperationException("no sink (not paired)");
+        for (var i = 0; i < 10_000 && ProcessOriginals(sink, default) > 0; i++) { }
         UpdateCursorAndDetail();
     }
 
@@ -297,6 +352,8 @@ public sealed class FileIndexCollector : Collector<FileIndexSettings>
         };
         SaveScan();
         Activity(CollectorActivity.ScanStarted, $"scan {_scan.ScanId} ({_scan.Reason}) of {roots.Length} root(s)");
+        var retried = _store.RetryFailedOriginals();
+        if (retried > 0) Activity(CollectorActivity.ScanProgress, $"retrying {retried} original(s) that could not be read before");
     }
 
     private void ScanStep(IRecordSink sink, int budget, CancellationToken ct)
@@ -455,7 +512,7 @@ public sealed class FileIndexCollector : Collector<FileIndexSettings>
         if (cached is { } c && c.Mtime == mtime)
         {
             batch.Touch(f.FullPath, nowStr);
-            return false;
+            return LinkUnchanged(sink, batch, f, c.QuickHash, mtime, nowStr);
         }
         string hash;
         try
@@ -480,6 +537,8 @@ public sealed class FileIndexCollector : Collector<FileIndexSettings>
             }
         }
 
+        var kind = PolicyKind(f.FullPath, ext, f.Size);
+        var original = kind is null ? null : batch.ResolveOriginal(hash, f.Size, kind, f.FullPath, nowStr, NewOid);
         var record = new FileMetaRecord
         {
             DeviceId = DeviceId(sink),
@@ -492,10 +551,221 @@ public sealed class FileIndexCollector : Collector<FileIndexSettings>
             Mtime = mtime,
             QuickHash = hash,
             ThumbBlobOid = thumb,
+            OriginalBlobOid = original,
         };
         var r = Emit(sink, record);
         batch.Upsert(f.FullPath, hash, mtime, nowStr, r.Oid);
+        batch.SetLink(f.FullPath, hash, original);
         return true;
+    }
+
+    private string NewOid() => Oids.New(Time);
+
+    /// <summary>
+    /// An unchanged file that the policy covers but whose newest file_meta named no original (indexed before the
+    /// policy, or before a cap or type change): emit one file_meta that names it. No file content is read here.
+    /// </summary>
+    private bool LinkUnchanged(IRecordSink sink, FileIndexStore.Batch batch, FsEntry f, string hash, string mtime, string nowStr)
+    {
+        var ext = PathUtil.Ext(f.Name);
+        var kind = PolicyKind(f.FullPath, ext, f.Size);
+        if (kind is null) return false;
+        if (batch.GetLink(f.FullPath) is { } l && l.QuickHash == hash) return false;
+        var original = batch.ResolveOriginal(hash, f.Size, kind, f.FullPath, nowStr, NewOid);
+        EmitLink(sink, batch, f.FullPath, f.Name, f.Size, hash, mtime, original, nowStr);
+        return true;
+    }
+
+    private void EmitLink(IRecordSink sink, FileIndexStore.Batch batch, string path, string name, long size, string hash, string mtime, string original, string nowStr)
+    {
+        Emit(sink, new FileMetaRecord
+        {
+            DeviceId = DeviceId(sink),
+            EventTime = mtime,
+            CaptureTime = nowStr,
+            Path = path,
+            Name = name,
+            Size = size,
+            Ext = PathUtil.Ext(name),
+            Mtime = mtime,
+            QuickHash = hash,
+            ThumbBlobOid = batch.GetThumb(path, hash),
+            OriginalBlobOid = original,
+        });
+        batch.SetLink(path, hash, original);
+    }
+
+    // ---------------------------------------------------------------- media policy (PLAN decision 8)
+
+    /// <summary><c>photo</c>, <c>document</c>, or null (metadata + thumbnail only, original on request).</summary>
+    private string? PolicyKind(string path, string ext, long size)
+    {
+        if (size <= 0) return null;
+        var e = MediaPolicyDefaults.NormalizeExtension(ext);
+        if (e.Length == 0) return null;
+        var s = Settings;
+        if (_imageExts.Contains(e))
+        {
+            if (!s.AutoUploadImages || size > MediaPolicyDefaults.CapBytes(s.ImageCapMB)) return null;
+            return IsInScreenshotFolder(path, e) ? null : PayloadKinds.Photo;
+        }
+        if (_documentExts.Contains(e))
+            return s.AutoUploadDocuments && size <= MediaPolicyDefaults.CapBytes(s.DocumentCapMB) ? PayloadKinds.Document : null;
+        return null;
+    }
+
+    /// <summary>The current settings still cover an original of this kind and size (toggles and caps can change while it waits).</summary>
+    private bool PolicyAllows(string kind, long size) => kind switch
+    {
+        PayloadKinds.Photo => Settings.AutoUploadImages && size <= MediaPolicyDefaults.CapBytes(Settings.ImageCapMB),
+        PayloadKinds.Document => Settings.AutoUploadDocuments && size <= MediaPolicyDefaults.CapBytes(Settings.DocumentCapMB),
+        _ => false,
+    };
+
+    /// <summary>
+    /// An image directly in a Screenshots folder (the screenshots collector's roots and extensions, not recursive,
+    /// as it watches them) is uploaded by that collector as <c>screenshot</c>; this collector never uploads it too.
+    /// </summary>
+    private bool IsInScreenshotFolder(string path, string ext)
+    {
+        if (_screenshotFolders is not { } sf || Now - sf.At > TimeSpan.FromSeconds(30))
+        {
+            var s = Context.Settings.Load<ScreenshotSettings>(CollectorNames.Screenshots, "settings") ?? new ScreenshotSettings();
+            var roots = s.Roots.Where(r => !string.IsNullOrWhiteSpace(r) && Path.IsPathFullyQualified(r)).Select(PathUtil.Full).ToList();
+            sf = (Now, roots, s.Extensions.Select(MediaPolicyDefaults.NormalizeExtension).ToHashSet(StringComparer.Ordinal));
+            _screenshotFolders = sf;
+        }
+        if (!sf.Exts.Contains(ext)) return false;
+        var dir = Path.GetDirectoryName(path);
+        if (dir is null) return false;
+        var full = PathUtil.Full(dir);
+        return sf.Roots.Any(r => r.Equals(full, PathUtil.Comparison));
+    }
+
+    /// <summary>Most originals looked at per tick (the byte budget usually stops earlier).</summary>
+    private const int OriginalsPerTick = 256;
+
+    /// <summary>
+    /// Enqueue due originals into the bulk lane, up to <see cref="FileIndexSettings.OriginalsBytesPerTick"/> (at least
+    /// one), while less than <see cref="FileIndexSettings.MaxQueuedOriginalBytes"/> of them waits for the uploader.
+    /// Returns how many were enqueued or settled (0 = nothing more to do now).
+    /// </summary>
+    private int ProcessOriginals(IRecordSink sink, CancellationToken ct)
+    {
+        var due = _store.DueOriginals(OriginalsPerTick);
+        if (due.Count == 0)
+        {
+            _originalsNote = null;
+            return 0;
+        }
+        if (Context.Queue is { } q && q.BulkBytes(Name) >= Settings.MaxQueuedOriginalBytes)
+        {
+            _originalsNote = "originals waiting for the uploader (bandwidth cap or pause)";
+            return 0;
+        }
+        _originalsNote = null;
+        var budget = Settings.OriginalsBytesPerTick;
+        var progressed = 0;
+        foreach (var row in due)
+        {
+            if (ct.IsCancellationRequested || (progressed > 0 && budget <= 0)) break;
+            if (!PolicyAllows(row.PayloadKind, row.Size)) continue; // turned off or over a lowered cap: waits
+            var o = row;
+            if (o.Status == "enqueuing")
+            {
+                if (RecoverInterrupted(sink, o)) { progressed++; continue; }
+                o = _store.GetOriginal(o.QuickHash, o.Size);
+                if (o is null) continue;
+            }
+            var read = UploadOriginal(sink, o);
+            progressed++;
+            if (read) budget -= o.Size;
+        }
+        return progressed;
+    }
+
+    /// <summary>
+    /// The process stopped between "enqueuing" and "uploaded". When the blob is in the queue it was enqueued; otherwise
+    /// it may have been enqueued and already uploaded, so its oid is never reused: a new oid is chosen and every path
+    /// that named the old one gets a file_meta naming the new one. Returns true when settled.
+    /// </summary>
+    private bool RecoverInterrupted(IRecordSink sink, FileIndexStore.OriginalRow o)
+    {
+        if (Context.Queue?.Contains(ObjectKeys.BlobManifest(o.BlobOid)) == true)
+        {
+            _store.SetOriginalStatus(o, "uploaded", uploadedAt: IvyTime.Format(Now));
+            return true;
+        }
+        var fresh = NewOid();
+        _store.ReplaceOriginalOid(o, fresh);
+        var nowStr = IvyTime.Format(Now);
+        using var batch = _store.BeginBatch();
+        foreach (var path in _store.LinkedPaths(fresh))
+            if (batch.Get(path) is { } c && c.QuickHash == o.QuickHash)
+                EmitLink(sink, batch, path, Path.GetFileName(path), o.Size, c.QuickHash, c.Mtime, fresh, nowStr);
+        batch.Commit();
+        return false;
+    }
+
+    /// <summary>Read the source and enqueue it under the original's oid. Returns true when file bytes were read.</summary>
+    private bool UploadOriginal(IRecordSink sink, FileIndexStore.OriginalRow o)
+    {
+        var st = _fs.Stat(o.SourcePath);
+        if (st is null || st.IsDirectory || st.Size != o.Size)
+        {
+            SourceGone(o);
+            return false;
+        }
+        Stream s;
+        try { s = _fs.OpenRead(o.SourcePath); }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or System.Security.SecurityException)
+        {
+            OriginalFailed(o, e);
+            return false;
+        }
+        using (s)
+        {
+            try
+            {
+                if (s.Length != o.Size || QuickHash.Compute(s) != o.QuickHash)
+                {
+                    SourceGone(o); // changed since it was indexed: the change event / next scan indexes the new content
+                    return true;
+                }
+                s.Position = 0;
+                _store.SetOriginalStatus(o, "enqueuing");
+                EmitBlob(sink, s, o.PayloadKind, o.Size, oid: o.BlobOid, bulk: true);
+                _store.SetOriginalStatus(o, "uploaded", uploadedAt: IvyTime.Format(Now));
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException or System.Security.SecurityException)
+            {
+                if (Context.Queue?.Contains(ObjectKeys.BlobManifest(o.BlobOid)) == true) _store.SetOriginalStatus(o, "uploaded", uploadedAt: IvyTime.Format(Now));
+                else OriginalFailed(o, e);
+            }
+        }
+        return true;
+    }
+
+    private void OriginalFailed(FileIndexStore.OriginalRow o, Exception e)
+    {
+        var why = e is UnauthorizedAccessException or System.Security.SecurityException ? "access denied" : "locked or unreadable";
+        _store.SetOriginalStatus(o, "failed", why, countAttempt: true);
+        // activity details carry oids and statuses, never paths or content
+        Activity(CollectorActivity.OriginalFailed, $"{o.PayloadKind} original {o.BlobOid} not uploaded ({why}); metadata kept, retried on the next rescan");
+    }
+
+    /// <summary>The source no longer holds this content: read it from another indexed copy, or forget it.</summary>
+    private void SourceGone(FileIndexStore.OriginalRow o)
+    {
+        foreach (var p in _store.PathsWithHash(o.QuickHash, o.SourcePath))
+        {
+            if (_fs.Stat(p) is { IsDirectory: false } st && st.Size == o.Size)
+            {
+                _store.SetOriginalSource(o, p);
+                return;
+            }
+        }
+        _store.DropOriginal(o);
     }
 
     /// <summary>Emit a <c>file_meta</c> deletion (PROTOCOL.md §6) alongside the <c>file_tombstones</c> bookkeeping.</summary>
@@ -676,6 +946,12 @@ public sealed class FileIndexCollector : Collector<FileIndexSettings>
         var parts = new List<string>();
         if (_scan is { } s) parts.Add($"scanning ({s.Reason}): root {Math.Min(s.RootIndex + 1, s.Roots.Count)}/{s.Roots.Count}, {s.FilesSeen}{(s.FilesTotal is { } t ? $" of {Math.Max(t, s.FilesSeen)}" : "")} files seen, {s.FilesEmitted} new/changed");
         else if (LastFullScan is { } last) parts.Add($"last full scan {last.CompletedAt}: {last.FilesSeen} files");
+        var originals = _store.OriginalCounts();
+        var queued = originals.GetValueOrDefault("pending") + originals.GetValueOrDefault("enqueuing");
+        var failed = originals.GetValueOrDefault("failed");
+        if (queued > 0 || failed > 0)
+            parts.Add($"originals: {queued} to upload{(failed > 0 ? $", {failed} unreadable (retried on the next rescan)" : "")}");
+        if (_originalsNote is not null) parts.Add(_originalsNote);
         if (_usnNote is not null) parts.Add(_usnNote);
         else if (_usn is null) parts.Add(OperatingSystem.IsWindows() ? "USN journal off; FileSystemWatcher only" : "FileSystemWatcher only (no USN journal on this platform)");
         if (Settings.Roots.Count == 0) parts.Add("no folders selected");
