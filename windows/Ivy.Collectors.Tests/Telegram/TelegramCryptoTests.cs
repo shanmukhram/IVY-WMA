@@ -41,6 +41,44 @@ public class TelegramCryptoTests
         Assert.Equal(body, back);
     }
 
+    // Builds a local blob with an explicitly chosen byte order for the leading length prefix, so the
+    // test does not depend on EncryptLocal's own choice. The body after the prefix is irrelevant here.
+    private static byte[] BuildLocalBlobWithPrefix(byte[] localKey, int bodyLen, bool littleEndianPrefix)
+    {
+        var full = 4 + bodyLen;
+        var padded = (full + 15) & ~15;
+        var plain = new byte[padded];
+        if (littleEndianPrefix)
+            System.Buffers.Binary.BinaryPrimitives.WriteUInt32LittleEndian(plain.AsSpan(0, 4), (uint)full);
+        else
+            System.Buffers.Binary.BinaryPrimitives.WriteUInt32BigEndian(plain.AsSpan(0, 4), (uint)full);
+        RandomNumberGenerator.Fill(plain.AsSpan(4, bodyLen));
+        var msgKey = System.Security.Cryptography.SHA1.HashData(plain).AsSpan(0, 16).ToArray();
+        var (key, iv) = TdataCrypto.PrepareAesOldMtp(localKey, msgKey);
+        var cipher = TdataCrypto.AesIgeEncrypt(plain, key, iv);
+        var blob = new byte[16 + cipher.Length];
+        msgKey.CopyTo(blob.AsSpan(0));
+        cipher.CopyTo(blob.AsSpan(16));
+        return blob;
+    }
+
+    [Fact]
+    public void Local_length_prefix_is_read_little_endian_like_telegram_desktop()
+    {
+        // Regression: Telegram Desktop stores the leading full-length as a native little-endian uint32,
+        // not the big-endian Qt stream used for the body. A big-endian prefix of 260 (0x104) reads as
+        // 0x04010000 = 67174400 and must be rejected; the little-endian form must decrypt.
+        var localKey = RandomNumberGenerator.GetBytes(TdataCrypto.LocalKeySize);
+
+        var good = BuildLocalBlobWithPrefix(localKey, bodyLen: 256, littleEndianPrefix: true);
+        var body = TdataCrypto.DecryptLocal(good, localKey);
+        Assert.Equal(256, body.Length);
+
+        var wrong = BuildLocalBlobWithPrefix(localKey, bodyLen: 256, littleEndianPrefix: false);
+        var ex = Assert.Throws<TdataFormatException>(() => TdataCrypto.DecryptLocal(wrong, localKey));
+        Assert.Contains("67174400", ex.Message);
+    }
+
     [Fact]
     public void Decrypt_local_with_the_wrong_key_is_a_bad_key_error()
     {

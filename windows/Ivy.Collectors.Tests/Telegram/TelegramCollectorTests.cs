@@ -363,10 +363,16 @@ public class TelegramCollectorTests : IDisposable
 
     private static byte[] ReadShared(string path)
     {
-        using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
-        using var ms = new MemoryStream();
-        fs.CopyTo(ms);
-        return ms.ToArray();
+        // A SQLite -wal/-shm sidecar can be checkpointed away between enumeration and open; a file that no
+        // longer exists holds no bytes on disk, so treat it as empty rather than failing the scan.
+        try
+        {
+            using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            using var ms = new MemoryStream();
+            fs.CopyTo(ms);
+            return ms.ToArray();
+        }
+        catch (FileNotFoundException) { return Array.Empty<byte>(); }
     }
 
     private CommandRecord Command() => new()

@@ -162,8 +162,10 @@ internal static class TdataCrypto
             throw new TdataBadKeyException("message key mismatch (wrong passcode or corrupt data)");
         }
 
-        var reader = new TdeReader(decrypted);
-        var full = reader.ReadUInt32();
+        // The leading full-length prefix is a raw native (little-endian) uint32 in Telegram Desktop
+        // (a pointer read in storage/details/storage_file_utilities.cpp), unlike the big-endian Qt
+        // stream used for the body that follows it. See docs/internals/telegram-collector.md.
+        var full = System.Buffers.Binary.BinaryPrimitives.ReadUInt32LittleEndian(decrypted.AsSpan(0, 4));
         if (full < 4 || full > decrypted.Length)
         {
             CryptographicOperations.ZeroMemory(decrypted);
@@ -183,10 +185,8 @@ internal static class TdataCrypto
         var full = 4 + body.Length;
         var padded = (full + 15) & ~15;
         var plain = new byte[padded];
-        var w = new TdeWriter();
-        w.WriteUInt32((uint)full);
-        var header = w.ToArray(); // 4 bytes
-        header.CopyTo(plain.AsSpan(0));
+        // Little-endian length prefix, matching the native read in DecryptLocal.
+        System.Buffers.Binary.BinaryPrimitives.WriteUInt32LittleEndian(plain.AsSpan(0, 4), (uint)full);
         body.CopyTo(plain.AsSpan(4));
         if (padded > full)
         {
