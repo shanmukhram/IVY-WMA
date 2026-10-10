@@ -9,6 +9,7 @@ import { join, resolve, dirname, isAbsolute } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadConfig, defaultStaticDir } from "../src/config.ts";
 import { tempDir, rm } from "./helpers/harness.ts";
+import { abs } from "./helpers/paths.ts";
 
 const pkg = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const ENV = ["IVY_DATA_DIR", "IVY_DB_PATH", "IVY_STATIC_DIR"] as const;
@@ -19,30 +20,33 @@ const clearEnv = () => { for (const k of ENV) delete process.env[k]; };
 describe("path resolution", () => {
   it("resolves relative --data, --db and --static against the working directory", () => {
     clearEnv();
-    const c = loadConfig({ dataDir: "./data", dbPath: "db/v.db", staticDir: "../ui/dist" }, "/tmp/ivy/mac/service");
-    expect(c.dataDir).toBe("/tmp/ivy/mac/service/data");
-    expect(c.dbPath).toBe("/tmp/ivy/mac/service/db/v.db");
-    expect(c.staticDir).toBe("/tmp/ivy/mac/ui/dist");
-    expect(c.identityPath).toBe("/tmp/ivy/mac/service/data/identity.json");
-    expect(c.tokenPath).toBe("/tmp/ivy/mac/service/data/session.token");
+    const cwd = abs("/tmp/ivy/mac/service");
+    const c = loadConfig({ dataDir: "./data", dbPath: "db/v.db", staticDir: "../ui/dist" }, cwd);
+    expect(c.dataDir).toBe(join(cwd, "data"));
+    expect(c.dbPath).toBe(join(cwd, "db", "v.db"));
+    expect(c.staticDir).toBe(join(cwd, "..", "ui", "dist"));
+    expect(c.identityPath).toBe(join(cwd, "data", "identity.json"));
+    expect(c.tokenPath).toBe(join(cwd, "data", "session.token"));
   });
 
   it("resolves the environment equivalents the same way", () => {
     process.env.IVY_DATA_DIR = "rel-data";
     process.env.IVY_DB_PATH = "./x/vault.db";
     process.env.IVY_STATIC_DIR = "../ui/dist";
-    const c = loadConfig({}, "/srv/a/b");
-    expect(c).toMatchObject({ dataDir: "/srv/a/b/rel-data", dbPath: "/srv/a/b/x/vault.db", staticDir: "/srv/a/ui/dist", tokenPath: "/srv/a/b/rel-data/session.token" });
+    const cwd = abs("/srv/a/b");
+    const c = loadConfig({}, cwd);
+    expect(c).toMatchObject({ dataDir: join(cwd, "rel-data"), dbPath: join(cwd, "x", "vault.db"), staticDir: join(cwd, "..", "ui", "dist"), tokenPath: join(cwd, "rel-data", "session.token") });
   });
 
   it("flags beat env; derived paths follow the data directory; absolute paths are kept", () => {
     clearEnv();
     process.env.IVY_DATA_DIR = "/env/data";
     process.env.IVY_STATIC_DIR = "/env/ui";
-    const c = loadConfig({ dataDir: "d", staticDir: "/abs/ui" }, "/w");
-    expect(c).toMatchObject({ dataDir: "/w/d", dbPath: "/w/d/vault.db", staticDir: "/abs/ui" });
+    const w = abs("/w");
+    const c = loadConfig({ dataDir: "d", staticDir: abs("/abs/ui") }, w);
+    expect(c).toMatchObject({ dataDir: join(w, "d"), dbPath: join(w, "d", "vault.db"), staticDir: abs("/abs/ui") });
     delete process.env.IVY_DATA_DIR;
-    expect(loadConfig({}, "/w").dataDir).toBe("/w/data");
+    expect(loadConfig({}, w).dataDir).toBe(join(w, "data"));
   });
 
   it("defaults to the built UI next to the package when mac/ui/dist/index.html exists, else the placeholder", () => {

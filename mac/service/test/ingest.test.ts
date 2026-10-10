@@ -10,6 +10,7 @@ import { fullStack, pairNew, PASS } from "./helpers/harness.ts";
 import { SimDevice, PNG_1x1, iso } from "./helpers/device.ts";
 import { startPairing } from "../src/pairing/pairing.ts";
 import { oidTime } from "../src/ingest/ingester.ts";
+import { slash } from "./helpers/paths.ts";
 
 const sha = (b: Uint8Array) => createHash("sha256").update(b).digest("hex");
 type Stack = Awaited<ReturnType<typeof fullStack>>;
@@ -117,7 +118,7 @@ describe("ingest of every Windows kind (S1-S5)", () => {
 
   it("reassembles the screenshot into data/media/<oid>.png byte-for-byte and keeps its times apart", async () => {
     const m = db().prepare("SELECT * FROM media").get() as Record<string, string>;
-    expect(m.local_path).toMatch(new RegExp(`/media/${shotBlob.oid}\\.png$`));
+    expect(slash(m.local_path)).toMatch(new RegExp(`/media/${shotBlob.oid}\\.png$`));
     expect(sha(readFileSync(m.local_path))).toBe(sha(screenshotBytes));
     expect(m.taken_at).toBe("2026-10-09T10:00:00.000Z");
     expect(m.saved_at).toBe("2026-10-09T10:00:01.000Z");

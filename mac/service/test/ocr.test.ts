@@ -9,13 +9,14 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { fixtureBinaryPath, ensureBinary } from "@ivy/mac-ocr";
 import { fullStack, pairNew, tempDir, rm, api } from "./helpers/harness.ts";
 import { iso, type SimDevice } from "./helpers/device.ts";
 import { visionOcr } from "../src/ingest/media.ts";
 import type { OcrProvider, Thumbnailer } from "../src/context.ts";
 
 const TEXT = "Ocelot quartz harbor 4729\nMarigold telescope invoice";
+// Apple Vision exists only on macOS: @ivy/mac-ocr is loaded lazily and the whole suite is skipped elsewhere.
+let fixtureBinaryPath: string;
 let fixtures: string;
 let png: string;
 
@@ -37,14 +38,16 @@ async function shot(st: Awaited<ReturnType<typeof fullStack>>, dev: SimDevice, p
 const mediaRow = (st: Awaited<ReturnType<typeof fullStack>>, id: string) =>
   st.svc.ctx.db.prepare("SELECT ocr_status, ocr_text, thumb_path FROM media WHERE id = ?").get(id) as { ocr_status: string; ocr_text: string | null; thumb_path: string | null };
 
-beforeAll(async () => {
-  await ensureBinary(); // builds the Swift helper + fixture generator if needed
-  fixtures = tempDir("ivy-ocr-fx-");
-  png = makeImage("shot.png", TEXT);
-}, 600_000);
-afterAll(() => rm(fixtures));
+describe.skipIf(process.platform !== "darwin")("Vision OCR on media ingest", () => {
+  beforeAll(async () => {
+    const ocr = await import("@ivy/mac-ocr");
+    fixtureBinaryPath = ocr.fixtureBinaryPath;
+    await ocr.ensureBinary(); // builds the Swift helper + fixture generator if needed
+    fixtures = tempDir("ivy-ocr-fx-");
+    png = makeImage("shot.png", TEXT);
+  }, 600_000);
+  afterAll(() => { if (fixtures) rm(fixtures); });
 
-describe("Vision OCR on media ingest", () => {
   it("OCRs and thumbnails a screenshot in one pass; its text is searchable via /api/search", async () => {
     const sipsCalls: string[] = [];
     const fallback: Thumbnailer = { async make(src) { sipsCalls.push(src); return false; } };

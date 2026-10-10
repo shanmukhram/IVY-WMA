@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import { fullStack, pairNew, api } from "./helpers/harness.ts";
 import { SimDevice, iso } from "./helpers/device.ts";
 import { issueCommand, requestFile, sendQueued, cancelCommand } from "../src/commands/commands.ts";
+import { slash } from "./helpers/paths.ts";
 
 const sha = (b: Uint8Array) => createHash("sha256").update(b).digest("hex");
 let st: Awaited<ReturnType<typeof fullStack>>;
@@ -54,7 +55,7 @@ describe("commands (F2, F3, PLAN decision 4)", () => {
     await st.svc.ingester.poll();
     const f = db().prepare("SELECT status, local_path FROM files WHERE id = ?").get(fileId) as { status: string; local_path: string };
     expect(f.status).toBe("cached");
-    expect(f.local_path).toMatch(/\/files\/[0-9A-Z]{26}\/invoice\.pdf$/);
+    expect(slash(f.local_path)).toMatch(/\/files\/[0-9A-Z]{26}\/invoice\.pdf$/);
     expect(sha(readFileSync(f.local_path))).toBe(sha(original));
     expect(db().prepare("SELECT status FROM commands WHERE id = ?").get(cmdId)).toEqual({ status: "done" });
     expect(cmdKeys().some((k) => k === `cmd/${(db().prepare("SELECT oid FROM commands WHERE id = ?").get(cmdId) as { oid: string }).oid}`)).toBe(false);

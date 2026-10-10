@@ -11,6 +11,7 @@ import { iso, PNG_1x1, type SimDevice } from "./helpers/device.ts";
 import { decodeText, findPdftotext } from "../src/ingest/documents.ts";
 import { purge } from "../src/bin/recovery.ts";
 import type { OcrProvider } from "../src/context.ts";
+import { slash } from "./helpers/paths.ts";
 
 type Stack = Awaited<ReturnType<typeof fullStack>>;
 const enc = (s: string) => new TextEncoder().encode(s);
@@ -76,7 +77,7 @@ describe("file_meta.originalBlobOid (PLAN decision 8)", () => {
     await s.svc.idle();
     const f = fileRow(s, path);
     expect(f.status).toBe("cached");
-    expect(f.local_path).toMatch(/media\/.*\.png$/);
+    expect(slash(f.local_path!)).toMatch(/media\/.*\.png$/);
     expect(new Uint8Array(readFileSync(f.local_path!))).toEqual(PNG_1x1);
     expect(f.extract_status).toBeNull();
     const m = s.svc.ctx.db.prepare("SELECT * FROM media WHERE blob_oid = ?").get(blob.oid) as { id: string; kind: string; source_path: string; local_path: string; ocr_status: string; ocr_text: string };
@@ -104,7 +105,7 @@ describe("file_meta.originalBlobOid (PLAN decision 8)", () => {
     await s.svc.idle();
     const f = fileRow(s, path);
     expect(f).toMatchObject({ status: "cached", extract_status: "done" });
-    expect(f.local_path).toMatch(/files\/.+\/committee\.txt$/);
+    expect(slash(f.local_path!)).toMatch(/files\/.+\/committee\.txt$/);
     expect(readFileSync(f.local_path!, "utf8")).toBe(body);
     expect(f.content_text).toContain("pelican committee");
     expect((await search(s, "pelican", "file")).map((h) => h.id)).toContain(f.id);

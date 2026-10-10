@@ -6,7 +6,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { createHash, randomBytes } from "node:crypto";
 import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { encryptEnvelope, newOid, upKey, utf8 } from "@ivy/protocol";
 import { makeService, makeTokens, startS3, r2ConfigFor, tempDir, rm, PASS } from "../../../mac/service/test/helpers/harness.ts";
 import type { Service } from "../../../mac/service/src/service.ts";
@@ -123,7 +123,8 @@ describe("gate G1 end to end (mock R2, real service, simulated PC)", () => {
     expect(io.asked).toEqual(["network.mac", "network.pc", "pair.source", "pair.paste", "pair.fingerprints", "file.sha256",
       "reboot.prepare", "reboot.now", "reboot.back", "unlock", "audit.pc", "honesty.disable", "honesty.enable"]);
     expect(result.manual.map((m) => m.id)).toEqual(io.asked);
-    expect(statSync(join(work, "markers.txt")).mode & 0o777).toBe(0o600);
+    // POSIX file modes only: Windows reports 0o666 for any writable file.
+    if (process.platform !== "win32") expect(statSync(join(work, "markers.txt")).mode & 0o777).toBe(0o600);
     expect(readFileSync(join(work, "pairing.txt"), "utf8")).toMatch(/^IVYPAIR1\./);
 
     const out = join(work, "gate-g1-test.md");
@@ -172,14 +173,15 @@ describe("gate G1 end to end (mock R2, real service, simulated PC)", () => {
 
 describe("pieces", () => {
   it("parses arguments with relative paths against the working directory", () => {
-    const p = parseCli(["--data", "./d", "--r2", "r2.json", "--only", "b,c", "--no-hold", "--report-interval-min", "2", "--out", "rep.md"], {}, "/w");
+    const w = resolve("/w");
+    const p = parseCli(["--data", "./d", "--r2", "r2.json", "--only", "b,c", "--no-hold", "--report-interval-min", "2", "--out", "rep.md"], {}, w);
     if ("help" in p) throw new Error("help");
-    expect(p.opts).toMatchObject({ dataDir: "/w/d", r2File: "/w/r2.json", only: ["b", "c"], hold: false, reportIntervalMs: 120_000 });
-    expect(p.out).toBe("/w/rep.md");
-    expect(() => parseCli(["--only", "z"], {}, "/w")).toThrow(/unknown item/);
-    const d = parseCli([], {}, "/w");
+    expect(p.opts).toMatchObject({ dataDir: join(w, "d"), r2File: join(w, "r2.json"), only: ["b", "c"], hold: false, reportIntervalMs: 120_000 });
+    expect(p.out).toBe(join(w, "rep.md"));
+    expect(() => parseCli(["--only", "z"], {}, w)).toThrow(/unknown item/);
+    const d = parseCli([], {}, w);
     if ("help" in d) throw new Error("help");
-    expect(d.out).toMatch(/docs\/reports\/gate-g1-\d{4}-\d\d-\d\d\.md$/);
+    expect(d.out.replace(/\\/g, "/")).toMatch(/docs\/reports\/gate-g1-\d{4}-\d\d-\d\d\.md$/);
   });
 
   it("reads r2.json per bucket and cross-checks it against the service's redacted config", async () => {

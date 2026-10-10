@@ -8,7 +8,7 @@
   "scripts": {
     "prestart": "pnpm --filter @ivy/protocol --filter @ivy/mac-ocr build && pnpm --filter @ivy/mac-ui build",
     "start": "electron .",
-    "test": "node --test test/*.test.js"
+    "test": "node --test \"test/*.test.js\""
   },
   "devDependencies": {
     "electron": "44.7.0"
