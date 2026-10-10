@@ -171,6 +171,44 @@ export const ChatMeta = z.object({
   avatarBlobOid: z.string().min(1).optional(),
 });
 
+
+/** A LINE contact as the store records it (used to show the friends, blocked, and hidden lists). */
+export const LineContact = z.object({
+  mid: z.string(),
+  displayName: z.string().optional(),
+  status: z.string().optional(),            // the store's own _status value (e.g. relationship state)
+  type: z.string().optional(),              // the store's _type value
+  settings: z.number().int().optional(),    // the per-contact _settings integer (holds the block bit)
+  blocked: z.boolean().optional(),          // resolved from settings/status when known
+  statusMessage: z.string().optional(),
+  picturePath: z.string().optional(),
+  thumbnailUrl: z.string().optional(),
+});
+
+/** A chat's options, including whether it is hidden. */
+export const LineChatOption = z.object({
+  chatId: z.string(),
+  hidden: z.boolean().optional(),
+  notification: z.boolean().optional(),
+  pinned: z.boolean().optional(),
+});
+
+/**
+ * line_account: a snapshot of the user's own LINE account state so the dashboard can show a standalone LINE
+ * settings page — the own profile, the contact list with blocked/hidden state, and the app's settings. This
+ * is the user's own account data, the same thing LINE's own Friends settings show.
+ */
+export const LineAccountRecord = z.object({
+  ...base,
+  kind: z.literal("line_account"),
+  account: z.string(),
+  ownProfile: z.object({ mid: z.string(), displayName: z.string().optional(), userId: z.string().optional(),
+                         statusMessage: z.string().optional(), picturePath: z.string().optional() }).optional(),
+  contacts: z.array(LineContact).default([]),
+  chatOptions: z.array(LineChatOption).default([]),
+  settings: z.array(z.object({ key: z.string(), value: z.string() })).default([]),
+});
+
 export const MessageBatchRecord = z.object({
   ...base,
   kind: z.literal("message_batch"),
@@ -333,6 +371,7 @@ const BY_KIND = {
   command: CommandRecord,
   command_status: CommandStatusRecord,
   device_report: DeviceReportRecord,
+  line_account: LineAccountRecord,
   pairing_device: PairingDeviceRecord,
 } as const;
 

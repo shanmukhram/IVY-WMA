@@ -107,10 +107,11 @@ public static class Schema
         ["message_batch"] = (
             new[] { "platform", "account", "convKey", "convKind", "sourceSession", "coverage", "messages", "cursor" },
             new[] { "peer", "chatMeta" }),
+        ["line_account"] = (new[] { "account" }, new[] { "ownProfile", "contacts", "chatOptions", "settings" }),
     };
 
     /// <summary>Fields whose value is a nested object or array (validated structurally, not as a scalar string).</summary>
-    private static readonly HashSet<string> Structured = new() { "messages", "chatMeta" };
+    private static readonly HashSet<string> Structured = new() { "messages", "chatMeta", "ownProfile", "contacts", "chatOptions", "settings" };
 
     private static readonly HashSet<string> Timestamps = new() { "eventTime", "captureTime", "mtime", "takenAt", "savedAt", "startedAt", "endedAt", "postedAt" };
     private static readonly HashSet<string> Integers = new() { "size", "width", "height", "v" };

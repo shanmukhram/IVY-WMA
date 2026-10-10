@@ -16,6 +16,7 @@ public enum Kind : byte
     CommandStatus = 0x0b,
     DeviceReport = 0x0c,
     PairingDevice = 0x0d,
+    LineAccount = 0x0e,
 }
 
 /// <summary>
@@ -54,6 +55,7 @@ public static class Kinds
         (Kind.CommandStatus, "command_status", "cstat"),
         (Kind.DeviceReport, "device_report", "status"),
         (Kind.PairingDevice, "pairing_device", "pair"),
+        (Kind.LineAccount, "line_account", "lineacct"),
     };
 
     public static byte Id(this Kind kind) => (byte)kind;
@@ -106,6 +108,7 @@ public static class Kinds
         "msg" => Kind.MessageBatch,
         "cstat" => Kind.CommandStatus,
         "status" => Kind.DeviceReport,
+        "lineacct" => Kind.LineAccount,
         _ => null,
     };
 }

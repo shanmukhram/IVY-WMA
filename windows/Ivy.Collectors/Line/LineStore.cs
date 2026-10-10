@@ -207,6 +207,88 @@ public sealed class LineStore : IDisposable
         return new LineMessagePage(messages, maxRowId, HasMore: count == limit);
     }
 
+    /// <summary>
+    /// Read the account snapshot for the settings page: own profile, contacts (with their raw status/type/
+    /// settings so blocked can be determined, and picture refs), chat options (hidden), and the setting table.
+    /// Reads contact and chat metadata only, never message bodies. Columns are read defensively.
+    /// </summary>
+    public LineAccount ReadAccount()
+    {
+        var tables = TableNames();
+        LineOwnProfile? profile = null;
+        var n = _map.Names;
+        if (n?.OwnProfileTable is { } pt && tables.Contains(pt))
+        {
+            var cols = Columns(pt);
+            string? Sel(string c) => cols.Contains(c) ? Q(c) : null;
+            var mid = Sel("_mid"); if (mid is not null)
+            {
+                var pick = new[] { "_mid", "_displayName", "_userid", "_statusMessage", "_picturePath" }.Where(cols.Contains).ToArray();
+                using var cmd = _c.CreateCommand();
+                cmd.CommandText = $"SELECT {string.Join(",", pick.Select(Q))} FROM {Q(pt)} WHERE {Q("_mid")} IS NOT NULL LIMIT 1";
+                using var r = cmd.ExecuteReader();
+                if (r.Read())
+                {
+                    string? G(string c) { var i = Array.IndexOf(pick, c); return i < 0 || r.IsDBNull(i) ? null : Convert.ToString(r.GetValue(i), CultureInfo.InvariantCulture); }
+                    profile = new LineOwnProfile(G("_mid") ?? "", G("_displayName"), G("_userid"), G("_statusMessage"), G("_picturePath"));
+                }
+            }
+        }
+
+        var contacts = new List<LineContactRow>();
+        if (n?.ContactTable is { } ct && tables.Contains(ct))
+        {
+            var cols = Columns(ct);
+            var pick = new[] { "_mid", "_displayName", "_status", "_type", "_settings", "_statusMessage", "_picturePath", "_thumbnailUrl" }.Where(cols.Contains).ToArray();
+            if (pick.Contains("_mid"))
+            {
+                using var cmd = _c.CreateCommand();
+                cmd.CommandText = $"SELECT {string.Join(",", pick.Select(Q))} FROM {Q(ct)} WHERE {Q("_mid")} IS NOT NULL";
+                using var r = cmd.ExecuteReader();
+                while (r.Read())
+                {
+                    string? G(string c) { var i = Array.IndexOf(pick, c); return i < 0 || r.IsDBNull(i) ? null : Convert.ToString(r.GetValue(i), CultureInfo.InvariantCulture); }
+                    int? GI(string c) { var i = Array.IndexOf(pick, c); return i < 0 || r.IsDBNull(i) ? (int?)null : Convert.ToInt32(r.GetValue(i)); }
+                    contacts.Add(new LineContactRow(G("_mid") ?? "", G("_displayName"), G("_status"), G("_type"), GI("_settings"),
+                        G("_statusMessage"), G("_picturePath"), G("_thumbnailUrl")));
+                }
+            }
+        }
+
+        var options = new List<LineChatOptionRow>();
+        if (tables.Contains("_chatOption"))
+        {
+            var cols = Columns("_chatOption");
+            var pick = new[] { "_id", "_hidden", "_notification", "_pinnedTime" }.Where(cols.Contains).ToArray();
+            if (pick.Contains("_id"))
+            {
+                using var cmd = _c.CreateCommand();
+                cmd.CommandText = $"SELECT {string.Join(",", pick.Select(Q))} FROM {Q("_chatOption")} WHERE {Q("_id")} IS NOT NULL";
+                using var r = cmd.ExecuteReader();
+                while (r.Read())
+                {
+                    string? G(string c) { var i = Array.IndexOf(pick, c); return i < 0 || r.IsDBNull(i) ? null : Convert.ToString(r.GetValue(i), CultureInfo.InvariantCulture); }
+                    bool? GB(string c) { var i = Array.IndexOf(pick, c); return i < 0 || r.IsDBNull(i) ? (bool?)null : Convert.ToInt64(r.GetValue(i)) != 0; }
+                    long? GL(string c) { var i = Array.IndexOf(pick, c); return i < 0 || r.IsDBNull(i) ? (long?)null : Convert.ToInt64(r.GetValue(i)); }
+                    options.Add(new LineChatOptionRow(G("_id") ?? "", GB("_hidden"), GB("_notification"), (GL("_pinnedTime") ?? 0) > 0));
+                }
+            }
+        }
+
+        var settings = new List<(string Key, string Value)>();
+        if (tables.Contains("_setting") && Columns("_setting").IsSupersetOf(new[] { "_key", "_value" }))
+        {
+            using var cmd = _c.CreateCommand();
+            cmd.CommandText = $"SELECT {Q("_key")},{Q("_value")} FROM {Q("_setting")}";
+            using var r = cmd.ExecuteReader();
+            while (r.Read())
+                if (!r.IsDBNull(0)) settings.Add((Convert.ToString(r.GetValue(0), CultureInfo.InvariantCulture) ?? "",
+                    r.IsDBNull(1) ? "" : Convert.ToString(r.GetValue(1), CultureInfo.InvariantCulture) ?? ""));
+        }
+
+        return new LineAccount(profile, contacts, options, settings);
+    }
+
     // ---------------------------------------------------------------- name resolution
 
     private string? _ownMid;
@@ -362,3 +444,4 @@ public sealed class LineStore : IDisposable
         SqliteConnection.ClearAllPools();
     }
 }
+

@@ -46,6 +46,7 @@ public class OidAndKeyTests
             ("android_notification", 5, "anotif"), ("call", 6, "call"), ("message_batch", 7, "msg"), ("manifest", 8, "blob"),
             ("blob_chunk", 9, "blob"), ("command", 0x0a, "cmd"), ("command_status", 0x0b, "cstat"), ("device_report", 0x0c, "status"),
             ("pairing_device", 0x0d, "pair"),
+            ("line_account", 0x0e, "lineacct"),
         };
         foreach (var (name, id, prefix) in expected)
         {

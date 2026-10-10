@@ -24,7 +24,10 @@ internal static class LineFixture
             CREATE TABLE _chat (_id TEXT PRIMARY KEY, _lastUpdatedTime INTEGER, _unreadCount INTEGER);
             CREATE TABLE _message (_id TEXT PRIMARY KEY, _chatId TEXT, _from TEXT, _createdTime INTEGER,
                                    _text TEXT, _contentType INTEGER, _contentMetadata TEXT);
-            CREATE TABLE _contact (_mid TEXT PRIMARY KEY, _displayName TEXT, _displayNameOverridden TEXT, _type INTEGER);
+            CREATE TABLE _contact (_mid TEXT PRIMARY KEY, _displayName TEXT, _displayNameOverridden TEXT, _type TEXT,
+                                   _status TEXT, _settings INTEGER, _statusMessage TEXT, _picturePath TEXT, _thumbnailUrl TEXT);
+            CREATE TABLE _chatOption (_id TEXT PRIMARY KEY, _hidden INTEGER, _notification INTEGER, _pinnedTime INTEGER);
+            CREATE TABLE _setting (_key TEXT PRIMARY KEY, _value TEXT);
             CREATE TABLE _groupChat (_chatMid TEXT PRIMARY KEY, _chatName TEXT);
             CREATE TABLE _profile (_mid TEXT PRIMARY KEY, _displayName TEXT, _picturePath TEXT);
             """);
@@ -53,6 +56,16 @@ internal static class LineFixture
 
     public static void OwnProfile(SqliteConnection c, string mid, string display) =>
         Run(c, "INSERT INTO _profile(_mid,_displayName) VALUES($m,$d)", ("$m", mid), ("$d", display));
+
+    public static void ContactFull(SqliteConnection c, string mid, string display, string status, int settings) =>
+        Run(c, "INSERT INTO _contact(_mid,_displayName,_status,_settings) VALUES($m,$d,$s,$g)",
+            ("$m", mid), ("$d", display), ("$s", status), ("$g", settings));
+
+    public static void ChatOption(SqliteConnection c, string id, bool hidden) =>
+        Run(c, "INSERT INTO _chatOption(_id,_hidden,_notification,_pinnedTime) VALUES($i,$h,1,0)", ("$i", id), ("$h", hidden ? 1 : 0));
+
+    public static void Setting(SqliteConnection c, string key, string value) =>
+        Run(c, "INSERT INTO _setting(_key,_value) VALUES($k,$v)", ("$k", key), ("$v", value));
 
     public static void Message(SqliteConnection c, string id, string chatId, string from, long createdMs, string text,
         int contentType = 0, string? meta = null) =>
@@ -534,6 +547,37 @@ public class LineCollectorTests : IDisposable
         Assert.Equal("Alice", msgs[0].GetProperty("senderName").GetString());
         Assert.True(msgs[1].GetProperty("fromMe").GetBoolean());
         Assert.Equal("You", msgs[1].GetProperty("senderName").GetString());
+    }
+
+    [Fact]
+    public async Task Captures_the_account_snapshot_profile_contacts_hidden_and_settings()
+    {
+        Seed(c =>
+        {
+            LineFixture.OwnProfile(c, "uME", "Me");
+            LineFixture.ContactFull(c, "uALICE", "Alice", status: "FRIEND", settings: 0);
+            LineFixture.ContactFull(c, "uTROLL", "Troll", status: "FRIEND", settings: 1);  // raw status/settings kept
+            LineFixture.Chat(c, "uALICE");
+            LineFixture.ChatOption(c, "uALICE", hidden: false);
+            LineFixture.ChatOption(c, "uTROLL", hidden: true);
+            LineFixture.Setting(c, "notification.enabled", "true");
+        });
+
+        var line = NewCollector();
+        await line.StartAsync(default);
+        await line.TickAsync(default);
+
+        var acct = _env.Sink.Of(Kind.LineAccount).Single();
+        Assert.Equal("uME", acct.Root.GetProperty("ownProfile").GetProperty("mid").GetString());
+        var contacts = acct.Root.GetProperty("contacts");
+        Assert.Equal(2, contacts.GetArrayLength());
+        var troll = System.Linq.Enumerable.Range(0, 2).Select(i => contacts[i]).Single(x => x.GetProperty("mid").GetString() == "uTROLL");
+        Assert.Equal(1, troll.GetProperty("settings").GetInt32());        // raw settings captured
+        var opts = acct.Root.GetProperty("chatOptions");
+        var hiddenOpt = System.Linq.Enumerable.Range(0, opts.GetArrayLength()).Select(i => opts[i]).Single(x => x.GetProperty("chatId").GetString() == "uTROLL");
+        Assert.True(hiddenOpt.GetProperty("hidden").GetBoolean());        // hidden is reliable now
+        Assert.Contains(System.Linq.Enumerable.Range(0, acct.Root.GetProperty("settings").GetArrayLength())
+            .Select(i => acct.Root.GetProperty("settings")[i]), x => x.GetProperty("key").GetString() == "notification.enabled");
     }
 
     private static int CountMessages(IReadOnlyList<CapturedRecord> batches) =>

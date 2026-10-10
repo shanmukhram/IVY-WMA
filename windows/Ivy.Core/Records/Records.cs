@@ -542,3 +542,63 @@ public static class RecordJson
         return r;
     }
 }
+
+/// <summary>A LINE contact as the store records it (friends, blocked, hidden lists).</summary>
+public sealed record LineContactRecord
+{
+    [JsonPropertyName("mid")] public required string Mid { get; init; }
+    [JsonPropertyName("displayName")] public string? DisplayName { get; init; }
+    [JsonPropertyName("status")] public string? Status { get; init; }
+    [JsonPropertyName("type")] public string? Type { get; init; }
+    [JsonPropertyName("settings")] public int? Settings { get; init; }
+    [JsonPropertyName("blocked")] public bool? Blocked { get; init; }
+    [JsonPropertyName("statusMessage")] public string? StatusMessage { get; init; }
+    [JsonPropertyName("picturePath")] public string? PicturePath { get; init; }
+    [JsonPropertyName("thumbnailUrl")] public string? ThumbnailUrl { get; init; }
+}
+
+/// <summary>A chat's options, including whether it is hidden.</summary>
+public sealed record LineChatOptionRecord
+{
+    [JsonPropertyName("chatId")] public required string ChatId { get; init; }
+    [JsonPropertyName("hidden")] public bool? Hidden { get; init; }
+    [JsonPropertyName("notification")] public bool? Notification { get; init; }
+    [JsonPropertyName("pinned")] public bool? Pinned { get; init; }
+}
+
+/// <summary>The account's own LINE profile.</summary>
+public sealed record LineOwnProfileRecord
+{
+    [JsonPropertyName("mid")] public required string Mid { get; init; }
+    [JsonPropertyName("displayName")] public string? DisplayName { get; init; }
+    [JsonPropertyName("userId")] public string? UserId { get; init; }
+    [JsonPropertyName("statusMessage")] public string? StatusMessage { get; init; }
+    [JsonPropertyName("picturePath")] public string? PicturePath { get; init; }
+}
+
+
+/// <summary>
+/// <c>line_account</c> (0x0e): the user's own LINE account state for the dashboard's LINE settings page — the
+/// own profile, the contact list with blocked/hidden state, and the app settings. The user's own account data.
+/// </summary>
+public sealed record LineAccountRecord() : IvyRecord(Protocol.Kind.LineAccount)
+{
+    [JsonPropertyName("account")] public required string Account { get; init; }
+    [JsonPropertyName("ownProfile")] public LineOwnProfileRecord? OwnProfile { get; init; }
+    [JsonPropertyName("contacts")] public IReadOnlyList<LineContactRecord> Contacts { get; init; } = Array.Empty<LineContactRecord>();
+    [JsonPropertyName("chatOptions")] public IReadOnlyList<LineChatOptionRecord> ChatOptions { get; init; } = Array.Empty<LineChatOptionRecord>();
+    [JsonPropertyName("settings")] public IReadOnlyList<LineSettingKv> Settings { get; init; } = Array.Empty<LineSettingKv>();
+
+    public override void Validate()
+    {
+        base.Validate();
+        Require(Account, "account");
+    }
+}
+
+/// <summary>A LINE setting key/value pair.</summary>
+public sealed record LineSettingKv
+{
+    [JsonPropertyName("key")] public required string Key { get; init; }
+    [JsonPropertyName("value")] public required string Value { get; init; }
+}

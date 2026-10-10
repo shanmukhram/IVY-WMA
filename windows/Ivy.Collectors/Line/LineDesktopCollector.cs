@@ -44,6 +44,7 @@ public sealed class LineDesktopCollector : Collector<LineSettings>
     private string? _verifiedVersion;
 
     private readonly ILineKeyStore? _keyStore;
+    private string? _lastAccountHash;
 
     public LineDesktopCollector(
         CollectorContext context,
@@ -215,12 +216,53 @@ public sealed class LineDesktopCollector : Collector<LineSettings>
             }
         }
 
+        EmitAccount(sink, store);
+
         State = LineState.OkPartial;
         Cursor = $"chats={chats.Count}";
         // We read every chat and message this PC's LINE holds; "partial" only means the phone may hold older
         // history we cannot see from Windows, so it is confirmed complete only once the phone's import runs.
         Detail = $"Capturing all {chats.Count} chats on this PC ({newMessages} new this tick). Full history confirmed from the phone.";
         return Task.CompletedTask;
+    }
+
+    private void EmitAccount(IRecordSink sink, LineStore store)
+    {
+        LineAccount acct;
+        try { acct = store.ReadAccount(); }
+        catch { return; } // the account snapshot is best-effort; never block message capture
+
+        var record = new LineAccountRecord
+        {
+            DeviceId = DeviceId(sink),
+            EventTime = IvyTime.Format(Now),
+            CaptureTime = IvyTime.Format(Now),
+            Account = Settings.Account,
+            OwnProfile = acct.Profile is null ? null : new LineOwnProfileRecord
+            {
+                Mid = acct.Profile.Mid, DisplayName = acct.Profile.DisplayName, UserId = acct.Profile.UserId,
+                StatusMessage = acct.Profile.StatusMessage, PicturePath = acct.Profile.PicturePath,
+            },
+            Contacts = acct.Contacts.Select(c => new LineContactRecord
+            {
+                Mid = c.Mid, DisplayName = c.DisplayName, Status = c.Status, Type = c.Type, Settings = c.Settings,
+                StatusMessage = c.StatusMessage, PicturePath = c.PicturePath, ThumbnailUrl = c.ThumbnailUrl,
+                // blocked is left unresolved until the real _status/_settings values are confirmed, so the
+                // settings page never shows a wrong blocked list (it shows the raw status meanwhile).
+            }).ToList(),
+            ChatOptions = acct.Options.Select(o => new LineChatOptionRecord
+            {
+                ChatId = o.Id, Hidden = o.Hidden, Notification = o.Notification, Pinned = o.Pinned,
+            }).ToList(),
+            Settings = acct.Settings.Select(s => new LineSettingKv { Key = s.Key, Value = s.Value }).ToList(),
+        };
+
+        // Only upload when the snapshot changed, so it does not re-send every tick.
+        var json = Ivy.Core.Protocol.IvyJson.Serialize(record);
+        var hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(json)));
+        if (hash == _lastAccountHash) return;
+        Emit(sink, record);
+        _lastAccountHash = hash;
     }
 
     private void EmitBatch(IRecordSink sink, LineStoreMap map, LineChat chat, LineMessagePage page)
