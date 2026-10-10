@@ -58,7 +58,7 @@ public class MainViewModelTests
         Assert.Equal(new[] { "keepass.exe" }, vm.Settings.TitleExclusions.Items);
         Assert.Empty(_host.Applied); // loading does not write back
         Assert.Equal("device AAAA-BBBB-CCCC-DDDD   mac 1111-2222-3333-4444", vm.FingerprintText);
-        Assert.Equal(new[] { "files", "screenshots", "usage", "notifications" }, vm.Collectors.Select(c => c.Name));
+        Assert.Equal(new[] { "files", "screenshots", "usage", "notifications", "line", "telegram" }, vm.Collectors.Select(c => c.Name));
     }
 
     [Fact]

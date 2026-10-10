@@ -104,7 +104,13 @@ public static class Schema
         ["screenshot"] = (new[] { "sourcePath", "sha256", "blobOid" }, new[] { "width", "height", "takenAt", "savedAt" }),
         ["usage_event"] = (new[] { "app", "startedAt", "endedAt" }, new[] { "exe", "title" }),
         ["windows_notification"] = (new[] { "app", "title", "text", "postedAt" }, new[] { "sender" }),
+        ["message_batch"] = (
+            new[] { "platform", "account", "convKey", "convKind", "sourceSession", "coverage", "messages", "cursor" },
+            new[] { "peer", "chatMeta" }),
     };
+
+    /// <summary>Fields whose value is a nested object or array (validated structurally, not as a scalar string).</summary>
+    private static readonly HashSet<string> Structured = new() { "messages", "chatMeta" };
 
     private static readonly HashSet<string> Timestamps = new() { "eventTime", "captureTime", "mtime", "takenAt", "savedAt", "startedAt", "endedAt", "postedAt" };
     private static readonly HashSet<string> Integers = new() { "size", "width", "height", "v" };
@@ -147,6 +153,10 @@ public static class Schema
             else if (Booleans.Contains(p.Name))
             {
                 Assert.True(p.Value.ValueKind is JsonValueKind.True or JsonValueKind.False, $"{p.Name} must be a boolean");
+            }
+            else if (Structured.Contains(p.Name))
+            {
+                Assert.True(p.Value.ValueKind is JsonValueKind.Array or JsonValueKind.Object, $"{p.Name} must be an array or object");
             }
             else
             {

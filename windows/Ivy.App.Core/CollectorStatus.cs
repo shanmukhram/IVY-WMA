@@ -9,9 +9,11 @@ public static class CollectorNames
     public const string Screenshots = "screenshots";
     public const string Usage = "usage";
     public const string Notifications = "notifications";
+    public const string Line = "line";
+    public const string Telegram = "telegram";
 
     /// <summary>Row order in the window (PRD "App UI").</summary>
-    public static readonly IReadOnlyList<string> All = new[] { Files, Screenshots, Usage, Notifications };
+    public static readonly IReadOnlyList<string> All = new[] { Files, Screenshots, Usage, Notifications, Line, Telegram };
 
     public static string Display(string name) => name switch
     {
@@ -19,6 +21,8 @@ public static class CollectorNames
         Screenshots => "Screenshots",
         Usage => "App usage",
         Notifications => "Notifications",
+        Line => "LINE",
+        Telegram => "Telegram",
         _ => name,
     };
 
@@ -31,6 +35,8 @@ public static class CollectorNames
         Usage => TimeSpan.FromSeconds(30),
         Screenshots => TimeSpan.FromMinutes(5),
         Notifications => TimeSpan.FromMinutes(5),
+        Line => TimeSpan.FromMinutes(5),
+        Telegram => TimeSpan.FromSeconds(30),
         Files => TimeSpan.FromHours(1),
         _ => TimeSpan.FromMinutes(5),
     };

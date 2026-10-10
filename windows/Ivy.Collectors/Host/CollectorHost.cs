@@ -3,6 +3,7 @@ using System.Text.Json.Nodes;
 using Ivy.Collectors.Abstractions;
 using Ivy.Collectors.Common;
 using Ivy.Collectors.Files;
+using Ivy.Collectors.Line;
 using Ivy.Collectors.Notifications;
 using Ivy.Collectors.Screenshots;
 using Ivy.Collectors.Thumbnails;
@@ -27,6 +28,8 @@ public sealed class CollectorHostOptions
     public IForegroundWindowProbe? ForegroundProbe { get; init; }
     public Func<NotificationSettings, INotificationDbReader>? NotificationReader { get; init; }
     public IThumbnailGenerator? Thumbnails { get; init; }
+    /// <summary>Null = no Telegram MTProto client (the collector reports "not configured"); tests inject a fake, the app the real adapter.</summary>
+    public Telegram.ITelegramClientFactory? TelegramClientFactory { get; init; }
     /// <summary>False: do not fall back to platform implementations for null services (tests).</summary>
     public bool UsePlatformDefaults { get; init; } = true;
     public TimeProvider? Time { get; init; }
@@ -81,6 +84,8 @@ public sealed class CollectorHost : IRescanHandler, ICollectorConfigHandler, IAs
             new ScreenshotCollector(context, fs, changes),
             new UsageCollector(context, probe),
             new NotificationCollector(context, o.NotificationReader),
+            new LineDesktopCollector(context),
+            new Telegram.TelegramCollector(context, clientFactory: o.TelegramClientFactory),
         });
     }
 
