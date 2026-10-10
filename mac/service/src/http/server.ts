@@ -32,7 +32,7 @@ import { enrich, itemView } from "../query/details.ts";
 import { ITEM_TYPES, TYPE_DEFS, selectList, type ItemType } from "../query/types.ts";
 import { parseBound } from "../util/time.ts";
 import { setSetting } from "../db/index.ts";
-import { blobProgress, type BlobRow } from "../ingest/blobs.ts";
+import { archiveStats, blobProgress, evictCachedOriginal, getArchive, keepMediaInR2, refetchArchived, type BlobRow } from "../ingest/blobs.ts";
 import { registerUiRoutes } from "./ui-routes.ts"; // dashboard UI listings (@ivy/mac-ui)
 import { registerAiRoutes } from "./ai-routes.ts"; // AI layer (A1-A4) and Activity Vault import (S7)
 import { registerViewRoutes } from "./view-routes.ts"; // read-only views for the redesigned dashboard (PLAN decision 5)
@@ -285,7 +285,15 @@ export async function buildServer(svc: Service): Promise<FastifyInstance> {
   app.get("/api/ingest/status", async () => {
     const blobs = ctx.db.prepare("SELECT * FROM blobs WHERE status IN ('awaiting_manifest','assembling') ORDER BY updated_at DESC LIMIT 100").all() as BlobRow[];
     const ledger = ctx.db.prepare("SELECT status, COUNT(*) AS n FROM sync_objects GROUP BY status").all();
-    return { running: svc.ingester.isRunning(), pausedUntil: svc.ingester.pausedTill(), last: svc.ingester.last, intervalMs: ctx.config.pollIntervalMs, ledger, pendingBlobs: blobs.map(blobProgress) };
+    return { running: svc.ingester.isRunning(), pausedUntil: svc.ingester.pausedTill(), last: svc.ingester.last, intervalMs: ctx.config.pollIntervalMs, ledger, pendingBlobs: blobs.map(blobProgress), mediaArchive: archiveStats(ctx) };
+  });
+  // keepMediaInR2 (default true): keep media originals in R2 for on-demand full-quality fetch.
+  // When false, originals are deleted after commit as before (then available only via a device request).
+  app.put("/api/ingest/settings", async (req) => {
+    const b = req.body as { keepMediaInR2?: unknown } | undefined;
+    if (b?.keepMediaInR2 === undefined || typeof b.keepMediaInR2 !== "boolean") throw new HttpError(400, "bad_value", "keepMediaInR2 (boolean) is required");
+    setSetting(ctx.db, "ingest.keepMediaInR2", String(b.keepMediaInR2));
+    return { keepMediaInR2: keepMediaInR2(ctx), mediaArchive: archiveStats(ctx) };
   });
   app.get("/api/quarantine", async (req) => {
     const all = (req.query as { all?: string }).all === "1";
@@ -423,6 +431,32 @@ export async function buildServer(svc: Service): Promise<FastifyInstance> {
   app.get("/api/media/:id/thumb", async (req, reply) => {
     const m = ctx.db.prepare("SELECT thumb_path, local_path FROM media WHERE id = ? AND deleted_at IS NULL").get((req.params as { id: string }).id) as { thumb_path: string | null; local_path: string | null } | undefined;
     return sendLocalFile(reply, m?.thumb_path ?? m?.local_path);
+  });
+  // Bring a media item's full-quality original into the local cache (F). When it is archived in R2
+  // (PLAN decision 6) it is re-fetched, verified and reassembled; otherwise the original is on the
+  // device and a file_request is issued as before. The content endpoint serves the file once present.
+  app.post("/api/media/:id/fetch", async (req) => {
+    const id = (req.params as { id: string }).id;
+    const m = ctx.db.prepare("SELECT id, blob_oid, local_path FROM media WHERE id = ? AND deleted_at IS NULL").get(id) as { id: string; blob_oid: string | null; local_path: string | null } | undefined;
+    if (!m) throw new HttpError(404, "not_found", "no such media");
+    if (m.local_path && existsSync(m.local_path)) return { id, cached: true, already: true, source: "local" };
+    if (!m.blob_oid) throw new HttpError(409, "no_original", "this item has no stored original");
+    if (getArchive(ctx, m.blob_oid)) {
+      const r = await refetchArchived(ctx, m.blob_oid);
+      if (!r.ok) throw new HttpError(502, "fetch_failed", r.reason);
+      return { id, cached: true, source: "r2", path: r.path, already: r.already ?? false };
+    }
+    // not archived: a file the device holds on request (e.g. a large original over the auto-upload cap)
+    const f = ctx.db.prepare("SELECT id FROM files WHERE original_blob_oid = ? AND deleted_at IS NULL LIMIT 1").get(m.blob_oid) as { id: string } | undefined;
+    if (f) return { id, cached: false, source: "device", ...(await requestFile(ctx, f.id)) };
+    return { id, cached: false, source: "none", message: "no stored original and no device to request it from" };
+  });
+  // Drop a media item's local full-size copy to free disk; it stays in R2 and re-fetches on next download.
+  app.post("/api/media/:id/evict", async (req) => {
+    const m = ctx.db.prepare("SELECT blob_oid FROM media WHERE id = ?").get((req.params as { id: string }).id) as { blob_oid: string | null } | undefined;
+    if (!m?.blob_oid) throw new HttpError(404, "not_found", "no such media or no stored original");
+    if (!getArchive(ctx, m.blob_oid)) throw new HttpError(409, "not_archived", "this original is not kept in R2; evicting it would lose it");
+    return evictCachedOriginal(ctx, m.blob_oid);
   });
 
   // ---------------------------------------------------------------- recovery bin (B1-B4)

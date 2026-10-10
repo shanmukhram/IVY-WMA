@@ -36,7 +36,7 @@ import {
   commitMessageBatch, commitScreenshot, commitUsage, commitWindowsNotification, type CommitResult,
 } from "./committers.ts";
 import {
-  committedSet, finalizeBlob, getBlob, markPartCommitted, noteAwaitingManifest, openManifest, placeAndLink,
+  archivesPayload, committedSet, finalizeBlob, getBlob, markPartCommitted, noteAwaitingManifest, openManifest, placeAndLink,
   quarantineBlob, recordManifest, writePart, blobProgress, linkManifestCommand,
 } from "./blobs.ts";
 import { acceptDeviceRecord, expireStalePairings, finishPairing } from "../pairing/pairing.ts";
@@ -313,6 +313,11 @@ export class Ingester {
       }
     }
     for (const [oid, g] of [...blobs.entries()].sort(([a], [b]) => (a < b ? -1 : 1))) {
+      // a completed media original is kept in R2 (PLAN decision 6): its manifest and parts are
+      // committed in the ledger and recognised here by oid before any fetch, so they are never
+      // re-assembled or deleted on later polls (incremental within the window, hourly in full)
+      const known = getBlob(this.ctx, src.bucketName, oid);
+      if (known && known.status === "complete" && archivesPayload(this.ctx, known.payload_kind)) { seeOid(oid); continue; }
       if (g.manifest) {
         const out = await this.guard(src, g.manifest.key, "manifest", () => this.ingestManifest(src, oid, g.manifest!.key, g.parts));
         tally(out);
@@ -399,11 +404,12 @@ export class Ingester {
    * replay (crash before delete, or a re-upload) and are only deleted; different
    * bytes under a committed key are an overwrite and are quarantined.
    */
-  private async handleKnown(src: Source, key: string, kind: string, bytes: Uint8Array, prior: { status: string; ct_sha256: string | null }): Promise<Outcome> {
+  private async handleKnown(src: Source, key: string, kind: string, bytes: Uint8Array, prior: { status: string; ct_sha256: string | null }, keep = false): Promise<Outcome> {
     if (!prior.ct_sha256 || prior.ct_sha256 === sha256Hex(bytes)) {
-      // same bytes: a crash before the delete, a failed delete, or a straight re-upload
-      await this.remove(src, key);
-      this.ctx.events.emit("ingest.replayed", { bucket: src.bucketName, key, ledgerStatus: prior.status });
+      // same bytes: a crash before the delete, a failed delete, or a straight re-upload.
+      // `keep` is set for a media original we persist in R2: recognise the replay but do not delete it.
+      if (!keep) await this.remove(src, key);
+      this.ctx.events.emit("ingest.replayed", { bucket: src.bucketName, key, ledgerStatus: prior.status, kept: keep });
       return "replayed";
     }
     const why = prior.status === "committed" ? "key already committed with different content (overwrite)" : "key was quarantined before and was uploaded again with different content";
@@ -516,7 +522,11 @@ export class Ingester {
     if (got === "too_large") return this.quarantine(src, key, "manifest", "manifest too large", null);
     const bytes = got;
     const prior = this.ledger(src.bucketName, key);
-    if (prior && !force) return this.handleKnown(src, key, "manifest", bytes, prior);
+    if (prior && !force) {
+      // a media original's manifest stays in R2 while the blob assembles and after it completes
+      const existing = getBlob(this.ctx, src.bucketName, oid);
+      return this.handleKnown(src, key, "manifest", bytes, prior, archivesPayload(this.ctx, existing?.payload_kind));
+    }
     const sk = this.ctx.keystore.secretKey();
     let m;
     try { m = openManifest(sk, oid, bytes); }
@@ -539,7 +549,8 @@ export class Ingester {
       commandId = linkManifestCommand(this.ctx, src.bucketName, src.role, oid, m);
       this.insertLedger(src.bucketName, key, "manifest", "committed", bytes, null, `payloadKind=${m.payloadKind} parts=${m.totalChunks} size=${m.totalSize}${commandId ? ` command=${commandId}` : ""}`);
     })();
-    await this.remove(src, key);
+    // a media original is kept in R2 for on-demand full-quality fetch; everything else is deleted after commit
+    if (!archivesPayload(this.ctx, m.payloadKind)) await this.remove(src, key);
     const prog = blobProgress(getBlob(this.ctx, src.bucketName, oid)!);
     this.ctx.events.emit("blob.progress", { ...prog });
     if (commandId) this.ctx.events.emit("command.transferring", { commandId, ...transferOf(prog) });
@@ -558,13 +569,15 @@ export class Ingester {
       return "waiting"; // left in R2 until the manifest arrives
     }
     const prior = this.ledger(src.bucketName, key);
+    // a media original's parts stay in R2 (PLAN decision 6), so replays of them are recognised but not deleted
+    const keep = archivesPayload(this.ctx, row.payload_kind);
     if (row.status === "quarantined") {
       if (prior?.status === "quarantined" && !force) { await this.remove(src, key); return "replayed"; }
       return this.quarantine(src, key, "blob_chunk", `its blob is quarantined: ${row.detail ?? ""}`.trim(), bytesIn ?? (await this.fetchQuiet(src, key)));
     }
     if (row.status === "complete" || committedSet(row).has(index)) {
-      // committed before (resume after restart, or a re-upload): finish the delete
-      if (!force) await this.remove(src, key);
+      // committed before (resume after restart, or a re-upload): finish the delete, unless it is a kept original
+      if (!force && !keep) await this.remove(src, key);
       return "replayed";
     }
     const got = bytesIn ?? (await this.fetch(src, key));
@@ -574,7 +587,7 @@ export class Ingester {
       return this.quarantine(src, key, "blob_chunk", "part too large", null);
     }
     const bytes = got;
-    if (prior && prior.status === "committed" && !force) return this.handleKnown(src, key, "blob_chunk", bytes, prior);
+    if (prior && prior.status === "committed" && !force) return this.handleKnown(src, key, "blob_chunk", bytes, prior, keep);
 
     const w = writePart(this.ctx, row, index, bytes);
     if (w.kind === "reject") {
@@ -586,7 +599,8 @@ export class Ingester {
       count = markPartCommitted(this.ctx, row!, index, w.bytes);
       this.insertLedger(src.bucketName, key, "blob_chunk", "committed", bytes, null, `part ${index} of ${oid}`);
     })();
-    await this.remove(src, key);
+    if (!keep) await this.remove(src, key); // a kept media original's part stays in R2
+    else this.ctx.events.emit("ingest.archived", { bucket: src.bucketName, oid, part: index });
     const fresh = getBlob(this.ctx, src.bucketName, oid)!;
     const prog = blobProgress(fresh);
     this.ctx.events.emit("blob.progress", { ...prog });

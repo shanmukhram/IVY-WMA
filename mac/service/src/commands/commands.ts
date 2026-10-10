@@ -16,6 +16,7 @@ import { cmdKey, encryptEnvelope, fromBase64, newOid, utf8, validateRecordKind }
 import type { CommandRecordT } from "@ivy/protocol";
 import type { Ctx } from "../context.ts";
 import { getDevice } from "../pairing/pairing.ts";
+import { getArchive, refetchArchived } from "../ingest/blobs.ts";
 import { nowIso } from "../util/time.ts";
 
 export type CommandParams = CommandRecordT["params"];
@@ -153,16 +154,21 @@ export function listCommands(ctx: Ctx, f: { deviceId?: string; status?: string; 
 
 /** F2: request the original of an indexed file. Reuses an outstanding request for the same file. */
 export async function requestFile(ctx: Ctx, fileId: string, opts: { force?: boolean } = {}) {
-  const f = ctx.db.prepare("SELECT id, device_id, path, status, local_path, deleted_at FROM files WHERE id = ?").get(fileId) as
-    { id: string; device_id: string; path: string; status: string; local_path: string | null; deleted_at: string | null } | undefined;
+  const f = ctx.db.prepare("SELECT id, device_id, path, status, local_path, original_blob_oid, deleted_at FROM files WHERE id = ?").get(fileId) as
+    { id: string; device_id: string; path: string; status: string; local_path: string | null; original_blob_oid: string | null; deleted_at: string | null } | undefined;
   if (!f) throw new CommandError("unknown_file", `no file ${fileId}`);
   if (f.deleted_at) throw new CommandError("file_in_bin", "the file is in the recovery bin");
-  if (!getDevice(ctx, f.device_id)) throw new CommandError("device_revoked", "the file's device is no longer paired");
   if (!opts.force) {
     const open = ctx.db.prepare("SELECT * FROM commands WHERE file_id = ? AND status IN ('queued','sent','transferring','uploaded') ORDER BY issued_at DESC LIMIT 1").get(fileId) as CommandRow | undefined;
     if (open) return { command: commandView(ctx, open), reused: true };
     if (f.status === "cached" && f.local_path) return { command: null, reused: false, alreadyCached: true };
+    // the original is kept in R2 (PLAN decision 6): re-fetch it from storage, no device needed
+    if (f.original_blob_oid && getArchive(ctx, f.original_blob_oid)) {
+      const r = await refetchArchived(ctx, f.original_blob_oid);
+      if (r.ok) return { command: null, reused: false, fetchedFromR2: true, alreadyCached: r.already ?? false };
+    }
   }
+  if (!getDevice(ctx, f.device_id)) throw new CommandError("device_revoked", "the file's device is no longer paired");
   // The vault file id is not the device's file id; the device locates the file by path.
   const c = await issueCommand(ctx, f.device_id, { type: "file_request", path: f.path }, { fileId });
   return { command: commandView(ctx, c), reused: false };

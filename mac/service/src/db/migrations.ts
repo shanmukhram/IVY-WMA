@@ -659,6 +659,31 @@ CREATE TABLE line_settings (
 );
 `;
 
+// v8: media originals persist in R2 (PLAN decision 6). A completed media original (payloadKind
+// photo, document, attachment or media) is kept in its up-bucket instead of being deleted after
+// commit, so the Mac can fetch it again at full quality on demand without the capturing device.
+// One row per archived oid records the R2 keys that hold it (manifest + parts), what it is, and
+// whether its full-size copy is in the local cache. cache_evicted = 1 means the local copy was
+// dropped to free disk but the object is still in R2 and re-fetchable. The blob row keeps the
+// manifest envelope, so the same Mac key that received it can always decrypt it again.
+const v8 = `
+CREATE TABLE media_archive (
+  oid TEXT PRIMARY KEY,
+  bucket TEXT NOT NULL,                     -- the up-bucket name that holds the objects
+  manifest_key TEXT NOT NULL,               -- up/blob/<oid>/manifest
+  part_keys TEXT NOT NULL,                  -- JSON array of up/blob/<oid>/p/<index> keys
+  payload_kind TEXT NOT NULL,
+  plaintext_sha256 TEXT,                    -- of the reassembled original
+  total_size INTEGER,
+  filename TEXT,
+  content_type TEXT,
+  device_id TEXT,
+  cached_local_path TEXT,                   -- set while the full original is in the local cache
+  cache_evicted INTEGER NOT NULL DEFAULT 0, -- 1 = local copy dropped to free disk; still in R2
+  archived_at TEXT NOT NULL
+);
+`;
+
 export const MIGRATIONS: Migration[] = [
   { version: 1, name: "initial vault schema", sql: v1 },
   { version: 2, name: "import progress, manifest commandId, transferring commands", sql: v2 },
@@ -667,4 +692,5 @@ export const MIGRATIONS: Migration[] = [
   { version: 5, name: "multi-source conversations: message provenance, coverage per source", sql: v5 },
   { version: 6, name: "sender identity (from_me, sender_name) and conversation avatars", sql: v6 },
   { version: 7, name: "LINE account state: profile, contacts, chat options and settings", sql: v7 },
+  { version: 8, name: "media originals kept in R2: the media_archive record", sql: v8 },
 ];

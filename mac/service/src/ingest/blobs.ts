@@ -20,13 +20,14 @@ import { randomUUID } from "node:crypto";
 import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, renameSync, statSync, writeSync } from "node:fs";
 import { join, dirname } from "node:path";
 import {
-  aesGcmDecrypt, chunkNonce, concatBytes, decryptEnvelope, fromBase64, fromCrockford, fromUtf8, kindId,
-  parseChunkHeader, timingSafeEqual, toHex, u32be, utf8, validateManifest,
+  aesGcmDecrypt, blobChunkKey, blobManifestKey, chunkNonce, concatBytes, decryptEnvelope, fromBase64, fromCrockford,
+  fromUtf8, kindId, parseChunkHeader, timingSafeEqual, toHex, u32be, utf8, validateManifest,
 } from "@ivy/protocol";
 import { PAYLOAD_KINDS } from "@ivy/protocol";
 import type { ManifestRecordT } from "@ivy/protocol";
 import type { Ctx } from "../context.ts";
 import { dirs } from "../config.ts";
+import { getSetting } from "../db/index.ts";
 import { ensureDir, sha256File, sha256Hex, removeQuietly } from "../util/fsx.ts";
 import { nowIso } from "../util/time.ts";
 import { baseName, extOf, sniffFile, IMAGE_EXTS } from "../util/ext.ts";
@@ -55,6 +56,125 @@ export function getBlob(ctx: Ctx, bucket: string, oid: string): BlobRow | undefi
 
 export function committedSet(row: BlobRow): Set<number> {
   return new Set(JSON.parse(row.committed_parts) as number[]);
+}
+
+// ------------------------------------------------------------------ media originals kept in R2 (PLAN decision 6)
+
+/**
+ * Payload kinds whose reassembled original is kept in its up-bucket after commit, so the Mac can
+ * fetch it again at full quality on demand. Thumbnails and avatars stay cached small and are
+ * deleted from R2 as before; screenshots and file_request results are also deleted as before.
+ */
+export const ARCHIVE_PAYLOAD_KINDS = new Set<string>(["photo", "document", "attachment", "media"]);
+
+export interface MediaArchiveRow {
+  oid: string; bucket: string; manifest_key: string; part_keys: string; payload_kind: string;
+  plaintext_sha256: string | null; total_size: number | null; filename: string | null; content_type: string | null;
+  device_id: string | null; cached_local_path: string | null; cache_evicted: number; archived_at: string;
+}
+
+const CONTENT_TYPES: Record<string, string> = {
+  png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp", bmp: "image/bmp",
+  heic: "image/heic", avif: "image/avif", tif: "image/tiff", tiff: "image/tiff", mp4: "video/mp4",
+  pdf: "application/pdf", txt: "text/plain; charset=utf-8", md: "text/markdown; charset=utf-8", csv: "text/csv; charset=utf-8",
+  docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+};
+function contentTypeOf(ext?: string | null): string {
+  return (ext && CONTENT_TYPES[ext.toLowerCase()]) || "application/octet-stream";
+}
+
+/** Keep media originals in R2 (default true). When false, originals are deleted after commit as before. */
+export function keepMediaInR2(ctx: Ctx): boolean {
+  return getSetting(ctx.db, "ingest.keepMediaInR2") !== "false";
+}
+
+/** This payload kind is a media original the service keeps in R2 (given the current setting). */
+export function archivesPayload(ctx: Ctx, payloadKind: string | null | undefined): boolean {
+  return !!payloadKind && ARCHIVE_PAYLOAD_KINDS.has(payloadKind) && keepMediaInR2(ctx);
+}
+
+export function getArchive(ctx: Ctx, oid: string): MediaArchiveRow | undefined {
+  return ctx.db.prepare("SELECT * FROM media_archive WHERE oid = ?").get(oid) as MediaArchiveRow | undefined;
+}
+
+/**
+ * Record (or refresh) the archive row for a completed media original: the R2 keys that hold it and
+ * where its full-size copy sits locally. Idempotent; called when the blob completes and again when a
+ * record that references it is committed (so the filename and cached path follow the file to its home).
+ */
+export function recordArchive(ctx: Ctx, row: BlobRow): void {
+  const total = row.total_chunks ?? 0;
+  const partKeys = Array.from({ length: total }, (_, i) => blobChunkKey(row.oid, i));
+  const path = row.local_path;
+  const filename = path ? baseName(path) : `${row.oid}.${row.ext ?? "bin"}`;
+  ctx.db.prepare(`INSERT INTO media_archive(oid, bucket, manifest_key, part_keys, payload_kind, plaintext_sha256, total_size,
+                    filename, content_type, device_id, cached_local_path, cache_evicted, archived_at)
+                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
+                  ON CONFLICT(oid) DO UPDATE SET filename = excluded.filename, content_type = excluded.content_type,
+                    cached_local_path = excluded.cached_local_path, device_id = COALESCE(excluded.device_id, media_archive.device_id),
+                    cache_evicted = 0`)
+    .run(row.oid, row.bucket, blobManifestKey(row.oid), JSON.stringify(partKeys), row.payload_kind, row.sha256,
+      row.total_size, filename, contentTypeOf(row.ext), row.device_id, path, nowIso());
+}
+
+/** Count and byte size of the media kept in R2, for the coverage/status view (principle 4). */
+export function archiveStats(ctx: Ctx): { count: number; bytes: number; keepMediaInR2: boolean } {
+  const r = ctx.db.prepare("SELECT COUNT(*) AS count, COALESCE(SUM(total_size), 0) AS bytes FROM media_archive").get() as { count: number; bytes: number };
+  return { count: r.count, bytes: r.bytes, keepMediaInR2: keepMediaInR2(ctx) };
+}
+
+/**
+ * Drop the local full-size copy of an archived original to free disk; the object stays in R2 and is
+ * re-fetched on the next download. Minimal and safe: only archived originals can be evicted.
+ */
+export function evictCachedOriginal(ctx: Ctx, oid: string): { evicted: boolean; freedPath?: string } {
+  const arch = getArchive(ctx, oid);
+  if (!arch) return { evicted: false };
+  const row = getBlob(ctx, arch.bucket, oid);
+  const path = row?.local_path ?? arch.cached_local_path;
+  const freed = !!path && existsSync(path) && removeQuietly(path);
+  ctx.db.prepare("UPDATE media_archive SET cache_evicted = 1, cached_local_path = NULL WHERE oid = ?").run(oid);
+  if (row) ctx.db.prepare("UPDATE blobs SET local_path = NULL, updated_at = ? WHERE rid = ?").run(nowIso(), row.rid);
+  return { evicted: true, ...(freed ? { freedPath: path! } : {}) };
+}
+
+/**
+ * Re-fetch an archived original from R2 into the local cache: GET each part, verify it against the
+ * stored manifest (length, SHA-256, header, AES-GCM), reassemble, check the whole-file size and
+ * hash, move it to its home and relink the rows that reference it. Returns where the local copy sits.
+ */
+export async function refetchArchived(ctx: Ctx, oid: string): Promise<{ ok: true; path: string; already?: boolean } | { ok: false; reason: string }> {
+  const arch = getArchive(ctx, oid);
+  if (!arch) return { ok: false, reason: "not archived in R2" };
+  const row = getBlob(ctx, arch.bucket, oid);
+  if (!row || !row.manifest_env || row.total_chunks === null || row.total_size === null) return { ok: false, reason: "blob record is incomplete" };
+  if (!arch.cache_evicted && row.local_path && existsSync(row.local_path)) return { ok: true, path: row.local_path, already: true };
+  const bucket = ctx.r2()?.bucket("up", row.role as "windows" | "android");
+  if (!bucket) return { ok: false, reason: "R2 is not configured" };
+  const partKeys = JSON.parse(arch.part_keys) as string[];
+  const tmp = join(dirs(ctx.config).blobsTmp, `${arch.bucket}-${oid}.refetch`);
+  removeQuietly(tmp);
+  const assembling: BlobRow = { ...row, status: "assembling", tmp_path: tmp };
+  for (let i = 0; i < partKeys.length; i++) {
+    const bytes = await bucket.get(partKeys[i]!, ctx.config.maxPartBytes);
+    if (!bytes) { removeQuietly(tmp); return { ok: false, reason: `part ${i} is missing from R2` }; }
+    const w = writePart(ctx, assembling, i, bytes);
+    if (w.kind === "reject") { removeQuietly(tmp); return { ok: false, reason: `part ${i}: ${w.reason}` }; }
+  }
+  if (!existsSync(tmp)) { ensureDir(dirname(tmp)); closeSync(openSync(tmp, "w", 0o600)); } // a zero-length original
+  const size = statSync(tmp).size;
+  if (size !== row.total_size) { removeQuietly(tmp); return { ok: false, reason: `reassembled size ${size} != manifest ${row.total_size}` }; }
+  const sha = await sha256File(tmp);
+  if (arch.plaintext_sha256 && sha !== arch.plaintext_sha256) { removeQuietly(tmp); return { ok: false, reason: "reassembled hash does not match the archive record" }; }
+  const holding = join(dirs(ctx.config).blobsTmp, `${arch.bucket}-${oid}.done`);
+  renameSync(tmp, holding);
+  ctx.db.prepare("UPDATE blobs SET status = 'complete', local_path = ?, sha256 = COALESCE(sha256, ?), ext = COALESCE(ext, ?), updated_at = ? WHERE rid = ?")
+    .run(holding, sha, sniffFile(holding) ?? null, nowIso(), row.rid);
+  const placed = placeAndLink(ctx, oid) ?? holding;
+  ctx.db.prepare("UPDATE media_archive SET cached_local_path = ?, cache_evicted = 0 WHERE oid = ?").run(placed, oid);
+  return { ok: true, path: placed };
 }
 
 /** Decrypt + validate a manifest envelope stored at `up/blob/<oid>/manifest`. Throws with a reason. */
@@ -202,6 +322,10 @@ export async function finalizeBlob(ctx: Ctx, bucket: string, oid: string): Promi
   ctx.db.prepare("UPDATE blobs SET status = 'complete', sha256 = ?, ext = ?, local_path = ?, tmp_path = NULL, completed_at = ?, updated_at = ? WHERE rid = ?")
     .run(sha, ext ?? null, holding, nowIso(), nowIso(), row.rid);
   const placed = placeAndLink(ctx, oid);
+  // a media original is kept in R2 (PLAN decision 6): record the keys that hold it so it can be
+  // re-fetched later, even when it cannot be placed home yet (its naming record has not arrived)
+  const done = getBlob(ctx, bucket, oid);
+  if (done && archivesPayload(ctx, done.payload_kind)) recordArchive(ctx, done);
   return { ok: true, path: placed ?? holding };
 }
 
@@ -332,6 +456,8 @@ export function placeAndLink(ctx: Ctx, oid: string): string | null {
         }
       }
     })();
+    // keep the archive record's filename and cached path following a media original to its home
+    if (archivesPayload(ctx, row.payload_kind)) recordArchive(ctx, getBlob(ctx, row.bucket, oid) ?? row);
     for (const r of refs) if (r.kind === "media" && IMAGE_EXTS.has(extOf(path) ?? "")) ctx.mediaReady?.(r.id, path);
     if (row.payload_kind === "document" && refs.some((r) => r.kind === "original")) {
       const waiting = ctx.db.prepare("SELECT 1 FROM files WHERE original_blob_oid = ? AND (extract_status IS NULL OR extract_status = 'pending') LIMIT 1").get(oid);
