@@ -60,7 +60,7 @@ public sealed class S3MockFixture : IAsyncLifetime
         }));
         var harness = Path.Combine(TestPaths.RepoRoot, "windows", "Ivy.Core.Tests", "Integration", "s3mock-harness.mjs");
         var port = FreePort();
-        var psi = new ProcessStartInfo("pnpm")
+        var psi = new ProcessStartInfo(OperatingSystem.IsWindows() ? "pnpm.cmd" : "pnpm") // CreateProcess does not resolve .cmd shims
         {
             WorkingDirectory = TestPaths.RepoRoot,
             RedirectStandardOutput = true,

@@ -17,6 +17,10 @@ public sealed class TempDir : IDisposable
     {
         // Resolve symlinks (/var -> /private/var on macOS) so paths compare equal to what the FS reports.
         var root = new DirectoryInfo(System.IO.Path.GetTempPath()).ResolveLinkTarget(true)?.FullName ?? System.IO.Path.GetTempPath();
+        // On Windows %TEMP% is %LOCALAPPDATA%\Temp, which the files collector excludes by default
+        // (**/AppData/Local/Temp), so test trees there would never be indexed. Use a sibling folder instead.
+        if (OperatingSystem.IsWindows())
+            root = System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ivy-tests");
         Path = System.IO.Path.Combine(System.IO.Path.GetFullPath(root), "ivy-coll-" + Guid.NewGuid().ToString("N")[..10]);
         Directory.CreateDirectory(Path);
         Path = new DirectoryInfo(Path).FullName;
@@ -31,6 +35,9 @@ public sealed class TempDir : IDisposable
         Directory.CreateDirectory(System.IO.Path.GetDirectoryName(full)!);
         File.WriteAllText(full, content);
         if (mtime is { } m) File.SetLastWriteTimeUtc(full, m.UtcDateTime);
+        // Dot files are hidden by convention on macOS only; on Windows set the attribute so the tests mean the same thing.
+        if (OperatingSystem.IsWindows() && System.IO.Path.GetFileName(full).StartsWith('.'))
+            File.SetAttributes(full, File.GetAttributes(full) | FileAttributes.Hidden);
         return full;
     }
 

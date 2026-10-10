@@ -89,7 +89,7 @@ public class HostTests : IDisposable
         Assert.Equal(new[] { _root }, files.Settings.Roots);
         Assert.False(files.Settings.Thumbnails);
         Assert.Equal(12, files.Settings.FullRescanHours);
-        Assert.Equal(new[] { _root }, _changes.Watched);       // restarted with the new folder
+        Assert.Contains(_root, _changes.Watched);              // restarted with the new folder (the screenshots collector shares this source and watches its default folder when it exists)
         Assert.NotNull(_env.Db.GetSetting("collector.files.settings"));
 
         // Invalid settings are rejected with a reason and change nothing.
