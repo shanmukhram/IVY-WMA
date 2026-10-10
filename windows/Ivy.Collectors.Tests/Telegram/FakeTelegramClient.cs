@@ -61,6 +61,9 @@ internal sealed class FakeTelegramClient : ITelegramClient, ITelegramClientFacto
 
     public Task<Stream?> DownloadAsync(string fileRef, CancellationToken ct) =>
         Task.FromResult<Stream?>(Downloads.TryGetValue(fileRef, out var b) ? new MemoryStream(b) : null);
+    public Dictionary<string, byte[]> Avatars { get; } = new();
+    public Task<Stream?> DownloadAvatarAsync(string avatarRef, CancellationToken ct) =>
+        Task.FromResult<Stream?>(Avatars.TryGetValue(avatarRef, out var b) ? new MemoryStream(b) : null);
 
     public IReadOnlyList<string> SecretChats => SecretChatIds;
 

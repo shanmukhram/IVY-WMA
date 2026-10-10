@@ -195,6 +195,28 @@ public sealed class WTelegramClientAdapter : ITelegramClient
     private static TgMessage DeletedStub(int msgId) =>
         new(msgId, "", DateTimeOffset.UnixEpoch, "", Deleted: true, DeletedAt: DateTimeOffset.UtcNow);
 
+    public async Task<Stream?> DownloadAvatarAsync(string avatarRef, CancellationToken ct)
+    {
+        var client = Connected();
+        // avatarRef = convKey|photoId|dcId (TelegramTypeMapper.AvatarRefOf). Resolve the peer we already paired.
+        var parts = avatarRef.Split('|');
+        if (parts.Length != 3 || !long.TryParse(parts[1], out var photoId) || !int.TryParse(parts[2], out var dcId)) return null;
+        if (!_peers.TryGetValue(parts[0], out var peer)) return null;
+
+        var location = new InputPeerPhotoFileLocation { peer = peer, photo_id = photoId };
+        Directory.CreateDirectory(_tempRoot);
+        var path = Path.Combine(_tempRoot, Guid.NewGuid().ToString("N") + ".avatar");
+        FileStream fs = new(path, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None, 1 << 16, FileOptions.DeleteOnClose);
+        try
+        {
+            await InvokeAsync(client.DownloadFileAsync(location, fs, dcId), ct).ConfigureAwait(false);
+            if (fs.Length == 0) { fs.Dispose(); return null; }
+            fs.Position = 0;
+            return fs;
+        }
+        catch { fs.Dispose(); return null; }
+    }
+
     public async Task<Stream?> DownloadAsync(string fileRef, CancellationToken ct)
     {
         var client = Connected();

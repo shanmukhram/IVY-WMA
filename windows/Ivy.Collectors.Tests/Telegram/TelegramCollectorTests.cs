@@ -59,6 +59,27 @@ public class TelegramCollectorTests : IDisposable
     // ---------------------------------------------------------------- backfill
 
     [Fact]
+    public async Task Captures_the_chat_avatar_and_links_it_on_chatMeta()
+    {
+        WriteFixture();
+        var fake = new FakeTelegramClient();
+        var dm = fake.AddDm("user:20", "Alice", "Alice") with { AvatarRef = "user:20|555|2" };
+        fake.Dialogs[fake.Dialogs.Count - 1] = dm;        // replace with the avatar-bearing dialog
+        fake.Avatars["user:20|555|2"] = new byte[] { 0x89, 0x50, 0x4E, 0x47, 1, 2, 3, 4 }; // a tiny PNG-ish blob
+        fake.AddMessage(dm.ConvKey, Msg(5, "u20", "hi", 3));
+
+        var tg = NewCollector(fake);
+        await tg.StartAsync(default);
+        await tg.TickAsync(default);
+
+        var direct = Batches().Single(b => b.Str("convKey") == "user:20");
+        var oid = direct.Root.GetProperty("chatMeta").GetProperty("avatarBlobOid").GetString();
+        Assert.False(string.IsNullOrEmpty(oid));
+        // an avatar blob was enqueued (manifest + part under the blob prefix)
+        Assert.Contains(_env.Sink.Blobs, b => b.PayloadKind == "avatar");
+    }
+
+    [Fact]
     public async Task Backfill_emits_complete_batches_with_source_session_and_chatMeta()
     {
         WriteFixture();

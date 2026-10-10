@@ -51,7 +51,24 @@ public static class TelegramTypeMapper
         }
 
         var meta = new TgChatMeta(title, participants, chatType ?? (kind == TgConvKind.Dm ? "private" : "group"));
-        return new TgDialog(convKey, kind, peerName, meta, dialogBase.TopMessage, isChannel);
+        var avatarRef = AvatarRefOf(convKey, peer, users, chats);
+        return new TgDialog(convKey, kind, peerName, meta, dialogBase.TopMessage, isChannel, avatarRef);
+    }
+
+    // A profile-photo handle the adapter can resolve: convKey, the photo id, and its dc. Null when there is no photo.
+    private static string? AvatarRefOf(string convKey, Peer peer, IReadOnlyDictionary<long, User> users, IReadOnlyDictionary<long, ChatBase> chats)
+    {
+        long photoId = 0, dcId = 0;
+        switch (peer)
+        {
+            case PeerUser u when users.TryGetValue(u.user_id, out var user) && user.photo is UserProfilePhoto upp:
+                photoId = upp.photo_id; dcId = upp.dc_id; break;
+            case PeerChat c when chats.TryGetValue(c.chat_id, out var chat) && (chat as Chat)?.photo is ChatPhoto cp:
+                photoId = cp.photo_id; dcId = cp.dc_id; break;
+            case PeerChannel ch when chats.TryGetValue(ch.channel_id, out var chat) && (chat as Channel)?.photo is ChatPhoto cpc:
+                photoId = cpc.photo_id; dcId = cpc.dc_id; break;
+        }
+        return photoId != 0 ? $"{convKey}|{photoId}|{dcId}" : null;
     }
 
     private static string DisplayName(User user)

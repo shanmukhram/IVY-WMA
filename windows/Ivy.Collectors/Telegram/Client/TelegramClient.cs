@@ -19,7 +19,8 @@ public sealed record TgDialog(
     string? Peer,
     TgChatMeta Meta,
     long TopMessageId,
-    bool IsChannel);
+    bool IsChannel,
+    string? AvatarRef = null);
 
 public enum TgAttachmentKind { Image, Video, Audio, Doc }
 
@@ -105,6 +106,8 @@ public interface ITelegramClient : IAsyncDisposable
 
     /// <summary>Open the attachment original for reading, or null if it is gone. Used for media policy and file_request.</summary>
     Task<Stream?> DownloadAsync(string fileRef, CancellationToken ct);
+    /// <summary>Download the small profile photo named by <paramref name="avatarRef"/> (from a dialog), or null.</summary>
+    Task<Stream?> DownloadAvatarAsync(string avatarRef, CancellationToken ct);
 
     /// <summary>Secret-chat identifiers detected on this session: reported as phone-only in status, never as records (WT3).</summary>
     IReadOnlyList<string> SecretChats { get; }

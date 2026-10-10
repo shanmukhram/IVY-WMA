@@ -36,6 +36,7 @@ public enum TelegramHealth { Ok, NeedsPasscode, TdataNotFound, SessionInvalid, F
 /// </summary>
 public sealed class TelegramCollector : Collector<TelegramSettings>
 {
+    private readonly Dictionary<string, string> _avatarCaptured = new(StringComparer.Ordinal); // convKey -> avatarRef captured
     public const string CollectorName = "telegram";
     public const string Platform = "telegram";
 
@@ -334,6 +335,27 @@ public sealed class TelegramCollector : Collector<TelegramSettings>
             });
         }
 
+        string? avatarOid = null;
+        if (dialog?.AvatarRef is { } aref && _avatarCaptured.GetValueOrDefault(dialog.ConvKey) != aref)
+        {
+            try
+            {
+                using var astream = await _client!.DownloadAvatarAsync(aref, ct).ConfigureAwait(false);
+                if (astream is not null)
+                {
+                    using var ms = new MemoryStream();
+                    await astream.CopyToAsync(ms, ct).ConfigureAwait(false);
+                    if (ms.Length > 0)
+                    {
+                        ms.Position = 0;
+                        avatarOid = sink.EnqueueBlob(ms, PayloadKinds.Avatar, CollectorName, ms.Length, bulk: true).Oid;
+                        _avatarCaptured[dialog.ConvKey] = aref; // don't re-download until the photo changes
+                    }
+                }
+            }
+            catch { /* avatar is best-effort; never block message capture */ }
+        }
+
         var batch = new MessageBatchRecord
         {
             DeviceId = DeviceId(sink),
@@ -351,6 +373,7 @@ public sealed class TelegramCollector : Collector<TelegramSettings>
                 Title = dialog.Meta.Title,
                 ParticipantCount = dialog.Meta.ParticipantCount,
                 ChatType = dialog.Meta.ChatType,
+                AvatarBlobOid = avatarOid,
             },
             Messages = chatMessages,
             Cursor = cursor,
