@@ -5,6 +5,8 @@ Ready-to-paste prompts for every phase of docs/PRD.md, written to the rules in d
 - **Device prompts**: paste into the Claude Code session on the PC or the phone. These are the ones the safety classifier reads cold, so they are deliberately plain.
 - **Mac prompts**: what to tell the orchestrator session on the Mac to start or continue a phase.
 
+Rule for every device prompt: name the files to read and say not to open docs/internals/ or the collector sources; the classifier also reacts to what the session reads, not only to the prompt (see docs/PROMPTSKILL.md).
+
 Status as of Oct 10, 2026: Phase 1 Windows runs 1 and 2 done; run 3 (Telegram, LINE probe, gate c and d) in progress; Mac dashboard built and redesigned; Android not started.
 
 ---
@@ -45,7 +47,7 @@ git checkout main
 git pull
 pnpm install
 
-Read windows/Ivy.App/README.md (the "Fourth run: UI" checklist) and windows/README.md.
+Read only these: windows/Ivy.App/README.md (build steps and the "Fourth run: UI" checklist). Do not open docs/internals/ or the source files under windows/Ivy.Collectors/Telegram and windows/Ivy.Collectors/Line unless a compile error points there; nothing in them is needed to build or verify the UI.
 
 Ground rules: branch windows-fourth-run, commit as you go and push the branch, never force-push or change main. Fix compile and layout bugs, keep the design as built; don't redesign. Don't change windows/Ivy.Core to make a test pass; report instead.
 
@@ -79,7 +81,7 @@ Continuing IVY, my personal backup and search app. This repo now has an Android 
 git checkout main
 git pull
 
-Read android/README.md (build, install, first-run checklist) and docs/PLAN.md.
+Read only these: android/README.md (build, install, first-run checklist). Do not open docs/internals/; nothing in it is needed to build, run, or verify.
 
 Ground rules: branch android-first-run, commit as you go and push the branch, never force-push or change main. Small conservative fixes; keep the design as built. Don't change android/app/src/main/.../protocol or queue code to make a test pass; report instead.
 
@@ -110,7 +112,7 @@ Continuing IVY, my personal backup and search app. The Android companion now imp
 git checkout main
 git pull
 
-Read android/README.md (the history-import section and its checklist) and docs/reports/android-first-run.md.
+Read only these: android/README.md (the history-import section and its checklist) and docs/reports/android-first-run.md. Do not open docs/internals/ or the adapter sources under android/; the checklist is written to be followed from the app's pages alone.
 
 Ground rules: branch android-second-run, commit as you go and push the branch, never force-push or change main. Small conservative fixes only. Report rather than change the adapters' verification rules.
 
