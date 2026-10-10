@@ -1,5 +1,9 @@
 packages:
   - "packages/*"
   - "mac"
+  - "mac/*"
   - "tools"
   - "tools/*"
+
+onlyBuiltDependencies:
+  - better-sqlite3

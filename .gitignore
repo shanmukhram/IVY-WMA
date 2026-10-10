@@ -17,3 +17,5 @@ coverage/
 
 # fake-mac smoke-test state (keys, tokens, ledger)
 .fake-mac/
+.build/
+.swiftpm/
