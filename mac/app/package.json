@@ -1,0 +1,16 @@
+{
+  "name": "@ivy/mac-app",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Thin Electron shell for the IVY Mac dashboard: starts @ivy/mac-service, waits for health, opens the UI.",
+  "main": "main.js",
+  "scripts": {
+    "prestart": "pnpm --filter @ivy/protocol --filter @ivy/mac-ocr build && pnpm --filter @ivy/mac-ui build",
+    "start": "electron .",
+    "test": "node --test test/*.test.js"
+  },
+  "devDependencies": {
+    "electron": "44.7.0"
+  }
+}
