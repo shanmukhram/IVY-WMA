@@ -93,4 +93,27 @@ All done except that the test folder had to move, see item 2.
 
 ## Part 3: the gate run
 
-Filled in after the run.
+The gate was run on the Mac against real R2; it ended after item (b). This is what the PC did, from the app window during the run, its `activity_log` and `collector_state` in `vault-agent.db`, `ivy-app.log`, and the Windows Application event log afterwards. Times are UTC (the PC's clock is UTC+5:30).
+
+**(a) Pairing.** The app was started fresh at 03:19:27 and the pairing string from the clipboard (679 characters) was pasted and submitted. Pairing completed in about 13 s: `paired as ed2d211c-cbb0-41cb-9cf0-b923858f32e5` at 03:19:40, with **This device** `9E23-F2FE-6FE9-69A6` and **Mac** `1CFC-BCEF-86ED-557B` shown on the panel, the box disabled and Continue enabled. The first device report was encrypted, queued and uploaded to R2 within 1 s of pairing (03:19:41). Run at login was registered. Note on the network: when checked after the run the PC was on its home Wi-Fi (`Airtel_Bunny`) with the NordVPN tunnel up, not a hotspot; whether it was on the hotspot at the moment of pairing was not observed from the PC side, so the "different networks" part of (a) rests on what was answered on the Mac.
+
+**Right after pairing** the screenshots collector swept `Pictures\Screenshots` and uploaded the 50 existing screenshots as blobs plus records (100 captures, 150 upload lines) between 03:19:46 and 03:20:28, about 11 MB in 42 s over R2. The notifications collector uploaded 19 existing toasts; usage events followed every sample.
+
+**Indexed folder.** `C:\Users\admin\Desktop\IVY-G1` (not `Documents`, see Part 2) was added at 03:25:34 via the folder dialog. The initial scan found 1 file and finished in under a second: a `file_meta` (515 B) and a thumbnail blob (2858 B) for the PDF were uploaded by 03:25:36. The files row then read `ok - last full scan ...: 1 files`, with a live USN cursor on `C:\`. The 50 MB original was not uploaded by the media policy (document cap 10 MB), as intended.
+
+**(b) 50 MB transfer.** The Mac's `file_request` (`cmd/06GJ7Q8QEXJ5M9H6DDZQ3PDEYW`, command `242a8670-fbb9-4015-97f6-463a4af02c7f`) was picked up at 03:31:44 on the regular 2-minute poll. The PC encrypted the 52 429 198-byte file as `file_original` in 2 chunks under oid `06GJ7QET3242ZH0C4D4EXE0B8G`, queued the manifest and 2 parts, and queued the `command_status`:
+
+| Object | Bytes | Uploaded at |
+| --- | --- | --- |
+| `up/blob/06GJ7QET3242ZH0C4D4EXE0B8G/manifest` | 594 | 03:31:45.2 |
+| `.../p/00000000` | 33 554 480 | 03:32:04.1 |
+| `.../p/00000001` | 18 874 814 | 03:32:15.1 |
+| `up/cstat/06GJ7QETK3TYEKWY7PTH6JEWCC` (status `uploaded`) | 479 | 03:32:15.5 |
+
+31 s from command pickup to the status object, about 1.7 MB/s, well inside the PRD's 5-minute metric. `executed_commands` records the command once with outcome `uploaded`; the queue is empty (0 rows, empty queue folder). The PC-side SHA-256 given to the gate was `C3D5C1CC926F624051D02E7C682B4334B5344CC4363103BA2DE7D3A8E3813C7E`; the Mac-side comparison is in the gate's own report.
+
+**(c), (d), the queue audit and the honesty test** were not reached; the gate ended after (b). No marker files were created and the PC was not rebooted.
+
+**App hang after the run.** The last activity in the log is a usage sample at 03:35:11 and a device report at 03:34:40 (queue depth 0). At 03:35:20 the Windows Application log recorded event 1002 "Application Hang": `Ivy.App.exe 0.1.0.0 stopped interacting with Windows and was closed` (WER bucket `AppHangB1`). There is no `quit requested` line in `ivy-app.log` and no crash log, so the process did not exit on its own: the UI thread stopped responding and the process was ended (by Windows or by the person closing the unresponsive window). Nothing was lost: the queue was already empty, and the collectors' cursors (`files` USN position, `screenshots` `seen:50`, `notifications` 2699) were persisted up to 03:35:11. What the UI was doing at that moment is not recorded. This is the first hang seen in three sessions with this app; the feed had about 580 entries and the window had been open for 16 minutes. It is worth a dump next time: if the window stops responding, Task Manager, right-click `Ivy.App.exe`, **Create dump file**, before closing it.
+
+**PC state after the run:** paired to the Mac (device `ed2d211c-...`, fingerprint `9E23-F2FE-6FE9-69A6`), run at login set, `Desktop\IVY-G1` indexed, the app not running. Start it again from the exe or by signing in; it will reconcile an empty queue and continue.
