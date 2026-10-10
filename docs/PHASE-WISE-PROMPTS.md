@@ -14,22 +14,21 @@ Status as of Oct 10, 2026: Phase 1 Windows runs 1 and 2 done; run 3 (Telegram, L
 ### Windows run 3 (current): collectors, stability, gate c and d
 
 ```
-Continuing IVY, my personal backup and search app (C#, .NET 8, WinUI 3 companion on this PC). You've done two runs here already (docs/reports/windows-first-run.md and windows-second-run.md). Main now has stability fixes for the app window plus two new chat collectors, Telegram and LINE. This session rebuilds, verifies them, and finishes the remaining gate checks.
+Continuing IVY, my personal backup and search app (C#, .NET 8, WinUI 3 companion on this PC). You've done two runs here already (docs/reports/windows-first-run.md and windows-second-run.md). Main now has stability fixes for the app window plus two new chat collectors, Telegram and LINE. This session rebuilds, verifies them from the app's own pages, and finishes the remaining gate checks.
 
 git checkout main
 git pull
 pnpm install
 
-Read windows/README.md, windows/Ivy.App/README.md (the third-run checklist and the diagnostics section), docs/GATE-G1.md, and docs/reports/gate-g1-2026-10-10-partial.md.
+Read only these: windows/Ivy.App/README.md (build steps, the third-run checklist, "Stability diagnostics"), the "Conversation capture" sections of windows/README.md, docs/GATE-G1.md, and docs/reports/gate-g1-2026-10-10-partial.md. Do not open docs/internals/ or the source files under windows/Ivy.Collectors/Telegram and windows/Ivy.Collectors/Line; nothing in them is needed to build, run, or verify, and the checklist is written to be followed from the app's pages alone.
 
-Ground rules: branch windows-third-run, commit as you go and push the branch, never force-push or change main. Small conservative fixes only; leave the XAML layout alone beyond compile fixes. Don't change windows/Ivy.Core protocol, queue, or storage code to make a test pass; report instead.
+Ground rules: branch windows-third-run, commit as you go and push the branch, never force-push or change main. Small conservative fixes only; leave the XAML layout alone beyond compile fixes. Don't change windows/Ivy.Core to make a test pass; report instead.
 
-1. dotnet test windows/Ivy.sln and pnpm -r test. Expected .NET counts: 87 + 108 (+1 skipped) + 118. Investigate any failure.
-2. dotnet build windows/Ivy.Windows.sln -c Release. Fix compile errors in the new conversation panel and the tray and watchdog code if any.
-3. Telegram collector: follow the "first run on the PC" steps in the Telegram section of windows/README.md, including the two public client constants it describes; note the source in the commit message.
-4. Start the app (keep the existing pairing to the Mac) and walk the third-run checklist in windows/Ivy.App/README.md for the Telegram and LINE rows. Tell me when the first Telegram chats have uploaded. For LINE, run the probe, open the report, and commit the JSON into docs/reports/ after confirming it holds only file names, sizes, and table and column names.
-5. Stability: keep the window open with the feed active for 30 minutes; confirm the once-a-minute heartbeat lines in ivy-app.log and that nothing freezes. If it does, note the diagnostics file path and the breadcrumb line.
-6. Write docs/reports/windows-third-run.md item by item, commit, push, tell me.
+1. dotnet test windows/Ivy.sln and pnpm -r test. Expected .NET counts are in the latest commit message on main. Investigate any failure.
+2. dotnet build windows/Ivy.Windows.sln -c Release. Fix compile errors if any.
+3. Start the app (keep the existing pairing to the Mac) and walk the third-run checklist rows for Telegram and LINE. Tell me when the Telegram row reaches ok so I can check the Mac. For LINE, run the probe, open the report, and commit the JSON into docs/reports/ after confirming it holds only file names, sizes, and table and column names.
+4. Stability rows: 30 minutes with the window open; confirm the once-a-minute heartbeat lines and that nothing freezes.
+5. Write docs/reports/windows-third-run.md item by item, commit, push, tell me.
 
 Part 2, gate items c and d: I run the gate on my Mac and relay its prompts. Be ready to run the PowerShell line it prints (it targets the Desktop IVY-G1 folder), tell me when to restart the PC, and after the restart confirm IVY came back from the tray and resumed. Then add a Part 2 section to the report, commit, push, and tell me the branch name.
 ```
