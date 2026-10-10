@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { randomBytes } from "node:crypto";
 import { execFile } from "node:child_process";
 
@@ -33,7 +34,8 @@ describe("scanBuffer", () => {
   it("header allowance exempts a short text header only", () => {
     const hdr = Buffer.from("IVYENV1 this header is allowed ok");
     expect(scanBuffer(Buffer.concat([hdr, randomBytes(100)]))).toEqual([]);
-    const long = Buffer.concat([randomBytes(100), Buffer.from("A".repeat(24)), randomBytes(100)]);
+    // Zero bytes on both sides: a random neighbour can itself be printable and lengthen the run (flaky).
+    const long = Buffer.concat([randomBytes(100), Buffer.alloc(1), Buffer.from("A".repeat(24)), Buffer.alloc(1), randomBytes(100)]);
     expect(scanBuffer(long).map((h) => h.rule)).toEqual(["printable-run:24"]);
   });
   it("detects magic bytes and generic markers", () => {
@@ -124,7 +126,7 @@ describe("local sources", () => {
 });
 
 describe("CLI", () => {
-  const cli = new URL("../src/cli.ts", import.meta.url).pathname;
+  const cli = fileURLToPath(new URL("../src/cli.ts", import.meta.url));
   const env = () => ({ ...process.env, S3_ENDPOINT: mock.url, S3_ACCESS_KEY_ID: "auditor", S3_SECRET_ACCESS_KEY: "s" });
 
   it("exits 0 on clean bucket and writes JSON report", async () => {
