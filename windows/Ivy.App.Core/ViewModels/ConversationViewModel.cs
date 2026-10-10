@@ -21,6 +21,9 @@ public sealed class ConversationViewModel : ObservableObject
     private string _passcodeText = "";
     private string _passcodeStatus = "";
     private string _lineStatus = "";
+    private string _lineKeyText = "";
+    private string _lineKeyStatus = "";
+    private bool _lineHasKey;
     private string _reportPath = "";
     private bool _hasTelegramProgress;
     private string _telegramChats = "";
@@ -43,11 +46,16 @@ public sealed class ConversationViewModel : ObservableObject
         ApplyPasscodeCommand = new AsyncRelayCommand(ApplyPasscodeAsync, () => _passcodeText.Length > 0);
         RunProbeCommand = new AsyncRelayCommand(RunProbeAsync);
         OpenReportCommand = new RelayCommand(OpenReport, () => HasReport);
+        ApplyLineKeyCommand = new AsyncRelayCommand(ApplyLineKeyAsync, () => _lineKeyText.Trim().Length > 0);
+        DetectLineKeyCommand = new AsyncRelayCommand(DetectLineKeyAsync);
+        _lineHasKey = host.LineHasKey;
     }
 
     public AsyncRelayCommand ApplyPasscodeCommand { get; }
     public AsyncRelayCommand RunProbeCommand { get; }
     public RelayCommand OpenReportCommand { get; }
+    public AsyncRelayCommand ApplyLineKeyCommand { get; }
+    public AsyncRelayCommand DetectLineKeyCommand { get; }
 
     public string TelegramStatusText { get => _telegramStatus; private set => Set(ref _telegramStatus, value); }
     public bool TelegramNeedsPasscode { get => _telegramNeedsPasscode; private set => Set(ref _telegramNeedsPasscode, value); }
@@ -57,6 +65,17 @@ public sealed class ConversationViewModel : ObservableObject
     {
         get => _passcodeText;
         set { if (Set(ref _passcodeText, value ?? "")) ApplyPasscodeCommand.RaiseCanExecuteChanged(); }
+    }
+
+    /// <summary>Whether a LINE key is stored (UI: show "key set" vs the entry field).</summary>
+    public bool LineHasKey { get => _lineHasKey; private set => Set(ref _lineHasKey, value); }
+    public string LineKeyStatusText { get => _lineKeyStatus; private set => Set(ref _lineKeyStatus, value); }
+
+    /// <summary>The 32-character LINE key the user pastes; stored in DPAPI, never uploaded.</summary>
+    public string LineKeyText
+    {
+        get => _lineKeyText;
+        set { if (Set(ref _lineKeyText, value ?? "")) ApplyLineKeyCommand.RaiseCanExecuteChanged(); }
     }
 
     /// <summary>Two-way with the row's toggle; a user change is pushed to the collector and persisted.</summary>
@@ -109,6 +128,7 @@ public sealed class ConversationViewModel : ObservableObject
         finally { _updating = false; }
 
         LineStatusText = StatusLine(line);
+        LineHasKey = _host.LineHasKey;
         var path = _host.LineReportPath;
         ReportPathText = path is null ? "no probe report yet" : "report: " + path;
         OpenReportCommand.RaiseCanExecuteChanged();
@@ -157,6 +177,35 @@ public sealed class ConversationViewModel : ObservableObject
         {
             PasscodeStatusText = "failed: " + e.Message;
         }
+    }
+
+    private async Task ApplyLineKeyAsync()
+    {
+        var key = _lineKeyText.Trim();
+        if (key.Length == 0) return;
+        LineKeyStatusText = "applying...";
+        try
+        {
+            await (LastWork = _work.Run(() => _host.ApplyLineKeyAsync(key)));
+            LineKeyText = "";
+            LineKeyStatusText = "key stored; reading LINE";
+            LineHasKey = _host.LineHasKey;
+        }
+        catch (Exception e) { LineKeyStatusText = "failed: " + e.Message; }
+    }
+
+    private async Task DetectLineKeyAsync()
+    {
+        LineKeyStatusText = "looking for the key in the running LINE app...";
+        try
+        {
+            var task = _work.Run(() => _host.DetectLineKeyAsync());
+            LastWork = task;
+            var found = await task;
+            LineKeyStatusText = found ? "key found and stored; reading LINE" : "no key found (is LINE running and signed in?)";
+            LineHasKey = _host.LineHasKey;
+        }
+        catch (Exception e) { LineKeyStatusText = "detect failed: " + e.Message; }
     }
 
     private async Task SetIncludeChannelsAsync(bool include)

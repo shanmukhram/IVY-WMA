@@ -37,16 +37,18 @@ public sealed class CollectorHostAdapter : ICollectorHostView
     public static ICollectorHostView Create(VaultAgent agent, ILoggerFactory? loggers, string? keysDirectory = null)
     {
         Ivy.Collectors.Telegram.ITelegramPasscodeStore? passcode = null;
+        Ivy.Collectors.Line.ILineKeyStore? lineKey = null;
         Func<Ivy.Collectors.Telegram.Client.ITelegramSessionProtector?>? protector = null;
         // The passcode and the running Telegram session stay on the PC, DPAPI-protected (WX2).
         if (keysDirectory is not null && OperatingSystem.IsWindows())
         {
             passcode = new Ivy.Collectors.Telegram.DpapiTelegramPasscodeStore(keysDirectory);
+            lineKey = new Ivy.Collectors.Line.DpapiLineKeyStore(keysDirectory);
             protector = () => OperatingSystem.IsWindows()
                 ? new Ivy.Collectors.Telegram.Client.DpapiSessionProtector(keysDirectory)
                 : null;
         }
-        var options = new CollectorHostOptions { Loggers = loggers, TelegramPasscodeStore = passcode, TelegramSessionProtector = protector };
+        var options = new CollectorHostOptions { Loggers = loggers, TelegramPasscodeStore = passcode, LineKeyStore = lineKey, TelegramSessionProtector = protector };
         return new CollectorHostAdapter(CollectorHost.CreateFor(agent, options));
     }
 
@@ -182,6 +184,28 @@ public sealed class CollectorHostAdapter : ICollectorHostView
         // One-shot: the collector clears runProbe after it runs. Tick once so the report is produced now.
         await UpdateAsync(Line, new() { ["runProbe"] = JsonSerializer.SerializeToElement(true) });
         await _host.TickNowAsync(Line);
+    }
+
+    public bool LineHasKey => _host.Get<LineDesktopCollector>().HasKey;
+
+    public async Task ApplyLineKeyAsync(string key)
+    {
+        var bytes = Encoding.ASCII.GetBytes((key ?? "").Trim());
+        try { _host.Get<LineDesktopCollector>().SetKey(bytes); }
+        finally { System.Security.Cryptography.CryptographicOperations.ZeroMemory(bytes); }
+        await _host.StopCollectorAsync(Line);
+        await _host.StartCollectorAsync(Line);
+    }
+
+    public async Task<bool> DetectLineKeyAsync()
+    {
+        byte[]? key = OperatingSystem.IsWindows() ? Ivy.Collectors.Line.LineKeyFinder.FromRunningLine() : null;
+        if (key is null) return false;
+        try { _host.Get<LineDesktopCollector>().SetKey(key); }
+        finally { System.Security.Cryptography.CryptographicOperations.ZeroMemory(key); }
+        await _host.StopCollectorAsync(Line);
+        await _host.StartCollectorAsync(Line);
+        return true;
     }
 
     public string? LineReportPath => (_host.Find(Line) as LineDesktopCollector)?.LastReportPath;

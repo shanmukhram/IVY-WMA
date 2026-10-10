@@ -450,6 +450,9 @@ public class MainViewModelTests
         public Task ApplySettingsAsync(CollectorSettings settings) => Task.FromException(new ArgumentException("roots: not a folder"));
         public Task StartAsync(CancellationToken ct = default) => Task.CompletedTask;
         public Task ApplyTelegramPasscodeAsync(string passcode) => Task.CompletedTask;
+        public Task ApplyLineKeyAsync(string key) => Task.CompletedTask;
+        public Task<bool> DetectLineKeyAsync() => Task.FromResult(false);
+        public bool LineHasKey => false;
         public bool TelegramIncludeChannels => true;
         public Task SetTelegramIncludeChannelsAsync(bool include) => Task.CompletedTask;
         public Task RunLineProbeAsync() => Task.CompletedTask;

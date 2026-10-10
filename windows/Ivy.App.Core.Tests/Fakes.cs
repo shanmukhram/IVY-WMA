@@ -175,6 +175,11 @@ public sealed class FakeHost : ICollectorHostView
     public string? ReportPath { get; set; }
 
     public Task ApplyTelegramPasscodeAsync(string passcode) { Passcodes.Add(passcode); return Task.CompletedTask; }
+    public List<string> LineKeys { get; } = new();
+    public bool LineKeyDetected { get; set; }
+    public bool LineHasKey => LineKeys.Count > 0;
+    public Task ApplyLineKeyAsync(string key) { LineKeys.Add(key); return Task.CompletedTask; }
+    public Task<bool> DetectLineKeyAsync() { if (LineKeyDetected) LineKeys.Add("detected"); return Task.FromResult(LineKeyDetected); }
     public bool TelegramIncludeChannels => IncludeChannels;
     public Task SetTelegramIncludeChannelsAsync(bool include) { IncludeChannels = include; return Task.CompletedTask; }
     public Task RunLineProbeAsync() { ProbeRuns++; ReportPath ??= @"C:\IVY\line-probe-26.3.json"; return Task.CompletedTask; }

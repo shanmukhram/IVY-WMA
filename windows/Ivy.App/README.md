@@ -311,3 +311,11 @@ The earlier checklists still apply to behaviour; this one covers the new window.
 **Tray still works**
 
 - [ ] Left-click opens the window on the last page; right-click shows Open / Pause / Sync now / Quit; the tooltip reads "IVY: Running, N queued"; closing the window hides it to the tray; Quit exits within 15 s.
+
+### LINE key (verify when testing LINE decryption)
+
+- [ ] The LINE page shows a "LINE key" card with a key box, Save key, and Detect from LINE.
+- [ ] Pasting the 32-character key and pressing Save: the status shows "key stored; reading LINE", a green "A LINE key is set" bar appears, and the LINE row moves to ok partial with messages captured. On the Mac dashboard a "LINE · Windows" conversation entry appears.
+- [ ] Detect from LINE, with LINE running and signed in: finds the key and stores it (status "key found and stored"); with LINE closed: "no key found".
+- [ ] A wrong key: the row stays red with "the LINE key does not fit this store".
+- [ ] The key persists across an app restart (stored in DPAPI under %LOCALAPPDATA%\IVY\keys); the keys folder contains no readable 32-char value.

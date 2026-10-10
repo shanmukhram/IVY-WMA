@@ -81,6 +81,12 @@ public interface ICollectorHostView : IAsyncDisposable
     /// cleared from the window. The bytes are zeroed by the implementation after use.
     /// </summary>
     Task ApplyTelegramPasscodeAsync(string passcode);
+    /// <summary>Store a LINE key the user entered, then restart the LINE collector.</summary>
+    Task ApplyLineKeyAsync(string key);
+    /// <summary>Try to read the LINE key from the running LINE process; returns true if found and stored.</summary>
+    Task<bool> DetectLineKeyAsync();
+    /// <summary>Whether a LINE key is currently stored.</summary>
+    bool LineHasKey { get; }
 
     /// <summary>Telegram "include channels" toggle (WT1): groups and DMs are always captured.</summary>
     bool TelegramIncludeChannels { get; }

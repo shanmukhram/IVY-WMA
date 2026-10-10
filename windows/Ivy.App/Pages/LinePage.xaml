@@ -89,6 +89,26 @@
                     <TextBlock Text="{x:Bind ViewModel.Conversation.LineStatusText, Mode=OneWay}" Style="{StaticResource SecondaryTextStyle}" />
                 </StackPanel>
             </Border>
+
+            <!-- LINE key: the 32-character key is not in LINE's files; enter it once (kept in DPAPI, never uploaded) or detect it from the running LINE app. -->
+            <Border Style="{StaticResource CardStyle}">
+                <StackPanel Spacing="12">
+                    <TextBlock Text="LINE key" Style="{StaticResource BodyStrongTextBlockStyle}" />
+                    <TextBlock Style="{StaticResource SecondaryTextStyle}" TextWrapping="Wrap"
+                               Text="LINE encrypts its chat store with a 32-character key that is not saved to disk. Enter it once to read your LINE messages on this PC. It is stored with DPAPI and never uploaded." />
+                    <InfoBar IsOpen="{x:Bind ViewModel.Conversation.LineHasKey, Mode=OneWay}" IsClosable="False"
+                             Severity="Success" Message="A LINE key is set." />
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <PasswordBox x:Name="LineKeyBox" Width="340" PlaceholderText="32-character LINE key"
+                                     PasswordChanged="LineKeyBox_PasswordChanged" />
+                        <Button Content="Save key" Style="{StaticResource AccentButtonStyle}" AccessKey="S"
+                                Command="{x:Bind ViewModel.Conversation.ApplyLineKeyCommand}" />
+                        <Button Content="Detect from LINE" AccessKey="D"
+                                Command="{x:Bind ViewModel.Conversation.DetectLineKeyCommand}" />
+                    </StackPanel>
+                    <TextBlock Text="{x:Bind ViewModel.Conversation.LineKeyStatusText, Mode=OneWay}" Style="{StaticResource SecondaryTextStyle}" />
+                </StackPanel>
+            </Border>
         </StackPanel>
     </ScrollViewer>
 </Page>

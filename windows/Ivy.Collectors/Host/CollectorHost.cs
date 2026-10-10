@@ -28,6 +28,8 @@ public sealed class CollectorHostOptions
     public IForegroundWindowProbe? ForegroundProbe { get; init; }
     public Func<NotificationSettings, INotificationDbReader>? NotificationReader { get; init; }
     public IThumbnailGenerator? Thumbnails { get; init; }
+    /// <summary>Null = no LINE key store (the collector stays honest until a key is set); the app supplies the DPAPI store (WX2).</summary>
+    public Line.ILineKeyStore? LineKeyStore { get; init; }
     /// <summary>Null = no Telegram MTProto client (the collector reports "not configured"); tests inject a fake, the app the real adapter.</summary>
     public Telegram.ITelegramClientFactory? TelegramClientFactory { get; init; }
     /// <summary>Null = in-memory passcode (tests, non-Windows); the app supplies the DPAPI store so the passcode persists (WX2).</summary>
@@ -89,7 +91,7 @@ public sealed class CollectorHost : IRescanHandler, ICollectorConfigHandler, IAs
             new ScreenshotCollector(context, fs, changes),
             new UsageCollector(context, probe),
             new NotificationCollector(context, o.NotificationReader),
-            new LineDesktopCollector(context),
+            new LineDesktopCollector(context, keyStore: o.LineKeyStore),
             new Telegram.TelegramCollector(context, clientFactory: telegram, passcode: o.TelegramPasscodeStore),
         });
     }

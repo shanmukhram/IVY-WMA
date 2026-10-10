@@ -27,6 +27,35 @@ public class ConversationViewModelTests
     }
 
     [Fact]
+    public async Task Line_key_applies_and_clears()
+    {
+        var host = new FakeHost();
+        var vm = new ConversationViewModel(host);
+
+        Assert.False(vm.ApplyLineKeyCommand.CanExecute(null));
+        vm.LineKeyText = "0123456789abcdef0123456789abcdef";
+        Assert.True(vm.ApplyLineKeyCommand.CanExecute(null));
+        await vm.ApplyLineKeyCommand.ExecuteAsync();
+
+        Assert.Equal(new[] { "0123456789abcdef0123456789abcdef" }, host.LineKeys);
+        Assert.Equal("", vm.LineKeyText);
+    }
+
+    [Fact]
+    public async Task Line_key_detect_reports_found_or_not()
+    {
+        var host = new FakeHost { LineKeyDetected = false };
+        var vm = new ConversationViewModel(host);
+        await vm.DetectLineKeyCommand.ExecuteAsync();
+        Assert.Contains("no key found", vm.LineKeyStatusText);
+
+        host.LineKeyDetected = true;
+        await vm.DetectLineKeyCommand.ExecuteAsync();
+        Assert.Contains("found", vm.LineKeyStatusText);
+        Assert.Contains("detected", host.LineKeys);
+    }
+
+    [Fact]
     public async Task Include_channels_toggle_pushes_to_host()
     {
         var host = new FakeHost { IncludeChannels = true };

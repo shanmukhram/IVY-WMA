@@ -71,6 +71,9 @@ public sealed class StoredCollectorHostView : ICollectorHostView
 
     // No live collectors here, so the conversation controls are inert (the window hides them when not paired).
     public Task ApplyTelegramPasscodeAsync(string passcode) => Task.CompletedTask;
+    public Task ApplyLineKeyAsync(string key) => Task.CompletedTask;
+    public Task<bool> DetectLineKeyAsync() => Task.FromResult(false);
+    public bool LineHasKey => false;
     public bool TelegramIncludeChannels => true;
     public Task SetTelegramIncludeChannelsAsync(bool include) => Task.CompletedTask;
     public Task RunLineProbeAsync() => Task.CompletedTask;
