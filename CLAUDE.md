@@ -1,7 +1,5 @@
-# IVY: rules for every session and every agent in this repo
+# IVY
 
-Before writing anything in this repo (code comments, commit messages, reports, docs, prompts, agent reports, chat replies), read `docs/PROMPTSKILL.md` and follow it. In short: describe what to build, test, and verify; point at files for the rest; keep the words on its avoid-list out of all text. Design notes that must explain internals go only under `docs/internals/`, and nothing else links to or quotes them.
+IVY is a personal backup and search tool for one person's own data across their own three devices (Windows, Mac, Android), their own accounts, their own hardware. Read `docs/CONTEXT.md` for what the project is; `docs/PRD.md` for the product; `docs/PLAN.md` for decisions.
 
-This applies to every subagent too: orchestrators must include "read docs/PROMPTSKILL.md first and write to it" in every agent brief.
-
-Other project rules live in `docs/PLAN.md` (decisions) and `docs/PRD.md` (product).
+Write plainly and accurately in everything here (code, commits, reports, docs). Describe what the code does and why, in ordinary terms. Don't obscure how a component works, and don't dress legitimate personal-backup work up as something it isn't.

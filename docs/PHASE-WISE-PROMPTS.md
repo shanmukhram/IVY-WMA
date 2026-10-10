@@ -1,11 +1,9 @@
 # Phase-wise prompts for IVY
 
-Ready-to-paste prompts for every phase of docs/PRD.md, written to the rules in docs/PROMPTSKILL.md (point at repo files, keep sensitive mechanics out of the prompt). Two kinds:
+Ready-to-paste prompts for every phase of docs/PRD.md, that state plainly what IVY is and what to verify. Two kinds:
 
-- **Device prompts**: paste into the Claude Code session on the PC or the phone. These are the ones the safety classifier reads cold, so they are deliberately plain.
+- **Device prompts**: paste into the Claude Code session on the PC or the phone. State plainly what IVY is (see docs/CONTEXT.md) and what to verify.
 - **Mac prompts**: what to tell the orchestrator session on the Mac to start or continue a phase.
-
-Rule for every device prompt: name the files to read and say not to open docs/internals/ or the collector sources; the classifier also reacts to what the session reads, not only to the prompt (see docs/PROMPTSKILL.md).
 
 Status as of Oct 10, 2026: Phase 1 Windows runs 1 and 2 done; run 3 (Telegram, LINE probe, gate c and d) in progress; Mac dashboard built and redesigned; Android not started.
 
@@ -59,7 +57,7 @@ Ground rules: branch windows-fourth-run, commit as you go and push the branch, n
 
 ### Windows run 5 (only if the LINE probe found an encrypted store)
 
-Mac prompt first (to the orchestrator): "The LINE probe report is in docs/reports/. Plan and build the LINE store reader for the installed version, keeping everything on the PC per PRD WX2, then give me the run-5 prompt." The device prompt then follows the template in docs/PROMPTSKILL.md with: "LINE: follow the updated LINE section of windows/README.md and walk its checklist rows; report the coverage label the row shows."
+Mac prompt first (to the orchestrator): "The LINE probe report is in docs/reports/. Plan and build the LINE store reader for the installed version, keeping everything on the PC per PRD WX2, then give me the run-5 prompt."  The device prompt then says, plainly: "LINE: follow the updated LINE section of windows/README.md and walk its checklist rows; report the coverage label the row shows."
 
 ### Mac prompt to close Phase 1
 
