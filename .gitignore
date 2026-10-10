@@ -17,6 +17,9 @@ coverage/
 
 # fake-mac smoke-test state (keys, tokens, ledger)
 .fake-mac/
+
+# gate-g1 working files (pairing string, audit markers: plaintext from the vault)
+.gate-g1/
 .build/
 .swiftpm/
 .claude/launch.json

@@ -1,0 +1,35 @@
+{
+  "name": "@ivy/gate-g1",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Gate G1 runner: automates the Mac side of the PRD's G1 checks (pairing over R2, 50 MB file retrieval, zero-plaintext bucket audit, reboot mid-queue) and the honesty test against the running Mac service and real R2, and writes a PASS/FAIL report.",
+  "engines": {
+    "node": ">=25"
+  },
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "bin": {
+    "ivy-gate-g1": "./src/cli.ts"
+  },
+  "scripts": {
+    "gate": "node --disable-warning=ExperimentalWarning src/cli.ts",
+    "pretest": "pnpm --filter @ivy/protocol --filter @ivy/mac-ocr build",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "3.1149.0",
+    "@ivy/audit": "workspace:*"
+  },
+  "devDependencies": {
+    "@ivy/mac-service": "workspace:*",
+    "@ivy/protocol": "workspace:*",
+    "@ivy/s3-mock": "workspace:*",
+    "@types/node": "26.6.5",
+    "typescript": "7.0.2",
+    "vitest": "5.0.3"
+  }
+}

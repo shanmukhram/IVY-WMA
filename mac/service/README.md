@@ -8,11 +8,14 @@ Node 25 runs the TypeScript directly (type stripping), so there is no build step
 
 ```sh
 pnpm install
+pnpm --filter @ivy/mac-ui build                 # optional: builds mac/ui/dist
 pnpm --filter @ivy/mac-service start            # builds @ivy/protocol, then node src/main.ts
 # or, with options:
 cd mac/service && node src/main.ts --data ./data --port 4777 --static ../ui/dist
 pnpm --filter @ivy/mac-service test             # vitest (S3 mock, no R2 credentials needed)
 ```
+
+Relative `--data`, `--db` and `--static` (and `IVY_DATA_DIR`, `IVY_DB_PATH`, `IVY_STATIC_DIR`) resolve against the directory you run the command from, so the example above works as written. Without `--static`, the service serves the built dashboard `mac/ui/dist` when `mac/ui/dist/index.html` exists (located relative to this package, not the working directory), and the placeholder page in `mac/service/public` otherwise. The startup lines print the resolved data and UI directories. `pnpm --filter @ivy/mac-service start` runs with `mac/service` as its working directory, so its default data directory is `mac/service/data`.
 
 First run, from the UI or with curl:
 
@@ -57,7 +60,7 @@ Bucket lifecycle rules (PLAN decision 6): **no** lifecycle/expiry rule on `ivy-u
 | --- | --- | --- |
 | data directory | `IVY_DATA_DIR`, `--data` | `./data` |
 | vault database | `IVY_DB_PATH`, `--db` | `<data>/vault.db` |
-| UI directory served at `/` | `IVY_STATIC_DIR`, `--static` | `mac/service/public` (placeholder page) |
+| UI directory served at `/` | `IVY_STATIC_DIR`, `--static` | `mac/ui/dist` if it has an `index.html`, else `mac/service/public` (placeholder page) |
 | bind address / port | `IVY_HOST` / `IVY_PORT`, `--host` / `--port` | `127.0.0.1` / `4777` |
 | poll interval (S1) | `IVY_POLL_INTERVAL_MS`, `--poll-ms` | 120000 (0 = only on demand) |
 | auto-lock (S8) | `IVY_AUTO_LOCK_MINUTES`, `--auto-lock-minutes`, then `PUT /api/keystore/settings` | 30 (0 = never) |
@@ -114,9 +117,29 @@ Event types on the stream: `ingest.poll|committed|quarantined|replayed|error`, `
 
 ## How ingest works
 
-Per pass and up-bucket: list `pair/` and each record prefix from (marker - 8 days), plus a full listing (no marker window) on the first pass after service start, after an unlock from a full lock, whenever the bucket's last successful poll is older than that window, hourly, and with `{full: true}`. There is no expiry on the up-buckets, so a Mac that was off for weeks catches up on its first poll; per object fetch, ledger check (same bytes = replay, only deleted; different bytes under a committed key = quarantined), decrypt with the in-memory key, validate with the protocol schemas, check the device is paired for that bucket's role, then commit the records and the ledger row in one SQLite transaction, delete the object from R2, and finally advance the marker (highest committed oid). Any failure quarantines that one object (ciphertext kept under `data/quarantine/`) and the pass continues; network errors and a lock mid-pass leave objects for the next pass.
+Per pass and up-bucket: one listing of `up/`, keeping for each record prefix only the keys after `up/<prefix>/<marker - 8 days>` (oids are time-ordered within a prefix but not across prefixes, so the window is applied per prefix to that one listing), and a listing of `pair/` only while a pairing for that role is open (pending, or created or consumed within the 10 + 5 minute pairing window). A full listing of the bucket (no marker window) replaces the `up/` listing on the first pass after service start, after an unlock from a full lock, whenever the bucket's last successful poll is older than that window, hourly, and with `{full: true}`; it also picks up unrecognised keys and stray `pair/` objects. There is no expiry on the up-buckets, so a Mac that was off for weeks catches up on its first poll; per object fetch, ledger check (same bytes = replay, only deleted; different bytes under a committed key = quarantined), decrypt with the in-memory key, validate with the protocol schemas, check the device is paired for that bucket's role, then commit the records and the ledger row in one SQLite transaction, delete the object from R2, and finally advance the marker (highest committed oid). Any failure quarantines that one object (ciphertext kept under `data/quarantine/`) and the pass continues; network errors and a lock mid-pass leave objects for the next pass.
 
 Chunked blobs: the manifest is verified and stored (as its envelope; the content key never sits in the database in clear), each part is verified alone (length, SHA-256, header, AES-GCM with the per-index AAD) and its plaintext written at its offset into `data/blobs/<bucket>-<oid>.part`, with `blobs.committed_parts` updated in the part's commit transaction. One part in memory at a time; restarts resume; the completed file is size- and hash-checked and moved to `media/`, `thumbs/`, `files/<oid>/<name>` or `attachments/`, then linked to its rows (media, file thumbnail, file_request result -> `files.status = cached`, attachment).
+
+## R2 request budget
+
+R2 bills ListObjectsV2, PutObject, CopyObject and the multipart writes as Class A operations (1 million free per month) and GetObject/HeadObject as Class B (10 million free); DeleteObject is free. With the listing above the Mac makes about **one list call per up-bucket per poll** (2 per poll with both up-buckets configured; measured against the mock in `test/request-budget.test.ts`, which asserts that bound; the previous per-prefix listing made 22).
+
+| Who | Operation | Rate | Per month (30 days) |
+| --- | --- | --- | --- |
+| Mac | ListObjectsV2, `up/` (or the hourly full listing in its place), 2 up-buckets | every 2 min | 43 200 |
+| Mac | ListObjectsV2 `pair/` while a pairing is open | about 8 per pairing | negligible |
+| Mac | extra list pages | +1 per 1 000 objects waiting in a bucket | only during a backlog |
+| Mac | PutObject `cmd/<oid>` | per command | tens |
+| Mac | `POST /api/r2/check` | 4 per press | negligible |
+| **Mac Class A** | | | **about 43 000** |
+| Windows | ListObjectsV2 on its cmd-bucket (command poll) | every 2 min | 21 600 |
+| Windows | PutObject `device_report` | every 5 min | 8 640 |
+| Windows | PutObject records and blobs (first-run workload: about 200 objects a day: file metadata, screenshots and their parts, usage, notifications) | about 200 / day | 6 000 |
+| Windows | multipart for objects over 16 MiB (8 MiB parts): create + parts + complete, e.g. 6 for a 32 MiB chunk instead of 1 | per large object | a 50 MB file request costs about 13 (2 chunks as multipart, manifest, status) |
+| **Total Class A** | | | **about 80 000, 8 % of the free tier** |
+
+Class B: the Mac GETs each object once (about 15 000 a month for the workload above), far below 10 million. A slower poll (`IVY_POLL_INTERVAL_MS`) scales the Mac's line linearly.
 
 ## OCR and thumbnails
 

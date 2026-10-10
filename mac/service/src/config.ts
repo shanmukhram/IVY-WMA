@@ -7,6 +7,7 @@
  * only their first-run defaults.
  */
 import { resolve, join, dirname } from "node:path";
+import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 export interface ServiceConfig {
@@ -72,6 +73,19 @@ export interface ServiceConfig {
 }
 
 const here = dirname(fileURLToPath(import.meta.url));
+/** mac/service, resolved from this file (not from the working directory) */
+const packageDir = resolve(here, "..");
+
+/**
+ * Default directory served at /: the built dashboard (`mac/ui/dist`) when it has
+ * an index.html, else the placeholder page in `mac/service/public`. Both are
+ * located relative to this package, so `pnpm --filter @ivy/mac-service start`
+ * serves the UI whatever the working directory.
+ */
+export function defaultStaticDir(pkgDir: string = packageDir): string {
+  const ui = resolve(pkgDir, "..", "ui", "dist");
+  return existsSync(join(ui, "index.html")) ? ui : join(pkgDir, "public");
+}
 const MIN = 60_000;
 const DAY = 24 * 60 * MIN;
 
@@ -83,14 +97,18 @@ function envInt(name: string): number | undefined {
   return n;
 }
 
-export function loadConfig(overrides: Partial<ServiceConfig> = {}): ServiceConfig {
-  const dataDir = resolve(overrides.dataDir ?? process.env.IVY_DATA_DIR ?? "./data");
+export function loadConfig(overrides: Partial<ServiceConfig> = {}, cwd: string = process.cwd()): ServiceConfig {
+  // relative paths (flags or env) resolve against the working directory; @fastify/static needs an absolute root
+  const abs = (p: string) => resolve(cwd, p);
+  const o = stripUndefined(overrides);
+  const env = (name: string) => (process.env[name] ? process.env[name] : undefined);
+  const dataDir = abs(o.dataDir ?? env("IVY_DATA_DIR") ?? "./data");
   const base: ServiceConfig = {
     dataDir,
-    dbPath: process.env.IVY_DB_PATH ? resolve(process.env.IVY_DB_PATH) : join(dataDir, "vault.db"),
+    dbPath: join(dataDir, "vault.db"),
     identityPath: join(dataDir, "identity.json"),
     tokenPath: join(dataDir, "session.token"),
-    staticDir: resolve(process.env.IVY_STATIC_DIR ?? join(here, "..", "public")),
+    staticDir: defaultStaticDir(),
     host: process.env.IVY_HOST ?? "127.0.0.1",
     port: envInt("IVY_PORT") ?? 4777,
     pollIntervalMs: envInt("IVY_POLL_INTERVAL_MS") ?? 2 * MIN,
@@ -114,11 +132,14 @@ export function loadConfig(overrides: Partial<ServiceConfig> = {}): ServiceConfi
     ocrConcurrency: envInt("IVY_OCR_CONCURRENCY") ?? 2,
     thumbnails: process.platform === "darwin" && process.env.IVY_THUMBNAILS !== "0",
   };
-  const merged = { ...base, ...stripUndefined(overrides) };
-  // derived paths follow an overridden dataDir unless set explicitly
-  if (overrides.dataDir && !overrides.dbPath && !process.env.IVY_DB_PATH) merged.dbPath = join(merged.dataDir, "vault.db");
-  if (overrides.dataDir && !overrides.identityPath) merged.identityPath = join(merged.dataDir, "identity.json");
-  if (overrides.dataDir && !overrides.tokenPath) merged.tokenPath = join(merged.dataDir, "session.token");
+  const merged: ServiceConfig = { ...base, ...o, dataDir };
+  // explicit override > env > derived from the (resolved) data directory
+  const dbPath = o.dbPath ?? env("IVY_DB_PATH");
+  if (dbPath) merged.dbPath = abs(dbPath);
+  const staticDir = o.staticDir ?? env("IVY_STATIC_DIR");
+  if (staticDir) merged.staticDir = abs(staticDir);
+  if (o.identityPath) merged.identityPath = abs(o.identityPath);
+  if (o.tokenPath) merged.tokenPath = abs(o.tokenPath);
   return merged;
 }
 

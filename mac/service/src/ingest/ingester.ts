@@ -2,9 +2,10 @@
  * The ingest loop (PRD S1-S5).
  *
  * Per pass, for each configured up-bucket:
- *   1. list `pair/` and every record prefix under `up/` starting at
- *      (marker - lookback); a full listing of the bucket runs hourly and on demand
- *      to catch unrecognised keys;
+ *   1. list `up/` once, keeping per record prefix only keys after
+ *      (marker - lookback), and `pair/` while a pairing is open; a full listing of
+ *      the bucket runs hourly, on demand and after an absence, and catches
+ *      unrecognised keys (about one ListObjectsV2 per bucket per poll);
  *   2. per object: fetch, check the ledger, decrypt with the in-memory key,
  *      validate with the protocol schemas, commit records + ledger row in ONE
  *      SQLite transaction, then delete the object from R2;
@@ -43,6 +44,7 @@ import { deleteCommandObject, maintainCommands, sendQueued } from "../commands/c
 
 /** Record prefixes listed incrementally (PROTOCOL §5). */
 const RECORD_PREFIXES = ["file", "scr", "usg", "wnotif", "anotif", "call", "msg", "cstat", "status", "blob"];
+const RECORD_PREFIX_PATHS = RECORD_PREFIXES.map((p) => `up/${p}/`);
 
 export interface BucketPassResult {
   bucket: string;
@@ -190,19 +192,40 @@ export class Ingester {
 
   // ------------------------------------------------------------------ listing
 
+  /**
+   * One ListObjectsV2 pass per bucket and poll (R2 bills lists as Class A operations):
+   * a full listing, or a single `up/` listing with the marker window applied per
+   * record prefix (oids are time-ordered within a prefix, not across prefixes), plus
+   * `pair/` only while a pairing for this role is open. Keys under `up/` with an
+   * unknown prefix are left to the full listing, as before.
+   */
   private async listBucket(src: Source, full: boolean): Promise<ObjectEntry[]> {
     const b = src.bucket!;
     if (full) return b.list();
     const out: ObjectEntry[] = [];
-    out.push(...(await b.list("pair/")));
+    if (this.pairingOpen(src.role)) out.push(...(await b.list("pair/")));
     const marker = this.marker(src.bucketName);
     let startOid: string | undefined;
     const ms = marker ? oidTime(marker) : null;
     if (ms !== null) startOid = makeOid(Math.max(0, ms - this.ctx.config.listLookbackMs), new Uint8Array(10));
-    for (const p of RECORD_PREFIXES) {
-      out.push(...(await b.list(`up/${p}/`, startOid ? `up/${p}/${startOid}` : undefined)));
+    for (const o of await b.list("up/")) {
+      const p = RECORD_PREFIX_PATHS.find((x) => o.key.startsWith(x));
+      if (!p) continue;
+      // same rule the old per-prefix StartAfter applied: strictly after up/<prefix>/<marker - window>
+      if (startOid && o.key <= p + startOid) continue;
+      out.push(o);
     }
     return out;
+  }
+
+  /**
+   * A pairing for `role` is pending, or was created or consumed within its lifetime
+   * plus grace (so a second or late device answer is still seen and refused promptly).
+   * Anything else under `pair/` is picked up by the hourly full listing.
+   */
+  private pairingOpen(role: Role): boolean {
+    const since = new Date(Date.now() - this.ctx.config.pairingTtlMs - this.ctx.config.pairingGraceMs).toISOString();
+    return !!this.ctx.db.prepare("SELECT 1 FROM pairings WHERE role = ? AND (status = 'pending' OR created_at >= ? OR consumed_at >= ?) LIMIT 1").get(role, since, since);
   }
 
   private async pollBucket(src: Source, full: boolean): Promise<BucketPassResult> {

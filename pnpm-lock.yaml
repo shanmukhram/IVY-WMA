@@ -229,6 +229,34 @@ importers:
         specifier: 5.0.3
         version: 5.0.3(@types/node@26.6.5)(jsdom@30.1.2(@noble/hashes@2.4.0))(vite@8.3.4(@types/node@26.6.5)(esbuild@0.28.2)(tsx@4.23.15))
 
+  tools/gate-g1:
+    dependencies:
+      '@aws-sdk/client-s3':
+        specifier: 3.1149.0
+        version: 3.1149.0
+      '@ivy/audit':
+        specifier: workspace:*
+        version: link:../audit-plaintext
+    devDependencies:
+      '@ivy/mac-service':
+        specifier: workspace:*
+        version: link:../../mac/service
+      '@ivy/protocol':
+        specifier: workspace:*
+        version: link:../../packages/protocol
+      '@ivy/s3-mock':
+        specifier: workspace:*
+        version: link:../../packages/s3-mock
+      '@types/node':
+        specifier: 26.6.5
+        version: 26.6.5
+      typescript:
+        specifier: 7.0.2
+        version: 7.0.2
+      vitest:
+        specifier: 5.0.3
+        version: 5.0.3(@types/node@26.6.5)(jsdom@30.1.2(@noble/hashes@2.4.0))(vite@8.3.4(@types/node@26.6.5)(esbuild@0.28.2)(tsx@4.23.15))
+
 packages:
 
   '@adobe/css-tools@4.5.0':
