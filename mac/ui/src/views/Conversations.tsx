@@ -30,6 +30,7 @@ import { SearchField } from "../components/Controls.tsx";
 import { Badge, Empty, ErrorLine } from "../components/Feedback.tsx";
 import { SlideOver } from "../components/Overlay.tsx";
 import { chatSourceLabel } from "../components/Sidebar.tsx";
+import { BlockedContactsSheet, HiddenChatsSheet, LineSettingsSheet, LineToolbar, useLineAccount } from "./Line.tsx";
 
 type SourceClaim = { source: string; coverage: string };
 export interface Chat {
@@ -90,6 +91,7 @@ export function ConversationsView(scope: ChatsScope = {}) {
   const around = scope.embedded ? local.around : loc.query.get("around");
   const [q, setQ] = useState("");
   const [profileOpen, setProfileOpen] = useState(false);
+  const [lineOpen, setLineOpen] = useState<null | "hidden" | "blocked" | "settings">(null);
   const list = useLoad<any>((a) => a.get("/api/views/chats", { source, role, platform, q: q.trim() || undefined }), [source, role, platform, q]);
   const reload = useDebounced(list.reload, 1500);
   useEvents(() => reload(), ["ingest.committed"]);
@@ -97,6 +99,9 @@ export function ConversationsView(scope: ChatsScope = {}) {
   const selected = chatParam ?? chats[0]?.id ?? null;
   const current = chats.find((c) => c.id === selected);
   const activePlatform = current?.platform ?? platform;
+  const isLine = (activePlatform ?? "").toLowerCase() === "line";
+  const lineAccount = useLineAccount(isLine);
+  useEffect(() => { if (!isLine) setLineOpen(null); }, [isLine]);
   const open = (id: string) => {
     setProfileOpen(false);
     if (scope.embedded) setLocal({ chat: id, around: null });
@@ -110,6 +115,7 @@ export function ConversationsView(scope: ChatsScope = {}) {
         <div className="pane-head" style={{ flexDirection: "column", alignItems: "stretch", gap: 8 }}>
           <div className="row">{(platform || source) && <AppIcon app={platform ?? ""} size={20} />}<h1 className="ellipsis">{title}</h1><span className="spacer" />{list.data && <span className="small faint">{list.data.total}</span>}</div>
           <SearchField aria-label="Search chats" placeholder="Search chats" value={q} onChange={(e) => setQ(e.target.value)} />
+          {isLine && <LineToolbar counts={lineAccount.data?.counts} onHidden={() => setLineOpen("hidden")} onBlocked={() => setLineOpen("blocked")} onSettings={() => setLineOpen("settings")} />}
         </div>
         <div className="pane-scroll" style={{ padding: 6 }}>
           <ErrorLine error={list.error} />
@@ -142,6 +148,9 @@ export function ConversationsView(scope: ChatsScope = {}) {
         <section className="pane pane-main" aria-label="Chat"><Empty icon="chat" title="No chat selected">Pick a chat on the left.</Empty></section>
       )}
       {selected && profileOpen && <ProfileSheet id={selected} onClose={() => setProfileOpen(false)} />}
+      {isLine && lineOpen === "hidden" && <HiddenChatsSheet onClose={() => setLineOpen(null)} />}
+      {isLine && lineOpen === "blocked" && <BlockedContactsSheet onClose={() => setLineOpen(null)} />}
+      {isLine && lineOpen === "settings" && <LineSettingsSheet account={lineAccount.data} onClose={() => setLineOpen(null)} />}
     </div>
   );
 }
