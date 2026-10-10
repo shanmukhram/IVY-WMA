@@ -372,7 +372,12 @@ public class TelegramCollectorTests : IDisposable
             fs.CopyTo(ms);
             return ms.ToArray();
         }
+        // A sidecar can also vanish as a directory entry or be briefly locked during a checkpoint; any
+        // transient IO on a file that is gone or in flux means no readable bytes on disk, which is the
+        // property under test.
         catch (FileNotFoundException) { return Array.Empty<byte>(); }
+        catch (DirectoryNotFoundException) { return Array.Empty<byte>(); }
+        catch (IOException) { return Array.Empty<byte>(); }
     }
 
     private CommandRecord Command() => new()
