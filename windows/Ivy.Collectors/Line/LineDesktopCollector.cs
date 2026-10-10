@@ -79,6 +79,39 @@ public sealed class LineDesktopCollector : Collector<LineSettings>
     /// <summary>Store the LINE key (entered once in the app, kept in DPAPI, never uploaded — WX2).</summary>
     public void SetKey(ReadOnlySpan<byte> passphrase) => _keyStore?.StoreKey(passphrase);
 
+    /// <summary>
+    /// Try to read a working key from the running LINE process and store it. Scans LINE's memory for 32-hex
+    /// candidates and keeps the one that actually decrypts this store's first page (so a wrong candidate is
+    /// discarded, not stored). Windows only; returns false off Windows, with no key store, or if none fit.
+    /// </summary>
+    public bool TryDetectAndStoreKey()
+    {
+        if (_keyStore is null || !OperatingSystem.IsWindows()) return false;
+        var dataFolder = ResolveDataFolder();
+        if (dataFolder is null) return false;
+        var dbPath = LineStore.FindDb(dataFolder, _mapFor(Settings.Version ?? "unknown").DbFilePattern);
+        if (dbPath is null || !File.Exists(dbPath)) return false;
+
+        // The first page (up to the max page size) is enough to confirm a key.
+        byte[] page1;
+        using (var fs = new FileStream(dbPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
+        {
+            page1 = new byte[(int)Math.Min(fs.Length, 65536)];
+            _ = fs.Read(page1, 0, page1.Length);
+        }
+
+        var found = LineKeyFinder.FromRunningLine(cand =>
+        {
+            var key = LineWxCipher.DeriveKey(cand);
+            try { return LineWxCipher.KeyFits(page1, key); }
+            finally { System.Security.Cryptography.CryptographicOperations.ZeroMemory(key); }
+        });
+        if (found is null) return false;
+        try { _keyStore.StoreKey(found); }
+        finally { System.Security.Cryptography.CryptographicOperations.ZeroMemory(found); }
+        return true;
+    }
+
     /// <summary>Forget the stored LINE key.</summary>
     public void ClearKey() => _keyStore?.Clear();
 

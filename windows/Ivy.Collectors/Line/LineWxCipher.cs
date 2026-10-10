@@ -120,6 +120,22 @@ public static class LineWxCipher
     }
 
     /// <summary>
+    /// Cheap check that a base key fits the store, using only page 1 (bytes 16..23 decrypt back to the
+    /// plaintext header backup). Lets detection test many candidate keys without decrypting the whole file.
+    /// </summary>
+    public static bool KeyFits(ReadOnlySpan<byte> page1, byte[] baseKey)
+    {
+        if (page1.Length < 24) return false;
+        var pageSize = (page1[16] << 8) | (page1[17] << 16);
+        if (pageSize < 512 || pageSize > 65536 || (pageSize & (pageSize - 1)) != 0 || page1.Length < pageSize) return false;
+        var span = page1[..pageSize].ToArray().AsSpan();
+        var dbHeader = span.Slice(16, 8).ToArray();
+        span.Slice(8, 8).CopyTo(span.Slice(16, 8));
+        AesCbc(baseKey, 1, false, span.Slice(16, pageSize - 16));
+        return span.Slice(16, 8).SequenceEqual(dbHeader);
+    }
+
+    /// <summary>
     /// Decrypt a whole wxSQLite3 AES-128-CBC store with the base key from <see cref="DeriveKey"/>. Returns the
     /// plaintext SQLite bytes, or null if page 1 does not validate (wrong passphrase / not this scheme).
     /// </summary>

@@ -23,13 +23,22 @@ public static partial class LineKeyFinder
     private static partial Regex HexKey();
 
     /// <summary>
-    /// Pull the key out of a region of memory. Prefer a value framed by the documented markers; fall back to a
-    /// lone 32-hex run. Returns the ASCII key bytes, or null when the region holds none.
+    /// First candidate (backward-compatible): a value framed by the documented markers, else a lone 32-hex run.
     /// </summary>
-    public static byte[]? Extract(ReadOnlySpan<byte> region)
+    public static byte[]? Extract(ReadOnlySpan<byte> region) => Candidates(region).FirstOrDefault();
+
+    /// <summary>
+    /// Every distinct 32-hex candidate in a region, marker-framed ones first. The real key is one of these; the
+    /// caller confirms each against the store (a candidate that does not decrypt is simply discarded), so this
+    /// never needs the markers to be present in this LINE version.
+    /// </summary>
+    public static IEnumerable<byte[]> Candidates(ReadOnlySpan<byte> region)
     {
-        // Treat the bytes as latin1 text so byte offsets and char offsets line up for the marker search.
         var text = Latin1(region);
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        var ordered = new List<string>();
+        void Add(string hex) { if (seen.Add(hex)) ordered.Add(hex); }
+
         foreach (var prefix in new[] { Prefix1, Prefix2 })
         {
             var i = text.IndexOf(prefix, StringComparison.Ordinal);
@@ -39,12 +48,12 @@ public static partial class LineKeyFinder
                 var end = text.IndexOf(Suffix, start, StringComparison.Ordinal);
                 var slice = end > start ? text[start..end] : text[start..Math.Min(start + 64, text.Length)];
                 var m = HexKey().Match(slice);
-                if (m.Success) return Encoding.ASCII.GetBytes(m.Value);
+                if (m.Success) Add(m.Value);
                 i = text.IndexOf(prefix, start, StringComparison.Ordinal);
             }
         }
-        var lone = HexKey().Match(text);
-        return lone.Success ? Encoding.ASCII.GetBytes(lone.Value) : null;
+        foreach (Match m in HexKey().Matches(text)) Add(m.Value);
+        return ordered.Select(h => Encoding.ASCII.GetBytes(h)).ToList();
     }
 
     private static string Latin1(ReadOnlySpan<byte> bytes)
@@ -55,12 +64,12 @@ public static partial class LineKeyFinder
     }
 
     /// <summary>
-    /// Scan the running LINE process for the key (Windows only). Returns the key or null if LINE is not
-    /// running or the key could not be found. Every candidate is confirmed against the store before use by the
-    /// caller (a wrong value simply fails to decrypt), so this never feeds an unverified value into the vault.
+    /// Scan the running LINE process for a key that <paramref name="fits"/> accepts (Windows only). Returns the
+    /// first candidate the predicate confirms, or null if LINE is not running or none fit. The predicate is the
+    /// store check, so only a key that actually decrypts the store is ever returned.
     /// </summary>
     [SupportedOSPlatform("windows")]
-    public static byte[]? FromRunningLine()
+    public static byte[]? FromRunningLine(Func<byte[], bool> fits)
     {
         var proc = System.Diagnostics.Process.GetProcessesByName("LINE").FirstOrDefault(p =>
         {
@@ -86,8 +95,8 @@ public static partial class LineKeyFinder
                         var want = (int)Math.Min(buf.Length, regionSize - off);
                         if (ReadProcessMemory(h, regionBase + (nint)off, buf, want, out var read) && read > 0)
                         {
-                            var key = Extract(buf.AsSpan(0, (int)read));
-                            if (key is not null) return key;
+                            foreach (var cand in Candidates(buf.AsSpan(0, (int)read)))
+                                if (fits(cand)) return cand;
                         }
                     }
                 }

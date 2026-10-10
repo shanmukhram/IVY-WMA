@@ -199,10 +199,8 @@ public sealed class CollectorHostAdapter : ICollectorHostView
 
     public async Task<bool> DetectLineKeyAsync()
     {
-        byte[]? key = OperatingSystem.IsWindows() ? Ivy.Collectors.Line.LineKeyFinder.FromRunningLine() : null;
-        if (key is null) return false;
-        try { _host.Get<LineDesktopCollector>().SetKey(key); }
-        finally { System.Security.Cryptography.CryptographicOperations.ZeroMemory(key); }
+        // The collector scans LINE's memory and keeps only a candidate that decrypts this store.
+        if (!_host.Get<LineDesktopCollector>().TryDetectAndStoreKey()) return false;
         await _host.StopCollectorAsync(Line);
         await _host.StartCollectorAsync(Line);
         return true;
