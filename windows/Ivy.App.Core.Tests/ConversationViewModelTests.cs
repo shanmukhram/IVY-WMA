@@ -9,7 +9,7 @@ public class ConversationViewModelTests
         new() { Name = name, Enabled = true, Running = running, LastError = error, Detail = detail };
 
     [Fact]
-    public void Shows_needs_passcode_and_applies_it()
+    public async Task Shows_needs_passcode_and_applies_it()
     {
         var host = new FakeHost();
         var vm = new ConversationViewModel(host);
@@ -20,20 +20,21 @@ public class ConversationViewModelTests
 
         vm.PasscodeText = "hunter2";
         Assert.True(vm.ApplyPasscodeCommand.CanExecute(null));
-        vm.ApplyPasscodeCommand.Execute(null);
+        await vm.ApplyPasscodeCommand.ExecuteAsync(); // host work runs on the thread pool
 
         Assert.Equal(new[] { "hunter2" }, host.Passcodes);
         Assert.Equal("", vm.PasscodeText); // cleared after applying
     }
 
     [Fact]
-    public void Include_channels_toggle_pushes_to_host()
+    public async Task Include_channels_toggle_pushes_to_host()
     {
         var host = new FakeHost { IncludeChannels = true };
         var vm = new ConversationViewModel(host);
         Assert.True(vm.IncludeChannels);
 
         vm.IncludeChannels = false;
+        await vm.LastWork;
         Assert.False(host.IncludeChannels);
     }
 
@@ -48,7 +49,7 @@ public class ConversationViewModelTests
     }
 
     [Fact]
-    public void Line_probe_runs_and_report_opens()
+    public async Task Line_probe_runs_and_report_opens()
     {
         var opened = new List<string>();
         var host = new FakeHost();
@@ -57,7 +58,7 @@ public class ConversationViewModelTests
         Assert.False(vm.HasReport);
         Assert.False(vm.OpenReportCommand.CanExecute(null));
 
-        vm.RunProbeCommand.Execute(null);
+        await vm.RunProbeCommand.ExecuteAsync();
         Assert.Equal(1, host.ProbeRuns);
         Assert.True(vm.HasReport);
         Assert.True(vm.OpenReportCommand.CanExecute(null));
