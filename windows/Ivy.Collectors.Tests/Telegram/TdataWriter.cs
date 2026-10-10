@@ -34,14 +34,17 @@ internal static class TdataWriter
         key.WriteByteArray(salt);
         key.WriteByteArray(keyEncrypted);
         key.WriteByteArray(infoEncrypted);
-        File.WriteAllBytes(Path.Combine(tdataDir, TdataLayout.KeyFileName), TdfFile.Write(1, key.ToArray()));
+        // The safe-write "settled" copy is base + 's' (key_data -> key_datas).
+        File.WriteAllBytes(TdataLayout.KeyBase(tdataDir) + "s", TdfFile.Write(1, key.ToArray()));
 
         foreach (var a in accounts)
         {
-            // The MTProto authorization blob: mainDcId, userId, then each (dcId, 256-byte key).
+            // The MTProto authorization blob, tdesktop's modern wide-id shape: the all-ones tag, u64 userId,
+            // i32 mainDcId, the keys list (count, then dcId + 256-byte key each), then an empty destroy list.
             var mtp = new TdeWriter();
+            mtp.WriteUInt64(ulong.MaxValue);
+            mtp.WriteUInt64((ulong)a.UserId);
             mtp.WriteInt32(a.MainDcId);
-            mtp.WriteInt64(a.UserId);
             mtp.WriteInt32(a.AuthKeys.Count);
             foreach (var (dcId, k) in a.AuthKeys)
             {
@@ -49,15 +52,15 @@ internal static class TdataWriter
                 mtp.WriteInt32(dcId);
                 mtp.WriteRaw(k);
             }
+            mtp.WriteInt32(0); // keys-to-destroy count
 
             var descriptor = new TdeWriter();
             descriptor.WriteUInt32(TdataReader.DbiMtpAuthorization);
             descriptor.WriteByteArray(mtp.ToArray());
 
             var file = TdfFile.Write(1, TdataCrypto.EncryptLocal(descriptor.ToArray(), localKey));
-            var path = TdataLayout.AccountDataFile(tdataDir, a.Index);
-            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-            File.WriteAllBytes(path, file);
+            // The MTP file sits directly under tdata as <part> + 's', not inside the account folder.
+            File.WriteAllBytes(TdataLayout.AccountMtpBase(tdataDir, a.Index) + "s", file);
         }
 
         CryptographicOperations.ZeroMemory(localKey);

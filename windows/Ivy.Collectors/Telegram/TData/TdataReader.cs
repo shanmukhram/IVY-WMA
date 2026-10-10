@@ -31,9 +31,9 @@ public static class TdataReader
     {
         if (string.IsNullOrEmpty(tdataDir) || !Directory.Exists(tdataDir))
             return new Result(null, Failure.NotFound, "tdata folder not found");
-        var keyFile = Path.Combine(tdataDir, TdataLayout.KeyFileName);
-        if (!File.Exists(keyFile))
-            return new Result(null, Failure.NotFound, $"{TdataLayout.KeyFileName} not found in tdata");
+        var keyFile = TdataLayout.ResolveSafeWrite(TdataLayout.KeyBase(tdataDir));
+        if (keyFile is null)
+            return new Result(null, Failure.NotFound, "key_data not found in tdata");
 
         byte[] localKey;
         int[] indices;
@@ -103,8 +103,8 @@ public static class TdataReader
 
     private static TelegramAccount? ReadAccount(string tdataDir, int index, byte[] localKey)
     {
-        var dataFile = TdataLayout.AccountDataFile(tdataDir, index);
-        if (!File.Exists(dataFile)) return null;
+        var dataFile = TdataLayout.ResolveSafeWrite(TdataLayout.AccountMtpBase(tdataDir, index));
+        if (dataFile is null) return null;
         var payload = TdfFile.Read(File.ReadAllBytes(dataFile)).Payload;
         var descriptor = TdataCrypto.DecryptLocal(payload, localKey);
         try
@@ -129,26 +129,55 @@ public static class TdataReader
         }
     }
 
+    /// <summary>All-ones tag marking the modern (wide user id) serialization (tdesktop <c>kWideIdsTag</c>).</summary>
+    private const ulong WideIdsTag = ulong.MaxValue;
+
     /// <summary>
-    /// Parse the MTProto authorization blob: <c>i32 mainDcId, i64 userId, i32 keyCount, [i32 dcId, raw256]*</c>.
-    /// This is the shape <see cref="TdataWriter"/> (tests) produces; the real tdesktop serialization must be
-    /// mapped onto this on the PC (README).
+    /// Parse the MTProto authorization blob exactly as tdesktop serializes it
+    /// (<c>Main::Account::serializeMtpAuthorization</c> / <c>setMtpAuthorization</c>), big-endian QDataStream:
+    /// two <c>i32</c> legacy fields; when their combined value is <see cref="WideIdsTag"/> the modern form
+    /// follows (<c>u64 userId, i32 mainDcId</c>), otherwise they are the legacy user id and main dc id; then
+    /// the keys list (<c>i32 count</c>, then <c>i32 dcId</c> + a 256-byte key each) and a second
+    /// keys-to-destroy list in the same shape, which is read and discarded.
     /// </summary>
     private static TelegramAccount ParseMtpAuthorization(byte[] serialized, int index)
     {
         var r = new TdeReader(serialized);
-        var mainDcId = r.ReadInt32();
-        var userId = r.ReadInt64();
-        var keyCount = r.ReadInt32();
-        if (keyCount < 0 || keyCount > 64) throw new TdataFormatException($"implausible auth key count {keyCount}");
-        var keys = new Dictionary<int, byte[]>(keyCount);
-        for (var i = 0; i < keyCount; i++)
+        var legacyUserId = r.ReadInt32();
+        var legacyMainDcId = r.ReadInt32();
+
+        long userId;
+        int mainDcId;
+        if (((ulong)(uint)legacyUserId << 32 | (uint)legacyMainDcId) == WideIdsTag)
         {
-            var dcId = r.ReadInt32();
-            var key = r.ReadRaw(TdataCrypto.AuthKeySize);
-            keys[dcId] = key;
+            userId = (long)r.ReadUInt64();
+            mainDcId = r.ReadInt32();
         }
+        else
+        {
+            userId = (uint)legacyUserId;
+            mainDcId = legacyMainDcId;
+        }
+
+        var keys = ReadKeys(r);
+        // The keys-to-destroy list follows; read it to stay in sync, but keep only the live keys.
+        if (r.Remaining >= 4) ReadKeys(r);
+
+        if (keys.Count == 0) throw new TdataFormatException("no auth keys in MTProto authorization");
         if (!keys.ContainsKey(mainDcId)) throw new TdataFormatException($"no auth key for main dc {mainDcId}");
         return new TelegramAccount { UserId = userId, MainDcId = mainDcId, AuthKeys = keys, Index = index };
+    }
+
+    private static Dictionary<int, byte[]> ReadKeys(TdeReader r)
+    {
+        var count = r.ReadInt32();
+        if (count < 0 || count > 64) throw new TdataFormatException($"implausible auth key count {count}");
+        var keys = new Dictionary<int, byte[]>(count);
+        for (var i = 0; i < count; i++)
+        {
+            var dcId = r.ReadInt32();
+            keys[dcId] = r.ReadRaw(TdataCrypto.AuthKeySize);
+        }
+        return keys;
     }
 }

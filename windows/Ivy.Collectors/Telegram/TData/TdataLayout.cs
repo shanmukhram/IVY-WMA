@@ -73,14 +73,40 @@ public static class TdataLayout
         return sb.ToString();
     }
 
-    /// <summary>The account's base directory: <c>tdata/&lt;ToFilePart(key)&gt;/</c>.</summary>
+    /// <summary>The account's cache directory: <c>tdata/&lt;ToFilePart(key)&gt;/</c> (map and media; not the MTP block).</summary>
     public static string AccountBaseDir(string tdataDir, int index) =>
         Path.Combine(tdataDir, ToFilePart(ComputeDataNameKey(DataName(index))));
 
-    /// <summary>The account's main data file: <c>&lt;baseDir&gt;/&lt;ToFilePart(key)&gt;</c>.</summary>
-    public static string AccountDataFile(string tdataDir, int index)
+    /// <summary>
+    /// The logical base path of the account's MTProto authorization file: <c>tdata/&lt;ToFilePart(key)&gt;</c>,
+    /// directly under tdata (tdesktop <c>writeMtpData</c> uses <c>ToFilePart(_dataNameKey)</c> in the base
+    /// folder, not inside the account directory). The real file carries a safe-write suffix; resolve it with
+    /// <see cref="ResolveSafeWrite"/>.
+    /// </summary>
+    public static string AccountMtpBase(string tdataDir, int index) =>
+        Path.Combine(tdataDir, ToFilePart(ComputeDataNameKey(DataName(index))));
+
+    /// <summary>The logical base path of the key file: <c>tdata/key_data</c> (on disk <c>key_datas</c> etc.).</summary>
+    public static string KeyBase(string tdataDir) => Path.Combine(tdataDir, "key_data");
+
+    /// <summary>
+    /// tdesktop's safe-write scheme (<c>storage_file_utilities.cpp</c>): a logical file <c>base</c> is stored
+    /// as <c>base + 's'</c> (the atomic copy), with <c>base + '0'</c> / <c>base + '1'</c> as the legacy/in-progress
+    /// pair. The reader prefers <c>'s'</c>; otherwise it takes whichever of <c>'0'</c>/<c>'1'</c> is newer.
+    /// Returns the path to open, or null if none exists.
+    /// </summary>
+    public static string? ResolveSafeWrite(string basePath)
     {
-        var part = ToFilePart(ComputeDataNameKey(DataName(index)));
-        return Path.Combine(tdataDir, part, part);
+        var safe = basePath + "s";
+        if (File.Exists(safe)) return safe;
+        var zero = basePath + "0";
+        var one = basePath + "1";
+        var hasZero = File.Exists(zero);
+        var hasOne = File.Exists(one);
+        if (hasZero && hasOne)
+            return File.GetLastWriteTimeUtc(zero) >= File.GetLastWriteTimeUtc(one) ? zero : one;
+        if (hasZero) return zero;
+        if (hasOne) return one;
+        return null;
     }
 }

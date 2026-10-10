@@ -17,6 +17,41 @@ public class TdataReaderTests : IDisposable
     private string Tdata => _dir.Sub("tdata");
 
     [Fact]
+    public void Safe_write_prefers_s_then_the_newer_of_0_and_1()
+    {
+        var baseDir = _dir.Sub("sw");
+        Directory.CreateDirectory(baseDir);
+        var b = Path.Combine(baseDir, "f");
+
+        Assert.Null(TdataLayout.ResolveSafeWrite(b));
+
+        File.WriteAllText(b + "0", "zero");
+        File.WriteAllText(b + "1", "one");
+        File.SetLastWriteTimeUtc(b + "0", DateTime.UtcNow.AddMinutes(-5));
+        File.SetLastWriteTimeUtc(b + "1", DateTime.UtcNow);            // 1 is newer
+        Assert.Equal(b + "1", TdataLayout.ResolveSafeWrite(b));
+
+        File.WriteAllText(b + "s", "safe");
+        Assert.Equal(b + "s", TdataLayout.ResolveSafeWrite(b));         // s wins over 0/1
+    }
+
+    [Fact]
+    public void Reads_the_account_when_only_the_legacy_0_file_is_present()
+    {
+        var key = TdataWriter.RandomAuthKey();
+        TdataWriter.Write(Tdata, ReadOnlySpan<byte>.Empty, activeIndex: 0,
+            new TdataWriter.AccountSpec(0, UserId: 7, MainDcId: 1, new Dictionary<int, byte[]> { [1] = key }));
+
+        // Rename every settled "s" file to a legacy "0" file; the reader must still find them.
+        foreach (var f in Directory.GetFiles(Tdata, "*s", SearchOption.AllDirectories))
+            File.Move(f, f[..^1] + "0");
+
+        var result = TdataReader.ReadAccounts(Tdata, ReadOnlySpan<byte>.Empty);
+        Assert.True(result.Ok, result.Detail);
+        Assert.Equal(key, result.Accounts!.Active.MainAuthKey);
+    }
+
+    [Fact]
     public void Round_trips_a_single_account_with_an_empty_passcode()
     {
         var key = TdataWriter.RandomAuthKey();
