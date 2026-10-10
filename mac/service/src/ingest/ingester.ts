@@ -109,6 +109,17 @@ export class Ingester {
 
   isRunning(): boolean { return this.running !== null; }
 
+  /** Ingest is allowed to run (not stopped); a pass also needs the key in memory. */
+  isActive(): boolean { return !this.stopped; }
+
+  /**
+   * The next pass lists every bucket in full (no marker window). Called when the
+   * key comes back after a full lock; a fresh service already starts this way.
+   * There is no lifecycle expiry on the up-buckets (PLAN decision 6), so objects
+   * older than the marker window can be waiting after a long absence.
+   */
+  requestFull(): void { this.lastFull.clear(); }
+
   start(): void {
     this.stopped = false;
     const every = this.ctx.config.pollIntervalMs;
@@ -143,7 +154,12 @@ export class Ingester {
       const up = r2.bucket("up", role);
       if (!up) continue;
       const name = bucketName(r2.config, "up", role);
-      const full = !!opts.full || Date.now() - (this.lastFull.get(name) ?? 0) >= this.ctx.config.fullSweepEveryMs;
+      // full listing: on demand, on the first pass after start / unlock (lastFull empty), hourly, and
+      // whenever the last successful poll is older than the marker window (the Mac was away)
+      const lastOkMs = msOf(this.lastOk(name));
+      const full = !!opts.full
+        || Date.now() - (this.lastFull.get(name) ?? 0) >= this.ctx.config.fullSweepEveryMs
+        || lastOkMs === null || Date.now() - lastOkMs > this.ctx.config.listLookbackMs;
       const res = await this.pollBucket({ bucket: up, bucketName: name, role }, full);
       if (full && !res.error) this.lastFull.set(name, Date.now());
       results.push(res);

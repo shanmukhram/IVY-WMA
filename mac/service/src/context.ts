@@ -11,9 +11,24 @@ export interface Thumbnailer {
   make(src: string, dest: string): Promise<boolean>;
 }
 
+export interface OcrRecognizeResult {
+  text: string;
+  /** the thumbnail written in the same pass, when one was asked for and produced */
+  thumbPath?: string | null;
+}
+
+/**
+ * OCR (PRD M1/M3). The default is @ivy/mac-ocr (Apple Vision via the warm Swift
+ * helper), which also writes the thumbnail in the same decode.
+ */
 export interface OcrProvider {
-  /** Extract text from an image. Extension point for mac/ocr (Vision). */
-  recognize(imagePath: string): Promise<string>;
+  /** Extract text from an image; with `thumb`, also write a JPEG thumbnail there. */
+  recognize(imagePath: string, opts?: { thumb?: { path: string; maxEdge: number } }): Promise<OcrRecognizeResult>;
+  /** Is the provider usable right now (helper present / buildable)? Default: yes. */
+  available?(): Promise<boolean>;
+  /** Classify an error: true when it means the provider is unavailable (not that this file is bad). */
+  isUnavailableError?(e: unknown): boolean;
+  close?(): Promise<void>;
 }
 
 export class Ctx {

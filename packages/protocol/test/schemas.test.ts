@@ -124,4 +124,34 @@ describe("record schemas", () => {
     };
     expect(validateManifest(m).totalChunks).toBe(4);
   });
+  it("accepts an optional commandId on a manifest (file_original for a command)", () => {
+    const m = {
+      v: 1, objectId: "aabb", payloadKind: "file_original",
+      totalSize: 1000, chunkSize: 256, totalChunks: 4, cek: "AAAA",
+      chunks: [{ index: 0, ctLen: 300, sha256: "deadbeef" }],
+      commandId: "c0ffee00-0000-4000-8000-000000000001",
+    };
+    expect(validateManifest(m).commandId).toBe("c0ffee00-0000-4000-8000-000000000001");
+    expect(validateManifest({ ...m, commandId: undefined }).commandId).toBeUndefined();
+    expect(() => validateManifest({ ...m, commandId: "" })).toThrow();
+    expect(() => validateManifest({ ...m, commandId: 7 })).toThrow();
+  });
+
+  it("accepts import progress on device_report collectors and validates it", () => {
+    const base = { ...common, kind: "device_report", role: "windows", queueDepthTotal: 0, reportedAt: common.eventTime };
+    const ok = validateRecordKind("device_report", {
+      ...base,
+      collectors: [
+        { name: "files", enabled: true, queueDepth: 0, importTotal: 1200, importDone: 300, phase: "initial" },
+        { name: "usage", enabled: true, queueDepth: 0 },
+        { name: "photos", enabled: true, queueDepth: 0, importDone: 5, phase: "rescan" },
+        { name: "notifications", enabled: true, queueDepth: 0, importTotal: 10, importDone: 10, phase: "incremental" },
+      ],
+    });
+    expect(ok.collectors[0]).toMatchObject({ importTotal: 1200, importDone: 300, phase: "initial" });
+    expect(ok.collectors[1]!.phase).toBeUndefined();
+    for (const bad of [{ importTotal: -1 }, { importDone: 1.5 }, { phase: "bulk" }, { importTotal: "10" }]) {
+      expect(() => validateRecordKind("device_report", { ...base, collectors: [{ name: "files", enabled: true, queueDepth: 0, ...bad }] })).toThrow();
+    }
+  });
 });

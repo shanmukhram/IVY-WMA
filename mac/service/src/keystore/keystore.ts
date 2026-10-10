@@ -10,7 +10,18 @@
  *   under a second Argon2id key with its own salt). `identity.json` holds the
  *   identity salt (not secret), the public key, the fingerprint, and that blob.
  * - After unlock the private key lives in memory only; it is zeroed on lock,
- *   on demand or after the idle period (default 30 minutes).
+ *   on a FULL lock (on demand, or after the idle period when autoLockMode is
+ *   "full").
+ * - Two lock levels (PRD S8 vs freshness):
+ *   - UI lock (the default for a manual lock and for auto-lock): content routes
+ *     answer 423 and the event stream goes quiet, but the private key stays in
+ *     memory so ingest keeps the vault fresh while nobody is looking.
+ *   - Full lock: the key is zeroed; ingest, decryption and R2 stop until the
+ *     passphrase is entered again.
+ *   Unlocking a UI lock still needs the passphrase (it is verified against the
+ *   sealed blob).
+ * - Argon2id runs on a worker thread (kdf.ts), so unlocking never blocks the
+ *   server; initialize/unlock/changePassphrase are async.
  * - Changing the passphrase re-seals the SAME key under the new passphrase. The
  *   identity does not change, so devices stay paired. Consequence: after a change
  *   the salt alone re-derives the identity only with the ORIGINAL passphrase;
@@ -18,14 +29,16 @@
  *   records which case applies so the UI can say so.
  */
 import {
-  deriveMacKeyPair, fingerprint, fromBase64, generateMacSalt, openPrivateKey, publicKeyFromSecret,
-  sealPrivateKey, toBase64, MAC_SALT_LEN, ARGON2ID_PARAMS,
+  fingerprint, fromBase64, generateMacSalt, publicKeyFromSecret, timingSafeEqual, toBase64, MAC_SALT_LEN, ARGON2ID_PARAMS,
 } from "@ivy/protocol";
 import type { SealedPrivateKey } from "@ivy/protocol";
+import { runKdf, KdfFailure } from "./kdf.ts";
 import { readJsonFile, writeFileAtomic } from "../util/fsx.ts";
 import { nowIso } from "../util/time.ts";
 
 export type KeystoreState = "uninitialized" | "locked" | "unlocked";
+/** What auto-lock does after the idle period: a UI lock (key kept, ingest continues) or a full lock. */
+export type AutoLockMode = "ui" | "full";
 
 export interface IdentityFile {
   v: 1;
@@ -43,7 +56,7 @@ export interface IdentityFile {
 }
 
 export class KeystoreError extends Error {
-  readonly code: "locked" | "uninitialized" | "already_initialized" | "wrong_passphrase" | "weak_passphrase" | "bad_salt" | "cooldown" | "corrupt";
+  readonly code: "locked" | "uninitialized" | "already_initialized" | "wrong_passphrase" | "weak_passphrase" | "bad_salt" | "cooldown" | "corrupt" | "busy";
   constructor(code: KeystoreError["code"], message: string) {
     super(message);
     this.code = code;
@@ -53,6 +66,8 @@ export class KeystoreError extends Error {
 export interface KeystoreOptions {
   path: string;
   autoLockMinutes: number;
+  /** default "ui" */
+  autoLockMode?: AutoLockMode;
   onEvent?: (type: "keystore.initialized" | "keystore.unlocked" | "keystore.locked" | "keystore.passphrase_changed", data: Record<string, unknown>) => void;
   /** injectable clock (tests) */
   now?: () => number;
@@ -73,24 +88,38 @@ export class Keystore {
   private cooldownUntil = 0;
   private lockedAt: string | null = null;
   private lockReason: string | null = null;
+  /** UI lock: the key stays in memory (ingest continues) but content is not served */
+  private uiLock = false;
+  private autoLockMode: AutoLockMode;
+  /** single flight for Argon2id work (unlock / initialize / change) */
+  private busy: Promise<unknown> | null = null;
 
   constructor(o: KeystoreOptions) {
     this.o = o;
     this.autoLockMinutes = o.autoLockMinutes;
+    this.autoLockMode = o.autoLockMode ?? "ui";
   }
 
   private now(): number { return this.o.now?.() ?? Date.now(); }
   private file(): IdentityFile | undefined { return readJsonFile<IdentityFile>(this.o.path); }
 
+  /** "unlocked" only when content may be served; a UI lock reports "locked" (see uiLocked). */
   state(): KeystoreState {
-    if (this.secret) return "unlocked";
+    if (this.secret && !this.uiLock) return "unlocked";
     return this.file()?.sealed ? "locked" : "uninitialized";
   }
 
   status() {
     const f = this.file();
+    const st = this.state();
     return {
-      state: this.state(),
+      state: st,
+      /** content routes are locked (either a UI lock or a full lock) */
+      locked: st !== "unlocked",
+      /** a UI lock: the key is still in memory and ingest keeps running */
+      uiLocked: this.uiLock && this.secret !== null,
+      keyInMemory: this.secret !== null,
+      autoLockMode: this.autoLockMode,
       fingerprint: f?.fingerprint ?? null,
       publicKey: f?.publicKey ?? null,
       saltPresent: !!f?.salt,
@@ -103,9 +132,18 @@ export class Keystore {
     };
   }
 
+  /**
+   * The private key is in memory (unlocked, or UI-locked). This is what ingest,
+   * decryption and R2 need. For "may content be shown" use contentUnlocked().
+   */
   isUnlocked(): boolean { return this.secret !== null; }
 
-  /** The in-memory private key. Throws when locked. */
+  /** Content may be served: the key is in memory and there is no UI lock. */
+  contentUnlocked(): boolean { return this.secret !== null && !this.uiLock; }
+
+  isUiLocked(): boolean { return this.uiLock && this.secret !== null; }
+
+  /** The in-memory private key (also during a UI lock). Throws when fully locked. */
   secretKey(): Uint8Array {
     if (!this.secret) throw new KeystoreError("locked", "the vault is locked");
     return this.secret;
@@ -125,7 +163,11 @@ export class Keystore {
    * saved salt re-derive the same key. A salt-only identity.json (from a
    * backup) is used automatically.
    */
-  initialize(passphrase: string, saltB64?: string): { fingerprint: string; restored: boolean } {
+  initialize(passphrase: string, saltB64?: string): Promise<{ fingerprint: string; restored: boolean }> {
+    return this.exclusive(() => this.doInitialize(passphrase, saltB64));
+  }
+
+  private async doInitialize(passphrase: string, saltB64?: string): Promise<{ fingerprint: string; restored: boolean }> {
     this.checkPassphrase(passphrase);
     const existing = this.file();
     if (existing?.sealed) throw new KeystoreError("already_initialized", "the Mac identity already exists; unlock it instead");
@@ -138,14 +180,16 @@ export class Keystore {
     } else {
       salt = generateMacSalt();
     }
-    const kp = deriveMacKeyPair(passphrase, salt);
+    const kp = await runKdf<{ secretKey: Uint8Array; publicKey: Uint8Array }>({ op: "derive", passphrase, salt });
+    const { sealed } = await runKdf<{ sealed: SealedPrivateKey }>({ op: "seal", secretKey: kp.secretKey, passphrase });
+    if (this.file()?.sealed) { kp.secretKey.fill(0); throw new KeystoreError("already_initialized", "the Mac identity already exists; unlock it instead"); }
     const f: IdentityFile = {
       v: 1,
       salt: toBase64(salt),
       kdf: { ...ARGON2ID_PARAMS, variant: "argon2id", version: 19 },
       publicKey: toBase64(kp.publicKey),
       fingerprint: fingerprint(kp.publicKey),
-      sealed: sealPrivateKey(kp.secretKey, passphrase),
+      sealed,
       createdAt: nowIso(),
       derivedFrom: "current-passphrase",
     };
@@ -155,15 +199,21 @@ export class Keystore {
     return { fingerprint: f.fingerprint!, restored };
   }
 
-  unlock(passphrase: string): { fingerprint: string } {
+  /** Unlock from a full lock (derives the key) or from a UI lock (verifies the passphrase, keeps the key). */
+  unlock(passphrase: string): Promise<{ fingerprint: string }> {
+    return this.exclusive(() => this.doUnlock(passphrase));
+  }
+
+  private async doUnlock(passphrase: string): Promise<{ fingerprint: string }> {
     const f = this.file();
     if (!f?.sealed) throw new KeystoreError("uninitialized", "no Mac identity yet; initialize first");
-    if (this.secret) return { fingerprint: f.fingerprint! };
+    if (this.secret && !this.uiLock) return { fingerprint: f.fingerprint! };
     if (this.now() < this.cooldownUntil) throw new KeystoreError("cooldown", "too many wrong passphrases; wait a moment");
     let sk: Uint8Array;
     try {
-      sk = openPrivateKey(f.sealed, passphrase);
-    } catch {
+      sk = (await runKdf<{ secretKey: Uint8Array }>({ op: "open", sealed: f.sealed, passphrase })).secretKey;
+    } catch (e) {
+      if (!(e instanceof KdfFailure)) throw e;
       this.fails++;
       if (this.fails >= MAX_FAILS_BEFORE_COOLDOWN) { this.cooldownUntil = this.now() + COOLDOWN_MS; this.fails = 0; }
       throw new KeystoreError("wrong_passphrase", "wrong passphrase");
@@ -174,35 +224,66 @@ export class Keystore {
       throw new KeystoreError("corrupt", "identity.json: sealed key does not match the stored public key");
     }
     this.fails = 0;
-    this.setUnlocked(sk, pk);
-    this.o.onEvent?.("keystore.unlocked", { fingerprint: fingerprint(pk) });
+    const wasUiLock = this.secret !== null;
+    if (this.secret) {
+      // leaving a UI lock: the held key stays; the copy opened for the check is dropped
+      const same = timingSafeEqual(this.secret, sk);
+      sk.fill(0);
+      if (!same) throw new KeystoreError("corrupt", "the key in memory differs from identity.json");
+      this.uiLock = false;
+      this.lockedAt = null;
+      this.lockReason = null;
+      this.touch();
+    } else {
+      this.setUnlocked(sk, pk);
+    }
+    this.o.onEvent?.("keystore.unlocked", { fingerprint: fingerprint(pk), fromUiLock: wasUiLock });
     return { fingerprint: fingerprint(pk) };
   }
 
-  lock(reason = "manual"): void {
+  /**
+   * Lock. `full: false` (the default) is a UI lock: content is refused but the key
+   * stays in memory and ingest continues. `full: true` zeroes the key. A full lock
+   * on top of a UI lock completes it.
+   */
+  lock(reason = "manual", opts: { full?: boolean } = {}): void {
     if (!this.secret) return;
-    this.secret.fill(0);
-    this.secret = null;
+    const full = !!opts.full;
+    if (!full && this.uiLock) return;
+    if (full) {
+      this.secret.fill(0);
+      this.secret = null;
+      this.uiLock = false;
+    } else {
+      this.uiLock = true;
+    }
     this.lockedAt = nowIso();
     this.lockReason = reason;
-    this.o.onEvent?.("keystore.locked", { reason });
+    this.o.onEvent?.("keystore.locked", { reason, full });
   }
 
   /** Re-seal the same identity key under a new passphrase. Devices stay paired. */
-  changePassphrase(current: string, next: string): { fingerprint: string } {
+  changePassphrase(current: string, next: string): Promise<{ fingerprint: string }> {
+    return this.exclusive(() => this.doChangePassphrase(current, next));
+  }
+
+  private async doChangePassphrase(current: string, next: string): Promise<{ fingerprint: string }> {
     this.checkPassphrase(next);
     const f = this.file();
     if (!f?.sealed) throw new KeystoreError("uninitialized", "no Mac identity yet");
     let sk: Uint8Array;
-    try { sk = openPrivateKey(f.sealed, current); } catch { throw new KeystoreError("wrong_passphrase", "current passphrase is wrong"); }
+    try { sk = (await runKdf<{ secretKey: Uint8Array }>({ op: "open", sealed: f.sealed, passphrase: current })).secretKey; }
+    catch (e) { if (e instanceof KdfFailure) throw new KeystoreError("wrong_passphrase", "current passphrase is wrong"); throw e; }
+    let sealed: SealedPrivateKey;
+    try { sealed = (await runKdf<{ sealed: SealedPrivateKey }>({ op: "seal", secretKey: sk, passphrase: next })).sealed; }
+    finally { sk.fill(0); }
     const updated: IdentityFile = {
       ...f,
-      sealed: sealPrivateKey(sk, next),
+      sealed,
       passphraseChangedAt: nowIso(),
       derivedFrom: "original-passphrase",
     };
     writeFileAtomic(this.o.path, JSON.stringify(updated, null, 2) + "\n");
-    sk.fill(0); // the copy opened for the check; the unlocked key (if any) is a separate buffer
     this.touch();
     this.o.onEvent?.("keystore.passphrase_changed", { fingerprint: f.fingerprint });
     return { fingerprint: f.fingerprint! };
@@ -218,14 +299,31 @@ export class Keystore {
 
   getAutoLockMinutes(): number { return this.autoLockMinutes; }
 
-  /** Lock if idle longer than the auto-lock period. Returns true when it locked. */
+  setAutoLockMode(m: AutoLockMode): void {
+    if (m !== "ui" && m !== "full") throw new Error('autoLockMode must be "ui" or "full"');
+    this.autoLockMode = m;
+  }
+
+  getAutoLockMode(): AutoLockMode { return this.autoLockMode; }
+
+  /** Lock if idle longer than the auto-lock period (UI or full per autoLockMode). Returns true when it locked. */
   checkIdle(): boolean {
     if (!this.secret || this.autoLockMinutes <= 0) return false;
+    const full = this.autoLockMode === "full";
+    if (this.uiLock && !full) return false;
     if (this.now() - this.lastActivity >= this.autoLockMinutes * 60_000) {
-      this.lock("idle");
+      this.lock("idle", { full });
       return true;
     }
     return false;
+  }
+
+  /** Run one Argon2id-backed operation at a time; a second caller waits for the first. */
+  private async exclusive<T>(fn: () => Promise<T>): Promise<T> {
+    while (this.busy) await this.busy.catch(() => undefined);
+    const p = fn();
+    this.busy = p;
+    try { return await p; } finally { if (this.busy === p) this.busy = null; }
   }
 
   startAutoLock(everyMs = 15_000): void {
@@ -240,6 +338,7 @@ export class Keystore {
   }
 
   private setUnlocked(sk: Uint8Array, pk: Uint8Array) {
+    this.uiLock = false;
     this.secret = sk;
     this.publicKey = pk;
     this.lockedAt = null;

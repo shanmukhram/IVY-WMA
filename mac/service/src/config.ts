@@ -34,7 +34,10 @@ export interface ServiceConfig {
    * Listing starts at (marker - lookback) rather than at the marker itself: devices
    * upload out of oid order (small records overtake bulk blobs, offline queues
    * drain late), so a strict "after marker" listing would silently skip objects.
-   * Default 8 days, longer than the 7-day up-bucket lifecycle.
+   * Default 8 days. There is no lifecycle expiry on the up-buckets (PLAN decision 6),
+   * so objects can be older than this window: the ingester does a full listing on
+   * start, after unlock, hourly, and whenever the last successful poll is older
+   * than this window.
    */
   listLookbackMs: number;
   /** a full listing of the bucket (catches unrecognised keys) at most this often */
@@ -55,9 +58,16 @@ export interface ServiceConfig {
   binRetentionDays: number;
   /** how many activity events to keep in the database */
   activityKeep: number;
-  /** optional OCR helper: executable called as `<cmd> <imagePath>`, prints text on stdout */
+  /**
+   * OCR provider: "vision" (@ivy/mac-ocr, Apple Vision; default on macOS), "command"
+   * (ocrCommand), or "off".
+   */
+  ocr: "vision" | "command" | "off";
+  /** with ocr = "command": executable called as `<cmd> <imagePath>`, prints text on stdout */
   ocrCommand?: string;
-  /** generate image thumbnails with macOS `sips` (default true on darwin) */
+  /** media items OCR'd / thumbnailed at once (bounded concurrency) */
+  ocrConcurrency: number;
+  /** thumbnail fallback with macOS `sips` when the Vision helper is unavailable (default true on darwin) */
   thumbnails: boolean;
 }
 
@@ -97,7 +107,11 @@ export function loadConfig(overrides: Partial<ServiceConfig> = {}): ServiceConfi
     gapThresholdMs: 15 * MIN,
     binRetentionDays: 30,
     activityKeep: 5000,
+    ocr: process.env.IVY_OCR === "0" || process.env.IVY_OCR === "off" ? "off"
+      : process.env.IVY_OCR_COMMAND ? "command"
+      : process.platform === "darwin" ? "vision" : "off",
     ocrCommand: process.env.IVY_OCR_COMMAND || undefined,
+    ocrConcurrency: envInt("IVY_OCR_CONCURRENCY") ?? 2,
     thumbnails: process.platform === "darwin" && process.env.IVY_THUMBNAILS !== "0",
   };
   const merged = { ...base, ...stripUndefined(overrides) };

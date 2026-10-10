@@ -184,4 +184,19 @@ describe("chunked object", () => {
     });
     expect(Buffer.from(out.plaintext).equals(Buffer.from(plaintext))).toBe(true);
   });
+  it("carries an optional commandId in the manifest, and omits the key when absent", () => {
+    const oid = "01HZZZCHUNKED000000000000B";
+    const plaintext = randomBytes(300);
+    const common = { recipientPublicKey: RECIPIENT.publicKey, oid, objectId: randomBytes(16), payloadKind: "file_original" as const, plaintext, chunkSize: 128 };
+    const withCmd = encryptChunkedObject({ ...common, commandId: "cmd-123" });
+    const out = decryptChunkedObject({
+      recipientSecretKey: RECIPIENT.secretKey, manifestKey: blobManifestKey(oid), manifestEnvelope: withCmd.manifestEnvelope,
+      parts: new Map(withCmd.parts.map((p) => [p.index, p.bytes])),
+    });
+    expect(out.manifest.commandId).toBe("cmd-123");
+    expect(Object.keys(withCmd.manifest).at(-1)).toBe("commandId");
+    const without = encryptChunkedObject(common);
+    expect("commandId" in without.manifest).toBe(false);
+    expect(() => encryptChunkedObject({ ...common, commandId: "" })).toThrow(/commandId/);
+  });
 });

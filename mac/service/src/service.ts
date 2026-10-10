@@ -6,12 +6,12 @@ import { randomBytes } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import type { FastifyInstance } from "fastify";
 import { loadConfig, dirs, type ServiceConfig } from "./config.ts";
-import { openDb, getNumberSetting } from "./db/index.ts";
+import { openDb, getNumberSetting, getSetting } from "./db/index.ts";
 import { Keystore } from "./keystore/keystore.ts";
 import { EventBus } from "./events.ts";
 import { Ctx, type OcrProvider, type Thumbnailer } from "./context.ts";
 import { Ingester } from "./ingest/ingester.ts";
-import { MediaProcessor, commandOcr, sipsThumbnailer } from "./ingest/media.ts";
+import { MediaProcessor, commandOcr, sipsThumbnailer, visionOcr } from "./ingest/media.ts";
 import { sendQueued } from "./commands/commands.ts";
 import { sweep } from "./bin/recovery.ts";
 import { buildServer } from "./http/server.ts";
@@ -40,6 +40,8 @@ export interface Service {
   app: FastifyInstance;
   /** called after initialize/unlock: resume work that needs the key */
   onUnlocked(): void;
+  /** GET /api/keystore: key store status plus whether ingest is running */
+  keystoreStatus(): ReturnType<Keystore["status"]> & { ingestRunning: boolean };
   listen(): Promise<string>;
   /** wait for background media work (tests) */
   idle(): Promise<void>;
@@ -63,21 +65,30 @@ export async function createService(overrides: Partial<ServiceConfig> = {}, opts
   const db = openDb(config.dbPath);
   const events = new EventBus(db, config.activityKeep);
   let ctxRef: Ctx | null = null;
+  let ingesterRef: Ingester | null = null;
+  const savedMode = getSetting(db, "keystore.autoLockMode");
   const keystore = new Keystore({
     path: config.identityPath,
     autoLockMinutes: getNumberSetting(db, "keystore.autoLockMinutes", config.autoLockMinutes),
+    autoLockMode: savedMode === "full" ? "full" : "ui",
     onEvent: (type, data) => {
-      if (type === "keystore.locked") ctxRef?.dropR2();
+      // a UI lock keeps the key and R2 clients (ingest continues); only a full lock drops them
+      if (type === "keystore.locked" && data.full) ctxRef?.dropR2();
+      // the key was absent (start, full lock): the next pass lists everything (no marker window)
+      if ((type === "keystore.unlocked" && !data.fromUiLock) || type === "keystore.initialized") ingesterRef?.requestFull();
       events.emit(type, data);
     },
   });
   const ctx = new Ctx(db, config, keystore, events);
   ctxRef = ctx;
   ctx.thumbnailer = opts.thumbnailer !== undefined ? opts.thumbnailer : config.thumbnails ? sipsThumbnailer : null;
-  ctx.ocr = opts.ocr !== undefined ? opts.ocr : config.ocrCommand ? commandOcr(config.ocrCommand) : null;
-  const media = new MediaProcessor(ctx);
+  ctx.ocr = opts.ocr !== undefined ? opts.ocr
+    : config.ocr === "vision" ? visionOcr({ concurrency: config.ocrConcurrency })
+    : config.ocr === "command" && config.ocrCommand ? commandOcr(config.ocrCommand) : null;
+  const media = new MediaProcessor(ctx, { concurrency: config.ocrConcurrency });
   ctx.mediaReady = (id, path) => media.enqueue(id, path);
   const ingester = new Ingester(ctx);
+  ingesterRef = ingester;
   const token = opts.token ?? loadToken(config.tokenPath);
 
   let sweepTimer: NodeJS.Timeout | undefined;
@@ -86,13 +97,17 @@ export async function createService(overrides: Partial<ServiceConfig> = {}, opts
     app: undefined as unknown as FastifyInstance,
     onUnlocked() {
       void sendQueued(ctx).catch(() => 0);
-      if (ctx.ocr || ctx.thumbnailer) media.resumePending();
+      media.resumePending();
       if (config.pollIntervalMs > 0) void ingester.poll().catch(() => undefined);
+    },
+    keystoreStatus() {
+      return { ...keystore.status(), ingestRunning: keystore.isUnlocked() && ingester.isActive() };
     },
     async listen() {
       const addr = await svc.app.listen({ host: config.host, port: config.port });
       keystore.startAutoLock();
       ingester.start();
+      void media.start().catch(() => undefined); // probe the OCR helper, then the backlog
       try { sweep(ctx); } catch { /* retried on the timer */ }
       sweepTimer = setInterval(() => { try { sweep(ctx); } catch { /* next time */ } }, 6 * 3600_000);
       sweepTimer.unref();
@@ -103,10 +118,10 @@ export async function createService(overrides: Partial<ServiceConfig> = {}, opts
       if (sweepTimer) clearInterval(sweepTimer);
       keystore.stopAutoLock();
       await ingester.stop();
-      await media.idle();
+      await media.close();
       await svc.app.close();
       ctx.dropR2();
-      keystore.lock("shutdown");
+      keystore.lock("shutdown", { full: true });
       db.close();
     },
   };
