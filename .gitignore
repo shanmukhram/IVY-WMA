@@ -14,3 +14,6 @@ data/
 coverage/
 *.log
 .s3/
+
+# fake-mac smoke-test state (keys, tokens, ledger)
+.fake-mac/

@@ -130,7 +130,12 @@ public sealed class WindowsUsnJournal : IUsnJournal, IDisposable
             var err = Marshal.GetLastWin32Error();
             h.Dispose();
             if (err != ERROR_ACCESS_DENIED) throw Translate(err, root);
-            h = CreateFileW(device, FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE, IntPtr.Zero, OPEN_EXISTING, 0, IntPtr.Zero);
+            // Without elevation, \\.\C: does open with FILE_READ_ATTRIBUTES, but FSCTL_QUERY_USN_JOURNAL and
+            // FSCTL_READ_UNPRIVILEGED_USN_JOURNAL on that handle fail with ERROR_INVALID_FUNCTION (Windows 11
+            // 24H2, verified on the first Windows run). A handle to the volume's root directory, opened with
+            // FILE_FLAG_BACKUP_SEMANTICS, accepts both, and OpenFileById works on it as a volume hint too.
+            var rootDir = root.EndsWith(Path.DirectorySeparatorChar) ? root : root + Path.DirectorySeparatorChar;
+            h = CreateFileW(rootDir, FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, IntPtr.Zero, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, IntPtr.Zero);
             if (h.IsInvalid)
             {
                 var err2 = Marshal.GetLastWin32Error();
