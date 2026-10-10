@@ -86,6 +86,7 @@ export function defaultStaticDir(pkgDir: string = packageDir): string {
   const ui = resolve(pkgDir, "..", "ui", "dist");
   return existsSync(join(ui, "index.html")) ? ui : join(pkgDir, "public");
 }
+const SEC = 1_000;
 const MIN = 60_000;
 const DAY = 24 * 60 * MIN;
 
@@ -111,7 +112,7 @@ export function loadConfig(overrides: Partial<ServiceConfig> = {}, cwd: string =
     staticDir: defaultStaticDir(),
     host: process.env.IVY_HOST ?? "127.0.0.1",
     port: envInt("IVY_PORT") ?? 4777,
-    pollIntervalMs: envInt("IVY_POLL_INTERVAL_MS") ?? 2 * MIN,
+    pollIntervalMs: envInt("IVY_POLL_INTERVAL_MS") ?? 15 * SEC,
     autoLockMinutes: envInt("IVY_AUTO_LOCK_MINUTES") ?? 30,
     pairingTtlMs: 10 * MIN,
     pairingGraceMs: 5 * MIN,

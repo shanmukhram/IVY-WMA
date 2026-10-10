@@ -124,11 +124,11 @@ Chunked blobs: the manifest is verified and stored (as its envelope; the content
 
 ## R2 request budget
 
-R2 bills ListObjectsV2, PutObject, CopyObject and the multipart writes as Class A operations (1 million free per month) and GetObject/HeadObject as Class B (10 million free); DeleteObject is free. With the listing above the Mac makes about **one list call per up-bucket per poll** (2 per poll with both up-buckets configured; measured against the mock in `test/request-budget.test.ts`, which asserts that bound; the previous per-prefix listing made 22).
+R2 bills ListObjectsV2, PutObject, CopyObject and the multipart writes as Class A operations (1 million free per month) and GetObject/HeadObject as Class B (10 million free); DeleteObject is free. With the listing above the Mac makes about **one list call per up-bucket per poll** (2 per poll with both up-buckets configured; the default poll interval is 15s; measured against the mock in `test/request-budget.test.ts`, which asserts that bound; the previous per-prefix listing made 22).
 
 | Who | Operation | Rate | Per month (30 days) |
 | --- | --- | --- | --- |
-| Mac | ListObjectsV2, `up/` (or the hourly full listing in its place), 2 up-buckets | every 2 min | 43 200 |
+| Mac | ListObjectsV2, `up/` (or the hourly full listing in its place), 2 up-buckets | every 15 s | about 345 600 |
 | Mac | ListObjectsV2 `pair/` while a pairing is open | about 8 per pairing | negligible |
 | Mac | extra list pages | +1 per 1 000 objects waiting in a bucket | only during a backlog |
 | Mac | PutObject `cmd/<oid>` | per command | tens |

@@ -45,6 +45,7 @@ import { deleteCommandObject, maintainCommands, sendQueued } from "../commands/c
 /** Record prefixes listed incrementally (PROTOCOL §5). */
 const RECORD_PREFIXES = ["file", "scr", "usg", "wnotif", "anotif", "call", "msg", "cstat", "status", "blob"];
 const RECORD_PREFIX_PATHS = RECORD_PREFIXES.map((p) => `up/${p}/`);
+const PREFETCH = 16; // objects fetched from R2 concurrently during a pass; commit stays sequential
 
 export interface BucketPassResult {
   bucket: string;
@@ -299,10 +300,16 @@ export class Ingester {
     for (const o of invalid) tally(await this.quarantine(src, o.key, "unknown", "unrecognised object key", await this.fetchQuiet(src, o.key)));
     for (const o of pairs) tally(await this.guard(src, o.key, "pairing_device", () => this.ingestPairing(src, o)));
     singles.sort((a, b) => (a.oid < b.oid ? -1 : a.oid > b.oid ? 1 : 0));
-    for (const o of singles) {
-      const out = await this.guard(src, o.key, o.kind, () => this.ingestSingle(src, o.key, o.kind));
-      tally(out);
-      if (out === "committed" || out === "replayed") seeOid(o.oid);
+    // Fetch a window of objects from R2 concurrently (the per-object network round-trip is the bottleneck
+    // on a large catch-up), then commit them in order so the ledger and marker stay sequential.
+    for (let i = 0; i < singles.length; i += PREFETCH) {
+      const window = singles.slice(i, i + PREFETCH);
+      const fetched = await Promise.all(window.map((o) => this.prefetch(src, o.key).then((bytes) => ({ o, bytes }))));
+      for (const { o, bytes } of fetched) {
+        const out = await this.guard(src, o.key, o.kind, () => this.ingestSingle(src, o.key, o.kind, bytes));
+        tally(out);
+        if (out === "committed" || out === "replayed") seeOid(o.oid);
+      }
     }
     for (const [oid, g] of [...blobs.entries()].sort(([a], [b]) => (a < b ? -1 : 1))) {
       if (g.manifest) {
@@ -311,9 +318,13 @@ export class Ingester {
         if (out === "quarantined") continue; // its parts were quarantined with it
       }
       g.parts.sort((a, b) => a.index - b.index);
-      for (const p of g.parts) {
-        const out = await this.guard(src, p.key, "blob_chunk", () => this.ingestPart(src, oid, p.key, p.index));
-        tally(out);
+      for (let i = 0; i < g.parts.length; i += PREFETCH) {
+        const window = g.parts.slice(i, i + PREFETCH);
+        const fetched = await Promise.all(window.map((p) => this.prefetch(src, p.key).then((bytes) => ({ p, bytes }))));
+        for (const { p, bytes } of fetched) {
+          const out = await this.guard(src, p.key, "blob_chunk", () => this.ingestPart(src, oid, p.key, p.index, bytes));
+          tally(out);
+        }
       }
       const row = getBlob(this.ctx, src.bucketName, oid);
       if (row?.status === "complete") seeOid(oid);
@@ -353,6 +364,13 @@ export class Ingester {
   private async fetch(src: Source, key: string): Promise<Uint8Array | null | "too_large"> {
     try { return await src.bucket!.get(key, this.ctx.config.maxPartBytes); }
     catch (e) { if (e instanceof TooLargeError) return "too_large"; throw e; }
+  }
+
+  // Fetch bytes for one object, returning undefined on any problem so the committer falls back to its own
+  // fetch (which handles too-large and missing correctly). Used to prefetch a window concurrently.
+  private async prefetch(src: Source, key: string): Promise<Uint8Array | undefined> {
+    try { const b = await this.fetch(src, key); return b instanceof Uint8Array ? b : undefined; }
+    catch { return undefined; }
   }
 
   private async remove(src: Source, key: string): Promise<void> {
@@ -453,13 +471,13 @@ export class Ingester {
 
   // ------------------------------------------------------------------ single records
 
-  private async ingestSingle(src: Source, key: string, kind: Kind, bytesIn?: Uint8Array): Promise<Outcome> {
+  private async ingestSingle(src: Source, key: string, kind: Kind, bytesIn?: Uint8Array, force = false): Promise<Outcome> {
     const got = bytesIn ?? (await this.fetch(src, key));
     if (got === null) return "waiting";
     if (got === "too_large") return this.quarantine(src, key, kind, "object too large for a record", null);
     const bytes = got;
     const prior = this.ledger(src.bucketName, key);
-    if (prior && !bytesIn) return this.handleKnown(src, key, kind, bytes, prior);
+    if (prior && !force) return this.handleKnown(src, key, kind, bytes, prior);
 
     if (!ALLOWED[src.role].has(kind)) return this.quarantine(src, key, kind, `kind ${kind} is not accepted from a ${src.role} device`, bytes);
     const d = this.decrypt(key, kind, bytes);
@@ -491,13 +509,13 @@ export class Ingester {
 
   // ------------------------------------------------------------------ blobs
 
-  private async ingestManifest(src: Source, oid: string, key: string, listedParts: ObjectEntry[], bytesIn?: Uint8Array): Promise<Outcome> {
+  private async ingestManifest(src: Source, oid: string, key: string, listedParts: ObjectEntry[], bytesIn?: Uint8Array, force = false): Promise<Outcome> {
     const got = bytesIn ?? (await this.fetch(src, key));
     if (got === null) return "waiting";
     if (got === "too_large") return this.quarantine(src, key, "manifest", "manifest too large", null);
     const bytes = got;
     const prior = this.ledger(src.bucketName, key);
-    if (prior && !bytesIn) return this.handleKnown(src, key, "manifest", bytes, prior);
+    if (prior && !force) return this.handleKnown(src, key, "manifest", bytes, prior);
     const sk = this.ctx.keystore.secretKey();
     let m;
     try { m = openManifest(sk, oid, bytes); }
@@ -527,7 +545,7 @@ export class Ingester {
     return "committed";
   }
 
-  private async ingestPart(src: Source, oid: string, key: string, index: number, bytesIn?: Uint8Array): Promise<Outcome> {
+  private async ingestPart(src: Source, oid: string, key: string, index: number, bytesIn?: Uint8Array, force = false): Promise<Outcome> {
     let row = getBlob(this.ctx, src.bucketName, oid);
     if (!row || row.status === "awaiting_manifest") {
       row ??= noteAwaitingManifest(this.ctx, src.bucketName, src.role, oid);
@@ -540,12 +558,12 @@ export class Ingester {
     }
     const prior = this.ledger(src.bucketName, key);
     if (row.status === "quarantined") {
-      if (prior?.status === "quarantined" && !bytesIn) { await this.remove(src, key); return "replayed"; }
+      if (prior?.status === "quarantined" && !force) { await this.remove(src, key); return "replayed"; }
       return this.quarantine(src, key, "blob_chunk", `its blob is quarantined: ${row.detail ?? ""}`.trim(), bytesIn ?? (await this.fetchQuiet(src, key)));
     }
     if (row.status === "complete" || committedSet(row).has(index)) {
       // committed before (resume after restart, or a re-upload): finish the delete
-      if (!bytesIn) await this.remove(src, key);
+      if (!force) await this.remove(src, key);
       return "replayed";
     }
     const got = bytesIn ?? (await this.fetch(src, key));
@@ -555,7 +573,7 @@ export class Ingester {
       return this.quarantine(src, key, "blob_chunk", "part too large", null);
     }
     const bytes = got;
-    if (prior && prior.status === "committed" && !bytesIn) return this.handleKnown(src, key, "blob_chunk", bytes, prior);
+    if (prior && prior.status === "committed" && !force) return this.handleKnown(src, key, "blob_chunk", bytes, prior);
 
     const w = writePart(this.ctx, row, index, bytes);
     if (w.kind === "reject") {
@@ -604,9 +622,9 @@ export class Ingester {
     const pk = (() => { try { return parseKey(q.object_key); } catch { return null; } })();
     if (!pk || !pk.kind) outcome = "quarantined";
     else if (pk.kind === "pairing_device") outcome = await this.ingestPairing(src, { key: q.object_key, size: bytes.length }, bytes);
-    else if (pk.kind === "manifest") outcome = await this.ingestManifest(src, pk.oid!, q.object_key, [], bytes);
-    else if (pk.kind === "blob_chunk") outcome = await this.ingestPart(src, pk.oid!, q.object_key, pk.chunkIndex!, bytes);
-    else outcome = await this.ingestSingle(src, q.object_key, pk.kind, bytes);
+    else if (pk.kind === "manifest") outcome = await this.ingestManifest(src, pk.oid!, q.object_key, [], bytes, true);
+    else if (pk.kind === "blob_chunk") outcome = await this.ingestPart(src, pk.oid!, q.object_key, pk.chunkIndex!, bytes, true);
+    else outcome = await this.ingestSingle(src, q.object_key, pk.kind, bytes, true);
     this.ctx.db.prepare("UPDATE quarantine SET resolved_at = ?, resolution = ? WHERE id = ?").run(nowIso(), `retried: ${outcome}`, id);
     return { outcome };
   }
