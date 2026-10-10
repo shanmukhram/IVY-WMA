@@ -1,3 +1,4 @@
+using Ivy.App.Core.Diagnostics;
 using Ivy.App.Core.Hosting;
 
 namespace Ivy.App.Core.ViewModels;
@@ -21,6 +22,11 @@ public sealed class ConversationViewModel : ObservableObject
     private string _passcodeStatus = "";
     private string _lineStatus = "";
     private string _reportPath = "";
+
+    private readonly BackgroundWork _work = new();
+
+    /// <summary>The last host operation queued by this panel (passcode, include channels, probe); tests await it.</summary>
+    public Task LastWork { get; private set; } = Task.CompletedTask;
 
     public ConversationViewModel(ICollectorHostView host, Action<string>? openFile = null)
     {
@@ -90,7 +96,7 @@ public sealed class ConversationViewModel : ObservableObject
         PasscodeStatusText = "applying...";
         try
         {
-            await _host.ApplyTelegramPasscodeAsync(pass);
+            await (LastWork = _work.Run(() => _host.ApplyTelegramPasscodeAsync(pass)));
             PasscodeText = "";
             PasscodeStatusText = "passcode stored; reconnecting";
         }
@@ -102,14 +108,15 @@ public sealed class ConversationViewModel : ObservableObject
 
     private async Task SetIncludeChannelsAsync(bool include)
     {
-        try { await _host.SetTelegramIncludeChannelsAsync(include); }
+        // Host settings writes hit SQLite; keep them off the UI thread (the third run logged a UiThreadGuard warning here).
+        try { await (LastWork = _work.Run(() => _host.SetTelegramIncludeChannelsAsync(include))); }
         catch (Exception e) { PasscodeStatusText = "include channels failed: " + e.Message; }
     }
 
     private async Task RunProbeAsync()
     {
         LineStatusText = "running probe...";
-        try { await _host.RunLineProbeAsync(); }
+        try { await (LastWork = _work.Run(() => _host.RunLineProbeAsync())); }
         catch (Exception e) { LineStatusText = "probe failed: " + e.Message; }
         OpenReportCommand.RaiseCanExecuteChanged();
     }
