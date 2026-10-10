@@ -22,6 +22,13 @@ public sealed class ConversationViewModel : ObservableObject
     private string _passcodeStatus = "";
     private string _lineStatus = "";
     private string _reportPath = "";
+    private bool _hasTelegramProgress;
+    private string _telegramChats = "";
+    private string _telegramMessages = "";
+    private double _telegramPercent;
+    private string _phoneOnly = PhoneOnlyNote;
+    private string _probeSummary = NoProbeYet;
+    private bool _telegramOtherError;
 
     private readonly BackgroundWork _work = new();
 
@@ -63,6 +70,30 @@ public sealed class ConversationViewModel : ObservableObject
         }
     }
 
+    // ---- Telegram page (fourth run): per-chat progress parsed from the collector's detail line -------------
+
+    public const string PhoneOnlyNote = "Secret chats live only on the phone. Telegram never syncs them to Telegram Desktop, so they are not captured from Windows.";
+    public const string LineCoverageNote = "Always partial from Windows: LINE for Windows holds only what this PC has synced. The phone has the full history.";
+    /// <summary><see cref="LineCoverageNote"/> as an instance property (x:Bind on the LINE page).</summary>
+    public string LineCoverageText => LineCoverageNote;
+    public const string NoProbeYet = "No probe has run on this PC yet.";
+
+    /// <summary>An error other than "needs passcode" (that one has its own InfoBar with the passcode box).</summary>
+    public bool TelegramHasOtherError { get => _telegramOtherError; private set => Set(ref _telegramOtherError, value); }
+
+    public bool HasTelegramProgress { get => _hasTelegramProgress; private set => Set(ref _hasTelegramProgress, value); }
+    /// <summary>"12 of 40 chats complete".</summary>
+    public string TelegramChatsText { get => _telegramChats; private set => Set(ref _telegramChats, value); }
+    /// <summary>"18,240 messages so far".</summary>
+    public string TelegramMessagesText { get => _telegramMessages; private set => Set(ref _telegramMessages, value); }
+    /// <summary>Chats with complete history, 0 to 100 (the ProgressBar).</summary>
+    public double TelegramPercent { get => _telegramPercent; private set => Set(ref _telegramPercent, value); }
+    /// <summary>The secret-chat note, with the count when the collector knows it.</summary>
+    public string PhoneOnlyText { get => _phoneOnly; private set => Set(ref _phoneOnly, value); }
+
+    /// <summary>The last probe's one-line summary ("Probe complete: 412 files, 6 databases, 0 readable").</summary>
+    public string LineProbeSummary { get => _probeSummary; private set => Set(ref _probeSummary, value); }
+
     public string LineStatusText { get => _lineStatus; private set => Set(ref _lineStatus, value); }
     public string ReportPathText { get => _reportPath; private set => Set(ref _reportPath, value); }
     public bool HasReport => !string.IsNullOrEmpty(_host.LineReportPath);
@@ -72,6 +103,7 @@ public sealed class ConversationViewModel : ObservableObject
     {
         TelegramStatusText = StatusLine(telegram);
         TelegramNeedsPasscode = telegram?.LastError?.Contains("passcode", StringComparison.OrdinalIgnoreCase) ?? false;
+        TelegramHasOtherError = !string.IsNullOrEmpty(telegram?.LastError) && !TelegramNeedsPasscode;
         _updating = true;
         try { IncludeChannels = _host.TelegramIncludeChannels; }
         finally { _updating = false; }
@@ -80,6 +112,27 @@ public sealed class ConversationViewModel : ObservableObject
         var path = _host.LineReportPath;
         ReportPathText = path is null ? "no probe report yet" : "report: " + path;
         OpenReportCommand.RaiseCanExecuteChanged();
+
+        var progress = string.IsNullOrEmpty(telegram?.LastError) ? TelegramProgress.TryParse(telegram?.Detail) : null;
+        if (progress is not null)
+        {
+            HasTelegramProgress = true;
+            TelegramChatsText = Fmt.Count(progress.ChatsDone) + " of " + Fmt.Count(progress.ChatsTotal) + " chats complete";
+            TelegramMessagesText = Fmt.Count(progress.Messages) + " messages so far";
+            TelegramPercent = progress.ChatsTotal == 0 ? 100 : Fmt.Percent(progress.ChatsDone, progress.ChatsTotal);
+            PhoneOnlyText = progress.PhoneOnly > 0
+                ? Fmt.Count(progress.PhoneOnly) + (progress.PhoneOnly == 1 ? " secret chat is" : " secret chats are") + " on the phone only. " + PhoneOnlyNote
+                : PhoneOnlyNote;
+        }
+        else if (telegram is null || !string.IsNullOrEmpty(telegram.LastError))
+        {
+            // No live progress (not available, or an error): keep the last numbers but stop claiming they are current.
+            HasTelegramProgress = false;
+        }
+
+        var summary = LineProbe.Summary(line?.Detail);
+        if (summary is not null) LineProbeSummary = summary;
+        else if (path is not null && LineProbeSummary == NoProbeYet) LineProbeSummary = "Probe report saved.";
     }
 
     private static string StatusLine(CollectorInfo? info)

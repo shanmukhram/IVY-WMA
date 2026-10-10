@@ -44,6 +44,7 @@ public sealed class SettingsViewModel : ObservableObject
         IndexedRoots = new StringListViewModel(Apply, pickFolder);
         ScreenshotRoots = new StringListViewModel(Apply, pickFolder);
         TitleExclusions = new StringListViewModel(Apply);
+        FileExclusions = new StringListViewModel(Apply);
         ImageExtensions = new StringListViewModel(Apply, normalize: MediaPolicyDefaults.NormalizeExtension);
         DocumentExtensions = new StringListViewModel(Apply, normalize: MediaPolicyDefaults.NormalizeExtension);
         ImageExtensions.Load(MediaPolicyDefaults.ImageExtensions);
@@ -55,6 +56,8 @@ public sealed class SettingsViewModel : ObservableObject
     public StringListViewModel IndexedRoots { get; }
     public StringListViewModel ScreenshotRoots { get; }
     public StringListViewModel TitleExclusions { get; }
+    /// <summary>Files collector exclusions (globs such as <c>node_modules</c> or <c>?:/Windows</c>).</summary>
+    public StringListViewModel FileExclusions { get; }
     public RelayCommand ApplyBandwidthCommand { get; }
 
     /// <summary>Extensions whose originals upload automatically as images (no dot).</summary>
@@ -151,6 +154,7 @@ public sealed class SettingsViewModel : ObservableObject
             IndexedRoots.Load(s.IndexedRoots);
             ScreenshotRoots.Load(s.ScreenshotRoots);
             TitleExclusions.Load(s.TitleExclusions);
+            FileExclusions.Load(s.FileExclusions);
             _windowTitleCapture = s.WindowTitleCapture;
             Raise(nameof(WindowTitleCapture));
             _autoUploadImages = s.AutoUploadImages;
@@ -271,6 +275,7 @@ public sealed class SettingsViewModel : ObservableObject
     {
         IndexedRoots = IndexedRoots.Values,
         ScreenshotRoots = ScreenshotRoots.Values,
+        FileExclusions = FileExclusions.Values,
         WindowTitleCapture = _windowTitleCapture,
         TitleExclusions = TitleExclusions.Values,
         AutoUploadImages = _autoUploadImages,

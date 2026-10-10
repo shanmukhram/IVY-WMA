@@ -1,0 +1,145 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Telegram: status with reason, passcode entry only when needed, include-channels, per-chat progress, secret-chat note. -->
+<Page
+    x:Class="Ivy.App.Pages.TelegramPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:local="using:Ivy.App"
+    xmlns:core="using:Ivy.App.Core"
+    NavigationCacheMode="Required">
+
+    <ScrollViewer>
+        <StackPanel MaxWidth="{StaticResource PageMaxWidth}" Margin="{StaticResource PageMargin}" Spacing="8">
+            <Grid ColumnSpacing="16" Margin="0,0,0,12">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <!-- simple-icons mark, or the initials tile when the resource has no path for it (Ui.BrandBadge). -->
+                <ContentControl Width="48" Height="48" IsTabStop="False" VerticalAlignment="Top"
+                                HorizontalContentAlignment="Center" VerticalContentAlignment="Center"
+                                Content="{x:Bind local:Ui.BrandBadge(ViewModel.TelegramBrand, 40)}" />
+                <StackPanel Grid.Column="1" Spacing="2">
+                    <TextBlock Text="Telegram" Style="{StaticResource TitleTextBlockStyle}" />
+                    <TextBlock Text="{x:Bind ViewModel.TelegramRow.Description}" Style="{StaticResource PageSubtitleStyle}" Margin="0" />
+                </StackPanel>
+            </Grid>
+            <InfoBar IsClosable="False"
+                     IsOpen="{x:Bind ViewModel.Conversation.TelegramHasOtherError, Mode=OneWay}"
+                     Visibility="{x:Bind ViewModel.Conversation.TelegramHasOtherError, Mode=OneWay}"
+                     Severity="Error"
+                     Title="{x:Bind ViewModel.TelegramRow.ProblemTitle, Mode=OneWay}"
+                     Message="{x:Bind ViewModel.TelegramRow.StatusReason, Mode=OneWay}" />
+
+            <!-- Shown only when the collector reports that Telegram Desktop has a local passcode. -->
+            <InfoBar IsClosable="False" Severity="Warning"
+                     IsOpen="{x:Bind ViewModel.Conversation.TelegramNeedsPasscode, Mode=OneWay}"
+                     Visibility="{x:Bind ViewModel.Conversation.TelegramNeedsPasscode, Mode=OneWay}"
+                     Title="Telegram Desktop is locked with a local passcode"
+                     Message="Enter it once. It stays on this PC, protected by Windows (DPAPI), and is never uploaded.">
+                <InfoBar.Content>
+                    <StackPanel Spacing="8" Margin="0,0,0,12">
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <PasswordBox x:Name="TelegramPasscodeBox" Width="240"
+                                         PlaceholderText="Local passcode"
+                                         PasswordChanged="TelegramPasscode_Changed"
+                                         KeyDown="TelegramPasscode_KeyDown"
+                                         AutomationProperties.Name="Telegram Desktop local passcode" />
+                            <Button Content="Unlock" Style="{StaticResource AccentButtonStyle}" AccessKey="U"
+                                    Command="{x:Bind ViewModel.Conversation.ApplyPasscodeCommand}" />
+                        </StackPanel>
+                        <TextBlock Text="{x:Bind ViewModel.Conversation.PasscodeStatusText, Mode=OneWay}" Style="{StaticResource SecondaryTextStyle}" />
+                    </StackPanel>
+                </InfoBar.Content>
+            </InfoBar>
+
+            <Border Style="{StaticResource CardStyle}">
+                <Grid RowSpacing="16">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+                    <Grid ColumnSpacing="8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <Ellipse Width="10" Height="10" VerticalAlignment="Center" Fill="{x:Bind local:Ui.Brush(ViewModel.TelegramRow.StatusColor), Mode=OneWay}" />
+                        <TextBlock Grid.Column="1" Text="{x:Bind ViewModel.TelegramRow.StatusLabel, Mode=OneWay}" Style="{StaticResource BodyStrongTextBlockStyle}" VerticalAlignment="Center" />
+                        <ToggleSwitch Grid.Column="2" MinWidth="0" OnContent="On" OffContent="Off" AccessKey="N"
+                                      IsOn="{x:Bind ViewModel.TelegramRow.Enabled, Mode=TwoWay}"
+                                      AutomationProperties.Name="Telegram collector" />
+                    </Grid>
+                    <Grid Grid.Row="1" ColumnSpacing="16" RowSpacing="8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="120" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+                        <TextBlock Grid.Row="0" Text="Status" Style="{StaticResource FieldLabelStyle}" />
+                        <TextBlock Grid.Row="0" Grid.Column="1" Text="{x:Bind ViewModel.TelegramRow.StatusReason, Mode=OneWay}" Style="{StaticResource FieldValueStyle}" />
+                        <TextBlock Grid.Row="1" Text="Last capture" Style="{StaticResource FieldLabelStyle}" />
+                        <TextBlock Grid.Row="1" Grid.Column="1" Text="{x:Bind ViewModel.TelegramRow.LastCaptureText, Mode=OneWay}" Style="{StaticResource FieldValueStyle}" />
+                        <TextBlock Grid.Row="2" Text="Last upload" Style="{StaticResource FieldLabelStyle}" />
+                        <TextBlock Grid.Row="2" Grid.Column="1" Text="{x:Bind ViewModel.TelegramRow.LastUploadText, Mode=OneWay}" Style="{StaticResource FieldValueStyle}" />
+                        <TextBlock Grid.Row="3" Text="Queue" Style="{StaticResource FieldLabelStyle}" />
+                        <TextBlock Grid.Row="3" Grid.Column="1" Text="{x:Bind ViewModel.TelegramRow.QueueContributionText, Mode=OneWay}" Style="{StaticResource FieldValueStyle}" />
+                    </Grid>
+                </Grid>
+            </Border>
+            <TextBlock Text="History" Style="{StaticResource SectionHeaderStyle}" />
+            <Border Style="{StaticResource CardStyle}">
+                <StackPanel Spacing="8">
+                    <StackPanel Spacing="8" Visibility="{x:Bind ViewModel.Conversation.HasTelegramProgress, Mode=OneWay}">
+                        <Grid>
+                            <TextBlock Text="{x:Bind ViewModel.Conversation.TelegramChatsText, Mode=OneWay}" Style="{StaticResource BodyStrongTextBlockStyle}" />
+                            <TextBlock Text="{x:Bind ViewModel.Conversation.TelegramMessagesText, Mode=OneWay}" HorizontalAlignment="Right"
+                                       Style="{StaticResource SecondaryTextStyle}" VerticalAlignment="Center" />
+                        </Grid>
+                        <ProgressBar Value="{x:Bind ViewModel.Conversation.TelegramPercent, Mode=OneWay}" Minimum="0" Maximum="100"
+                                     AutomationProperties.Name="Chats with complete history" />
+                        <TextBlock Style="{StaticResource SecondaryTextStyle}"
+                                   Text="A chat counts as complete once its whole cloud history has been read. New messages keep arriving after that." />
+                    </StackPanel>
+                    <TextBlock Style="{StaticResource SecondaryTextStyle}"
+                               Visibility="{x:Bind local:Ui.CollapsedWhen(ViewModel.Conversation.HasTelegramProgress), Mode=OneWay}"
+                               Text="No progress reported yet. It appears after the first sync with Telegram Desktop's session." />
+                </StackPanel>
+            </Border>
+
+            <Border Style="{StaticResource SettingsRowStyle}">
+                <Grid ColumnSpacing="16">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <StackPanel VerticalAlignment="Center">
+                        <TextBlock Text="Include channels" />
+                        <TextBlock Text="Groups and direct messages are always captured." Style="{StaticResource SecondaryTextStyle}" />
+                    </StackPanel>
+                    <ToggleSwitch Grid.Column="1" MinWidth="0" OnContent="On" OffContent="Off" AccessKey="H"
+                                  IsOn="{x:Bind ViewModel.Conversation.IncludeChannels, Mode=TwoWay}"
+                                  AutomationProperties.Name="Include channels" />
+                </Grid>
+            </Border>
+
+            <Border Style="{StaticResource SettingsRowStyle}">
+                <Grid ColumnSpacing="16">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <FontIcon Glyph="&#xE72E;" FontSize="16" VerticalAlignment="Center" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                    <TextBlock Grid.Column="1" Text="{x:Bind ViewModel.Conversation.PhoneOnlyText, Mode=OneWay}" Style="{StaticResource BodyTextBlockStyle}"
+                               TextWrapping="Wrap" VerticalAlignment="Center" />
+                </Grid>
+            </Border>
+        </StackPanel>
+    </ScrollViewer>
+</Page>

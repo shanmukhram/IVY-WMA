@@ -1,0 +1,136 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Transfers: the encrypted queue, the current upload, bandwidth, Sync now, and recent commands from the Mac. -->
+<Page
+    x:Class="Ivy.App.Pages.TransfersPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:local="using:Ivy.App"
+    xmlns:core="using:Ivy.App.Core"
+    NavigationCacheMode="Required">
+
+    <ScrollViewer>
+        <StackPanel MaxWidth="{StaticResource PageMaxWidth}" Margin="{StaticResource PageMargin}" Spacing="8">
+            <TextBlock Text="Transfers" Style="{StaticResource PageTitleStyle}" />
+            <TextBlock Text="What is waiting to go to the Mac, and what the Mac asked this PC for." Style="{StaticResource PageSubtitleStyle}" />
+
+            <InfoBar IsClosable="False"
+                     IsOpen="{x:Bind ViewModel.Overview.HasBucketProblem, Mode=OneWay}"
+                     Visibility="{x:Bind ViewModel.Overview.HasBucketProblem, Mode=OneWay}"
+                     Severity="{x:Bind local:Ui.Severity(ViewModel.Overview.BucketSeverity), Mode=OneWay}"
+                     Title="{x:Bind ViewModel.Overview.BucketProblemTitle, Mode=OneWay}"
+                     Message="{x:Bind ViewModel.Overview.BucketProblemMessage, Mode=OneWay}" />
+
+            <!-- ============ Queue ============ -->
+            <Border Style="{StaticResource CardStyle}" Padding="20">
+                <Grid ColumnSpacing="16" RowSpacing="16">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+                    <StackPanel Grid.Column="0" Spacing="2">
+                        <TextBlock Text="{x:Bind ViewModel.PendingObjectsText, Mode=OneWay}" Style="{StaticResource SubtitleTextBlockStyle}" />
+                        <TextBlock Text="Objects waiting" Style="{StaticResource SecondaryTextStyle}" />
+                    </StackPanel>
+                    <StackPanel Grid.Column="1" Spacing="2">
+                        <TextBlock Text="{x:Bind ViewModel.PendingBytesText, Mode=OneWay}" Style="{StaticResource SubtitleTextBlockStyle}" />
+                        <TextBlock Text="Encrypted size" Style="{StaticResource SecondaryTextStyle}" />
+                    </StackPanel>
+                    <StackPanel Grid.Column="2" Spacing="2">
+                        <TextBlock Text="{x:Bind ViewModel.RetryingText, Mode=OneWay}" Style="{StaticResource SubtitleTextBlockStyle}" />
+                        <TextBlock Text="Retrying after a failure" Style="{StaticResource SecondaryTextStyle}" />
+                    </StackPanel>
+                    <StackPanel Grid.Column="3" Spacing="4" VerticalAlignment="Center" HorizontalAlignment="Right">
+                        <Button Style="{StaticResource AccentButtonStyle}" AccessKey="Y" Command="{x:Bind ViewModel.SyncNowCommand}"
+                                AutomationProperties.Name="Sync now">
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <FontIcon Glyph="&#xE895;" FontSize="14" />
+                                <TextBlock Text="Sync now" />
+                            </StackPanel>
+                        </Button>
+                    </StackPanel>
+                    <TextBlock Grid.Row="1" Grid.ColumnSpan="4" Text="{x:Bind ViewModel.SyncStatusText, Mode=OneWay}" Style="{StaticResource SecondaryTextStyle}"
+                               Visibility="{x:Bind local:Ui.VisibleIfText(ViewModel.SyncStatusText), Mode=OneWay}" />
+                </Grid>
+            </Border>
+
+            <!-- ============ Current upload ============ -->
+            <TextBlock Text="Current upload" Style="{StaticResource SectionHeaderStyle}" />
+            <Border Style="{StaticResource CardStyle}">
+                <StackPanel Spacing="8">
+                    <TextBlock Text="{x:Bind ViewModel.CurrentUploadText, Mode=OneWay}" Style="{StaticResource MonoValueStyle}" TextTrimming="CharacterEllipsis" TextWrapping="NoWrap" />
+                    <ProgressBar Value="{x:Bind ViewModel.CurrentUploadPercent, Mode=OneWay}" Minimum="0" Maximum="100"
+                                 Visibility="{x:Bind ViewModel.HasCurrentUpload, Mode=OneWay}"
+                                 AutomationProperties.Name="Current upload progress" />
+                </StackPanel>
+            </Border>
+
+            <!-- ============ Bandwidth ============ -->
+            <TextBlock Text="Bandwidth" Style="{StaticResource SectionHeaderStyle}" />
+            <Border Style="{StaticResource SettingsRowStyle}">
+                <Grid ColumnSpacing="16">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <StackPanel VerticalAlignment="Center">
+                        <TextBlock Text="Upload cap" />
+                        <TextBlock Text="{x:Bind ViewModel.Settings.BandwidthStatus, Mode=OneWay}" Style="{StaticResource SecondaryTextStyle}" />
+                    </StackPanel>
+                    <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                        <TextBox Width="120" FontFamily="{StaticResource IvyMono}" PlaceholderText="KB/s"
+                                 Text="{x:Bind ViewModel.Settings.BandwidthText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                 AutomationProperties.Name="Bandwidth cap in KB per second, 0 for unlimited" />
+                        <TextBlock Text="KB/s" VerticalAlignment="Center" Style="{StaticResource SecondaryTextStyle}" />
+                        <Button Content="Apply" AccessKey="B" Command="{x:Bind ViewModel.Settings.ApplyBandwidthCommand}"
+                                AutomationProperties.Name="Apply bandwidth cap" />
+                    </StackPanel>
+                </Grid>
+            </Border>
+
+            <!-- ============ Commands from the Mac ============ -->
+            <TextBlock Text="Recent commands from the Mac" Style="{StaticResource SectionHeaderStyle}" />
+            <Border Style="{StaticResource CardStyle}" Padding="4">
+                <StackPanel>
+                    <TextBlock Margin="12,8" Style="{StaticResource SecondaryTextStyle}"
+                               Text="File requests, rescans and settings changes, newest first. The Mac sees the same outcome." />
+                    <ListView ItemsSource="{x:Bind ViewModel.Commands.Items}" SelectionMode="None" MaxHeight="360"
+                              AutomationProperties.Name="Recent commands from the Mac">
+                        <ListView.ItemContainerStyle>
+                            <Style TargetType="ListViewItem" BasedOn="{StaticResource DefaultListViewItemStyle}">
+                                <Setter Property="MinHeight" Value="36" />
+                                <Setter Property="Padding" Value="12,0" />
+                            </Style>
+                        </ListView.ItemContainerStyle>
+                        <ListView.ItemTemplate>
+                            <DataTemplate x:DataType="core:CommandItem">
+                                <Grid ColumnSpacing="12">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="64" />
+                                        <ColumnDefinition Width="150" />
+                                        <ColumnDefinition Width="88" />
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="{x:Bind TimeText, Mode=OneWay}" FontFamily="{StaticResource IvyMono}" FontSize="12"
+                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" VerticalAlignment="Center" />
+                                    <TextBlock Grid.Column="1" Text="{x:Bind TypeText}" Style="{StaticResource BodyStrongTextBlockStyle}" VerticalAlignment="Center" />
+                                    <TextBlock Grid.Column="2" Text="{x:Bind ShortId}" FontFamily="{StaticResource IvyMono}" FontSize="12"
+                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" VerticalAlignment="Center" />
+                                    <Ellipse Grid.Column="3" Width="8" Height="8" VerticalAlignment="Center"
+                                             Fill="{x:Bind local:Ui.SeverityBrush(Severity), Mode=OneWay}" />
+                                    <TextBlock Grid.Column="4" Text="{x:Bind StatusText, Mode=OneWay}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                                </Grid>
+                            </DataTemplate>
+                        </ListView.ItemTemplate>
+                    </ListView>
+                </StackPanel>
+            </Border>
+        </StackPanel>
+    </ScrollViewer>
+</Page>

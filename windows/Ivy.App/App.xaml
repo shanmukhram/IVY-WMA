@@ -1,34 +1,104 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+    Fourth run (Fluent redesign, PLAN decision 5): the app follows the Windows theme (light or dark) with a manual
+    override in Settings > Appearance, uses the system accent colour (no overrides), Segoe UI Variable through the
+    built-in type ramp (TitleTextBlockStyle, SubtitleTextBlockStyle, BodyStrongTextBlockStyle, BodyTextBlockStyle,
+    CaptionTextBlockStyle) and only theme resources for colour, so Mica shows through and both themes stay correct.
+    No RequestedTheme here on purpose: MainWindow applies the override to its content.
+-->
 <Application
     x:Class="Ivy.App.App"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-    RequestedTheme="Dark">
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
     <Application.Resources>
         <ResourceDictionary>
             <ResourceDictionary.MergedDictionaries>
                 <XamlControlsResources xmlns="using:Microsoft.UI.Xaml.Controls" />
             </ResourceDictionary.MergedDictionaries>
 
-            <!-- The whole palette: near-black background, 1px borders, one green accent (PRD "App UI"). -->
-            <Color x:Key="IvyAccentColor">#3ECF8E</Color>
-            <SolidColorBrush x:Key="IvyBackground" Color="#111111" />
-            <SolidColorBrush x:Key="IvyPanel" Color="#171717" />
-            <SolidColorBrush x:Key="IvyBorder" Color="#2E2E2E" />
-            <SolidColorBrush x:Key="IvyText" Color="#EDEDED" />
-            <SolidColorBrush x:Key="IvyMuted" Color="#8F8F8F" />
-            <SolidColorBrush x:Key="IvyAccent" Color="#3ECF8E" />
-            <SolidColorBrush x:Key="IvyError" Color="#E5484D" />
-            <FontFamily x:Key="IvyMono">Consolas</FontFamily>
+            <!-- Fingerprints, object keys, timestamps. Cascadia Mono ships with Windows 11; Consolas is the fallback. -->
+            <FontFamily x:Key="IvyMono">Cascadia Mono, Consolas</FontFamily>
 
-            <!-- Make system accent-coloured controls (toggles, buttons, progress) use the same green. -->
-            <Color x:Key="SystemAccentColor">#3ECF8E</Color>
-            <Color x:Key="SystemAccentColorLight1">#3ECF8E</Color>
-            <Color x:Key="SystemAccentColorLight2">#3ECF8E</Color>
-            <Color x:Key="SystemAccentColorLight3">#3ECF8E</Color>
-            <Color x:Key="SystemAccentColorDark1">#2EA572</Color>
-            <Color x:Key="SystemAccentColorDark2">#2EA572</Color>
-            <Color x:Key="SystemAccentColorDark3">#2EA572</Color>
+            <!-- 4/8-point spacing used by every page. -->
+            <Thickness x:Key="PageMargin">36,24,36,36</Thickness>
+            <Thickness x:Key="CardPadding">16</Thickness>
+            <x:Double x:Key="PageMaxWidth">1000</x:Double>
+
+            <!-- A content card, as in Windows Settings: card fill, 1px card stroke, 8px corners. -->
+            <Style x:Key="CardStyle" TargetType="Border">
+                <Setter Property="Background" Value="{ThemeResource CardBackgroundFillColorDefaultBrush}" />
+                <Setter Property="BorderBrush" Value="{ThemeResource CardStrokeColorDefaultBrush}" />
+                <Setter Property="BorderThickness" Value="1" />
+                <Setter Property="CornerRadius" Value="{StaticResource OverlayCornerRadius}" />
+                <Setter Property="Padding" Value="{StaticResource CardPadding}" />
+            </Style>
+
+            <!-- One settings row (header and description on the left, the control on the right), like a SettingsCard. -->
+            <Style x:Key="SettingsRowStyle" TargetType="Border">
+                <Setter Property="Background" Value="{ThemeResource CardBackgroundFillColorDefaultBrush}" />
+                <Setter Property="BorderBrush" Value="{ThemeResource CardStrokeColorDefaultBrush}" />
+                <Setter Property="BorderThickness" Value="1" />
+                <Setter Property="CornerRadius" Value="{StaticResource ControlCornerRadius}" />
+                <Setter Property="Padding" Value="16,12" />
+                <Setter Property="MinHeight" Value="68" />
+            </Style>
+
+            <!-- The square behind a page or card glyph. -->
+            <Style x:Key="GlyphTileStyle" TargetType="Border">
+                <Setter Property="Width" Value="40" />
+                <Setter Property="Height" Value="40" />
+                <Setter Property="CornerRadius" Value="{StaticResource ControlCornerRadius}" />
+                <Setter Property="Background" Value="{ThemeResource SubtleFillColorSecondaryBrush}" />
+                <Setter Property="VerticalAlignment" Value="Top" />
+            </Style>
+
+            <Style x:Key="PageTitleStyle" TargetType="TextBlock" BasedOn="{StaticResource TitleTextBlockStyle}">
+                <Setter Property="Margin" Value="0,0,0,4" />
+            </Style>
+
+            <Style x:Key="PageSubtitleStyle" TargetType="TextBlock" BasedOn="{StaticResource BodyTextBlockStyle}">
+                <Setter Property="Foreground" Value="{ThemeResource TextFillColorSecondaryBrush}" />
+                <Setter Property="TextWrapping" Value="Wrap" />
+                <Setter Property="Margin" Value="0,0,0,16" />
+            </Style>
+
+            <!-- Section header between groups of cards (Windows Settings spacing). -->
+            <Style x:Key="SectionHeaderStyle" TargetType="TextBlock" BasedOn="{StaticResource BodyStrongTextBlockStyle}">
+                <Setter Property="Margin" Value="1,24,0,4" />
+            </Style>
+
+            <!-- Key in a key/value grid. -->
+            <Style x:Key="FieldLabelStyle" TargetType="TextBlock" BasedOn="{StaticResource CaptionTextBlockStyle}">
+                <Setter Property="Foreground" Value="{ThemeResource TextFillColorSecondaryBrush}" />
+                <Setter Property="VerticalAlignment" Value="Center" />
+            </Style>
+
+            <Style x:Key="FieldValueStyle" TargetType="TextBlock" BasedOn="{StaticResource BodyTextBlockStyle}">
+                <Setter Property="TextWrapping" Value="Wrap" />
+                <Setter Property="IsTextSelectionEnabled" Value="True" />
+                <Setter Property="VerticalAlignment" Value="Center" />
+            </Style>
+
+            <Style x:Key="MonoValueStyle" TargetType="TextBlock" BasedOn="{StaticResource FieldValueStyle}">
+                <Setter Property="FontFamily" Value="{StaticResource IvyMono}" />
+            </Style>
+
+            <Style x:Key="SecondaryTextStyle" TargetType="TextBlock" BasedOn="{StaticResource CaptionTextBlockStyle}">
+                <Setter Property="Foreground" Value="{ThemeResource TextFillColorSecondaryBrush}" />
+                <Setter Property="TextWrapping" Value="Wrap" />
+            </Style>
+
+            <!-- Editable string lists (folders, exclusions, extensions). -->
+            <Style x:Key="ListBoxStyle" TargetType="ListView">
+                <Setter Property="MinHeight" Value="44" />
+                <Setter Property="MaxHeight" Value="200" />
+                <Setter Property="SelectionMode" Value="Single" />
+                <Setter Property="BorderBrush" Value="{ThemeResource ControlStrokeColorDefaultBrush}" />
+                <Setter Property="BorderThickness" Value="1" />
+                <Setter Property="CornerRadius" Value="{StaticResource ControlCornerRadius}" />
+                <Setter Property="Background" Value="{ThemeResource ControlFillColorDefaultBrush}" />
+                <Setter Property="FontFamily" Value="{StaticResource IvyMono}" />
+            </Style>
         </ResourceDictionary>
     </Application.Resources>
 </Application>

@@ -94,6 +94,7 @@ public static class CollectorSettingsCodec
         [JsonPropertyName("v")] public int V { get; set; } = 1;
         [JsonPropertyName("indexedRoots")] public List<string>? IndexedRoots { get; set; }
         [JsonPropertyName("screenshotRoots")] public List<string>? ScreenshotRoots { get; set; }
+        [JsonPropertyName("fileExclusions")] public List<string>? FileExclusions { get; set; }
         [JsonPropertyName("windowTitleCapture")] public bool WindowTitleCapture { get; set; } = true;
         [JsonPropertyName("titleExclusions")] public List<string>? TitleExclusions { get; set; }
         [JsonPropertyName("autoUploadImages")] public bool? AutoUploadImages { get; set; }
@@ -108,6 +109,7 @@ public static class CollectorSettingsCodec
     {
         IndexedRoots = s.IndexedRoots.ToList(),
         ScreenshotRoots = s.ScreenshotRoots.ToList(),
+        FileExclusions = s.FileExclusions.ToList(),
         WindowTitleCapture = s.WindowTitleCapture,
         TitleExclusions = s.TitleExclusions.ToList(),
         AutoUploadImages = s.AutoUploadImages,
@@ -130,6 +132,7 @@ public static class CollectorSettingsCodec
         {
             IndexedRoots = d.IndexedRoots ?? new List<string>(),
             ScreenshotRoots = d.ScreenshotRoots ?? new List<string>(),
+            FileExclusions = d.FileExclusions ?? new List<string>(),
             WindowTitleCapture = d.WindowTitleCapture,
             TitleExclusions = d.TitleExclusions ?? new List<string>(),
             // absent (settings saved before the media policy): the defaults

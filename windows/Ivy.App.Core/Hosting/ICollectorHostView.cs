@@ -27,6 +27,11 @@ public sealed record CollectorSettings
 {
     public IReadOnlyList<string> IndexedRoots { get; init; } = Array.Empty<string>();
     public IReadOnlyList<string> ScreenshotRoots { get; init; } = Array.Empty<string>();
+    /// <summary>
+    /// Files collector glob exclusions (<c>files.exclusions</c>, ExclusionMatcher syntax). The live host reports the
+    /// collector's own defaults (node_modules, .git, Windows, Program Files, temp...); empty only in the stored fallback.
+    /// </summary>
+    public IReadOnlyList<string> FileExclusions { get; init; } = Array.Empty<string>();
     /// <summary>WC4: window-title capture, default on.</summary>
     public bool WindowTitleCapture { get; init; } = true;
     /// <summary>Executable names or title substrings whose window titles are never captured.</summary>

@@ -13,11 +13,14 @@ public sealed class PairingViewModel : ObservableObject
     private readonly IAgentView _agent;
     private readonly IUiDispatcher _ui;
     private string _pairingText = "";
-    private string _status = "Paste the pairing string shown on the Mac, then press Pair.";
+    private string _status = DefaultStatus;
     private string _deviceFingerprint = "";
     private string _macFingerprint = "";
     private bool _busy;
     private bool _completed;
+    private string _errorText = "";
+    private string _errorHint = "";
+    public const string DefaultStatus = "Paste the pairing string shown on the Mac, then press Pair.";
 
     public PairingViewModel(IAgentView agent, IUiDispatcher ui)
     {
@@ -46,6 +49,11 @@ public sealed class PairingViewModel : ObservableObject
     }
 
     public string Status { get => _status; private set => Set(ref _status, value); }
+
+    /// <summary>Inline error under the pairing field (empty when none) and its fix hint.</summary>
+    public string ErrorText { get => _errorText; private set { if (Set(ref _errorText, value)) Raise(nameof(HasError)); } }
+    public string ErrorHint { get => _errorHint; private set => Set(ref _errorHint, value); }
+    public bool HasError => _errorText.Length > 0;
     public string DeviceFingerprint
     {
         get => _deviceFingerprint;
@@ -73,8 +81,10 @@ public sealed class PairingViewModel : ObservableObject
         if (code.Length == 0)
         {
             Status = "Paste the pairing string first.";
+            ShowError(PairingErrors.Empty());
             return;
         }
+        ShowError(null);
         using (UiBreadcrumb.Enter("Pairing submit"))
         {
             IsBusy = true;
@@ -96,10 +106,12 @@ public sealed class PairingViewModel : ObservableObject
         catch (PairingException e)
         {
             Status = "Pairing failed: " + e.Message;
+            ShowError(PairingErrors.Describe(e));
         }
         catch (Exception e)
         {
             Status = "Pairing failed: " + e.GetType().Name + ": " + e.Message;
+            ShowError(PairingErrors.Describe(e));
         }
         finally
         {
@@ -108,5 +120,26 @@ public sealed class PairingViewModel : ObservableObject
             PairCommand.RaiseCanExecuteChanged();
             ContinueCommand.RaiseCanExecuteChanged();
         }
+    }
+
+    private void ShowError(PairingError? e)
+    {
+        ErrorText = e?.Message ?? "";
+        ErrorHint = e?.Hint ?? "";
+    }
+
+    /// <summary>Back to a blank pairing page (after Unpair).</summary>
+    public void Reset()
+    {
+        Completed = false;
+        IsBusy = false;
+        PairingText = "";
+        DeviceFingerprint = "";
+        MacFingerprint = "";
+        Status = DefaultStatus;
+        ShowError(null);
+        Raise(nameof(CanEdit));
+        PairCommand.RaiseCanExecuteChanged();
+        ContinueCommand.RaiseCanExecuteChanged();
     }
 }

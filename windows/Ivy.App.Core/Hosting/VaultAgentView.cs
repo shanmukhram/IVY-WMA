@@ -64,6 +64,16 @@ public sealed class VaultAgentView : IAgentView, IDisposable
         }
     }
 
+    public async Task UnpairAsync()
+    {
+        try { await _agent.UnpairAsync().ConfigureAwait(false); }
+        finally
+        {
+            Attach(); // the uploader is gone: detach from it
+            RefreshPairedState();
+        }
+    }
+
     public IReadOnlyList<ActivityEntry> RecentActivity(int limit) => _agent.Activity.Recent(limit);
 
     public bool UploadsPaused

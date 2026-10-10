@@ -1,69 +1,179 @@
+using System.ComponentModel;
 using Ivy.App.Core.ViewModels;
+using Ivy.App.Pages;
 using Ivy.App.Platform;
+using Microsoft.UI;
+using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Media.Animation;
+using Microsoft.UI.Xaml.Media.Imaging;
 using Windows.Graphics;
+using Windows.UI;
 
 namespace Ivy.App;
 
 /// <summary>
-/// The status window. All state is in <see cref="MainViewModel"/>; code-behind only handles the few
-/// interactions that need a control reference (selected list item, folder dialog, the pause-scroll box).
+/// The one window (fourth run, Fluent): Mica, a custom title bar, the pairing page until paired, then a
+/// NavigationView shell whose Frame hosts one page per <see cref="NavPages"/> tag. All state is in
+/// <see cref="MainViewModel"/>; this class only keeps the NavigationView, the Frame and the theme in step with it.
 /// </summary>
 public sealed partial class MainWindow : Window
 {
+    /// <summary>Page tag (Ivy.App.Core NavPages) to XAML page. Group tags are not pages.</summary>
+    private static readonly IReadOnlyDictionary<string, Type> PageTypes = new Dictionary<string, Type>(StringComparer.Ordinal)
+    {
+        [NavPages.Overview] = typeof(OverviewPage),
+        [NavPages.Files] = typeof(FilesPage),
+        [NavPages.Screenshots] = typeof(ScreenshotsPage),
+        [NavPages.Usage] = typeof(UsagePage),
+        [NavPages.Notifications] = typeof(NotificationsPage),
+        [NavPages.Telegram] = typeof(TelegramPage),
+        [NavPages.Line] = typeof(LinePage),
+        [NavPages.Transfers] = typeof(TransfersPage),
+        [NavPages.Settings] = typeof(SettingsPage),
+        [NavPages.Activity] = typeof(ActivityPage),
+    };
+
+    /// <summary>Set while this class changes the NavigationView itself, so its events do not echo back.</summary>
+    private bool _syncing;
+
     public MainWindow(MainViewModel viewModel)
     {
         ViewModel = viewModel;
         InitializeComponent();
+        // Must stay "IVY": the usage collector recognises its own window by this title (ForegroundTitleReader.OwnProcessTitle).
         Title = "IVY";
         Hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
-        AppWindow.Resize(new SizeInt32(1280, 900));
-        if (File.Exists(AppPaths.IconPath)) AppWindow.SetIcon(AppPaths.IconPath);
+        AppWindow.Resize(new SizeInt32(1200, 840));
+        if (File.Exists(AppPaths.IconPath))
+        {
+            AppWindow.SetIcon(AppPaths.IconPath);
+            TitleBarIcon.Source = new BitmapImage(new Uri(AppPaths.IconPath));
+        }
+
+        // Custom title bar over Mica: the 48 px AppTitleBar row is the drag region, caption buttons stay system-drawn.
+        ExtendsContentIntoTitleBar = true;
+        SetTitleBar(AppTitleBar);
+        AppWindow.TitleBar.PreferredHeightOption = TitleBarHeightOption.Tall;
+
+        TelegramNavItem.Icon = Ui.BrandIcon(ViewModel.TelegramBrand, 16);
+        LineNavItem.Icon = Ui.BrandIcon(ViewModel.LineBrand, 16);
+
+        ApplyTheme();
+        Root.ActualThemeChanged += (_, _) => UpdateCaptionButtons();
+        ViewModel.Appearance.PropertyChanged += OnAppearanceChanged;
+        ViewModel.Navigation.PropertyChanged += OnNavigationChanged;
+        SyncExpanded();
+        SyncSelection();
     }
 
     public MainViewModel ViewModel { get; }
 
     public IntPtr Hwnd { get; }
 
-    private async void AddIndexedRoot_Click(object sender, RoutedEventArgs e) => await PickInto(ViewModel.Settings.IndexedRoots);
+    // ---------------------------------------------------------------- navigation
 
-    private void RemoveIndexedRoot_Click(object sender, RoutedEventArgs e) =>
-        ViewModel.Settings.IndexedRoots.Remove(IndexedRootsList.SelectedItem as string);
-
-    private async void AddScreenshotRoot_Click(object sender, RoutedEventArgs e) => await PickInto(ViewModel.Settings.ScreenshotRoots);
-
-    private void RemoveScreenshotRoot_Click(object sender, RoutedEventArgs e) =>
-        ViewModel.Settings.ScreenshotRoots.Remove(ScreenshotRootsList.SelectedItem as string);
-
-    private void AddExclusion_Click(object sender, RoutedEventArgs e) => ViewModel.Settings.TitleExclusions.AddNew();
-
-    private void AddImageExtension_Click(object sender, RoutedEventArgs e) => ViewModel.Settings.ImageExtensions.AddNew();
-
-    private void RemoveImageExtension_Click(object sender, RoutedEventArgs e) =>
-        ViewModel.Settings.ImageExtensions.Remove(ImageExtensionsList.SelectedItem as string);
-
-    private void AddDocumentExtension_Click(object sender, RoutedEventArgs e) => ViewModel.Settings.DocumentExtensions.AddNew();
-
-    private void RemoveDocumentExtension_Click(object sender, RoutedEventArgs e) =>
-        ViewModel.Settings.DocumentExtensions.Remove(DocumentExtensionsList.SelectedItem as string);
-
-    private void RemoveExclusion_Click(object sender, RoutedEventArgs e) =>
-        ViewModel.Settings.TitleExclusions.Remove(ExclusionsList.SelectedItem as string);
-
-    private void PauseScroll_Changed(object sender, RoutedEventArgs e) =>
-        ViewModel.Feed.ScrollPaused = PauseScrollBox.IsChecked == true;
-
-    // PasswordBox.Password is not a bindable dependency property; mirror it into the view model here.
-    private void TelegramPasscode_Changed(object sender, RoutedEventArgs e) =>
-        ViewModel.Conversation.PasscodeText = TelegramPasscodeBox.Password;
-
-    private async Task PickInto(StringListViewModel list)
+    private void NavView_SelectionChanged(NavigationView sender, NavigationViewSelectionChangedEventArgs args)
     {
-        try { await list.PickAndAddAsync(); }
-        catch (Exception ex)
+        if (_syncing) return;
+        if (args.SelectedItemContainer?.Tag is string tag) ViewModel.Navigation.Select(tag);
+    }
+
+    private void NavView_Expanding(NavigationView sender, NavigationViewItemExpandingEventArgs args)
+    {
+        if (_syncing) return;
+        if (args.ExpandingItemContainer?.Tag is string tag) ViewModel.Navigation.SetExpanded(tag, true);
+    }
+
+    private void NavView_Collapsed(NavigationView sender, NavigationViewItemCollapsedEventArgs args)
+    {
+        if (_syncing) return;
+        if (args.CollapsedItemContainer?.Tag is string tag) ViewModel.Navigation.SetExpanded(tag, false);
+    }
+
+    private void OnNavigationChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(NavigationViewModel.SelectedPage)) SyncSelection();
+        else if (e.PropertyName == nameof(NavigationViewModel.ExpandedGroups)) SyncExpanded();
+    }
+
+    /// <summary>Select the item for the view model's page and show that page in the Frame.</summary>
+    private void SyncSelection()
+    {
+        var tag = ViewModel.Navigation.SelectedPage;
+        var item = FindItem(tag);
+        _syncing = true;
+        try
         {
-            // FolderPicker throws when the process runs elevated; say so instead of crashing.
-            ViewModel.Settings.ReportError("Folder picker failed (is IVY running as administrator?): " + ex.Message);
+            if (item is not null && !ReferenceEquals(NavView.SelectedItem, item)) NavView.SelectedItem = item;
         }
+        finally
+        {
+            _syncing = false;
+        }
+        if (PageTypes.TryGetValue(tag, out var type) && ContentFrame.CurrentSourcePageType != type)
+            ContentFrame.Navigate(type, ViewModel, new EntranceNavigationTransitionInfo());
+    }
+
+    private void SyncExpanded()
+    {
+        _syncing = true;
+        try
+        {
+            CollectorsGroupItem.IsExpanded = ViewModel.Navigation.IsExpanded(NavPages.CollectorsGroup);
+            ConversationsGroupItem.IsExpanded = ViewModel.Navigation.IsExpanded(NavPages.ConversationsGroup);
+        }
+        finally
+        {
+            _syncing = false;
+        }
+    }
+
+    private NavigationViewItem? FindItem(string tag) =>
+        Flatten(NavView.MenuItems).Concat(Flatten(NavView.FooterMenuItems)).FirstOrDefault(i => i.Tag as string == tag);
+
+    private static IEnumerable<NavigationViewItem> Flatten(IEnumerable<object> items)
+    {
+        foreach (var o in items)
+        {
+            if (o is not NavigationViewItem item) continue;
+            yield return item;
+            foreach (var child in Flatten(item.MenuItems)) yield return child;
+        }
+    }
+
+    // ---------------------------------------------------------------- theme
+
+    private void OnAppearanceChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(AppearanceViewModel.Theme)) ApplyTheme();
+    }
+
+    /// <summary>Settings > Appearance: System follows Windows; Light/Dark override the whole window content.</summary>
+    private void ApplyTheme()
+    {
+        Root.RequestedTheme = ViewModel.Appearance.Theme switch
+        {
+            AppTheme.Light => ElementTheme.Light,
+            AppTheme.Dark => ElementTheme.Dark,
+            _ => ElementTheme.Default,
+        };
+        UpdateCaptionButtons();
+    }
+
+    /// <summary>The system draws the caption buttons; give them the content's theme (transparent over Mica).</summary>
+    private void UpdateCaptionButtons()
+    {
+        var bar = AppWindow.TitleBar;
+        var dark = Root.ActualTheme == ElementTheme.Dark;
+        bar.ButtonBackgroundColor = Colors.Transparent;
+        bar.ButtonInactiveBackgroundColor = Colors.Transparent;
+        bar.ButtonForegroundColor = dark ? Colors.White : Colors.Black;
+        bar.ButtonInactiveForegroundColor = dark ? Color.FromArgb(0x87, 0xFF, 0xFF, 0xFF) : Color.FromArgb(0x72, 0x00, 0x00, 0x00);
+        bar.ButtonHoverBackgroundColor = dark ? Color.FromArgb(0x0F, 0xFF, 0xFF, 0xFF) : Color.FromArgb(0x09, 0x00, 0x00, 0x00);
+        bar.ButtonHoverForegroundColor = dark ? Colors.White : Colors.Black;
+        bar.ButtonPressedBackgroundColor = dark ? Color.FromArgb(0x0A, 0xFF, 0xFF, 0xFF) : Color.FromArgb(0x06, 0x00, 0x00, 0x00);
+        bar.ButtonPressedForegroundColor = dark ? Colors.White : Colors.Black;
     }
 }
