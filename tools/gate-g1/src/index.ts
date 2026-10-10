@@ -1,4 +1,4 @@
-export { Gate, G1_ITEMS, ALL_ITEMS, TITLES, exemptBootstrap, mergeReports, redactRule } from "./run.ts";
+export { Gate, G1_ITEMS, ALL_ITEMS, TITLES, SkipSignal, SKIP_HINT, exemptBootstrap, mergeReports, redactRule, winDir, markerCommand } from "./run.ts";
 export type { GateOptions, GateResult, ItemResult, ItemId, Status, ManualStep } from "./run.ts";
 export type { GateIO, Step } from "./io.ts";
 export { terminalIO } from "./io.ts";

@@ -92,9 +92,9 @@ Leaving either lock needs the passphrase (`POST /api/keystore/unlock`); from a U
 | --- | --- |
 | health / session | `GET /api/health` (open), `POST /api/session {token}`, `DELETE /api/session` |
 | key store (S8) | `GET /api/keystore`, `POST /api/keystore/initialize {passphrase, salt?}`, `POST /api/keystore/unlock {passphrase}`, `POST /api/keystore/lock {full?}`, `POST /api/keystore/change-passphrase {current, next}`, `PUT /api/keystore/settings {autoLockMinutes?, autoLockMode?}` |
-| R2 | `GET /api/r2` (redacted), `PUT /api/r2`, `POST /api/r2/check` (lists each bucket, reports reachability) |
+| R2 | `GET /api/r2` (redacted), `PUT /api/r2`, `POST /api/r2/check` (lists each bucket, reports reachability), `POST /api/r2/audit {markers?, harvest?, buckets?, prefix?}` (zero-plaintext audit of the buckets with the service's own tokens and markers harvested from the vault; returns counts and hit keys/rules, never plaintext), `GET /api/r2/objects?bucket=up-windows&prefix=` (keys and sizes) |
 | pairing / devices | `POST /api/pairings {role}` -> `{pairingId, pairingString, macFingerprint, expiresAt}`, `GET /api/pairings`, `DELETE /api/pairings/:id`, `GET /api/devices`, `GET /api/devices/:id`, `DELETE /api/devices/:id` (revoke), `GET /api/fingerprints` |
-| ingest | `POST /api/ingest/poll {full?}`, `GET /api/ingest/status`, `GET /api/quarantine[?all=1]`, `POST /api/quarantine/:id/retry`, `DELETE /api/quarantine/:id` |
+| ingest | `POST /api/ingest/poll {full?}`, `POST /api/ingest/pause {minutes?}` / `POST /api/ingest/resume` (hold objects in R2 without locking the vault; the pause ends by itself, default 60 min), `GET /api/ingest/status`, `GET /api/quarantine[?all=1]`, `POST /api/quarantine/:id/retry`, `DELETE /api/quarantine/:id` |
 | commands (F2/F3) | `GET /api/commands?device=&status=&file=`, `GET /api/commands/:id`, `POST /api/commands {deviceId, params}`, `DELETE /api/commands/:id`, `POST /api/files/:id/request {force?}`, `POST /api/devices/:id/rescan {collector, scope?}`, `POST /api/devices/:id/collector-config {collector, enabled?, settings?}` |
 | search (Q1-Q5) | `GET /api/search?q=&type=&device=&app=&person=&conversation=&account=&from=&to=&page=&pageSize=&sort=relevance\|newest\|oldest&typo=off` |
 | timeline (T1-T5) | `GET /api/timeline?date=YYYY-MM-DD&tz=<IANA or offset minutes>&device=&type=&page=&pageSize=` (or `from`+`to`) |

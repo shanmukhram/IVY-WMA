@@ -15,6 +15,10 @@ export interface GateIO {
 
 export function terminalIO(): GateIO & { close(): void } {
   const rl = createInterface({ input: process.stdin, output: process.stdout });
+  // On a TTY readline swallows Ctrl-C at a prompt (it only pauses); hand it to the process
+  // so the gate's handler writes the report and exits.
+  rl.on("SIGINT", () => { process.emit("SIGINT", "SIGINT"); });
+  let closed = false;
   return {
     log: (line) => console.log(line),
     async ask(step) {
@@ -22,6 +26,6 @@ export function terminalIO(): GateIO & { close(): void } {
       for (const l of step.text.split("\n")) console.log(`  ${l}`);
       return (await rl.question("> ")).trim();
     },
-    close: () => rl.close(),
+    close: () => { if (!closed) { closed = true; rl.close(); } },
   };
 }

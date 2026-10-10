@@ -8,7 +8,7 @@ import type { DB } from "./db/index.ts";
 import { nowIso } from "./util/time.ts";
 
 export type EventType =
-  | "ingest.poll" | "ingest.committed" | "ingest.quarantined" | "ingest.replayed" | "ingest.error"
+  | "ingest.poll" | "ingest.committed" | "ingest.quarantined" | "ingest.replayed" | "ingest.error" | "ingest.paused" | "ingest.resumed"
   | "blob.progress" | "blob.complete"
   | "command.issued" | "command.sent" | "command.transferring" | "command.progress" | "command.status" | "command.completed" | "command.cancelled"
   | "file.cached" | "file.extracted"

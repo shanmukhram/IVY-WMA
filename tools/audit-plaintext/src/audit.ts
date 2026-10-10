@@ -10,6 +10,13 @@ export interface S3Config { endpoint: string; accessKeyId: string; secretAccessK
 export interface AuditOptions {
   buckets?: string[];
   s3?: S3Config;
+  /** Only objects under this key prefix (default: the whole bucket). */
+  prefix?: string;
+  /**
+   * An object deleted between the listing and the read (a live ingest removes what it
+   * committed) is dropped and counted in `vanished` instead of being an unreadable item.
+   */
+  skipVanished?: boolean;
   sqliteFiles?: string[];
   dirs?: string[];
   markers?: string[];
@@ -51,6 +58,8 @@ export interface AuditReport {
   sampling: { sizeThreshold: number; windowsPerSample: number; windowSize: number };
   items: ScannedItem[];
   errors: string[];
+  /** Objects listed but gone before they could be read (only with skipVanished). */
+  vanished?: number;
 }
 
 const MiB = 1024 * 1024;
@@ -58,6 +67,7 @@ const MiB = 1024 * 1024;
 export async function runAudit(o: AuditOptions): Promise<AuditReport> {
   const items: ScannedItem[] = [];
   const errors: string[] = [];
+  const gone = { n: 0 };
   const base: ScanOptions = { markers: o.markers, minPrintableRun: o.minPrintableRun, headerAllowance: o.headerAllowance };
 
   if (o.buckets?.length) {
@@ -67,7 +77,7 @@ export async function runAudit(o: AuditOptions): Promise<AuditReport> {
       credentials: { accessKeyId: o.s3.accessKeyId, secretAccessKey: o.s3.secretAccessKey },
     });
     for (const bucket of o.buckets) {
-      try { items.push(...(await auditBucket(s3, bucket, o, base))); }
+      try { items.push(...(await auditBucket(s3, bucket, o, base, gone))); }
       catch (e) { errors.push(`bucket ${bucket}: ${(e as Error).message}`); }
     }
   }
@@ -97,6 +107,7 @@ export async function runAudit(o: AuditOptions): Promise<AuditReport> {
     sampling: { sizeThreshold: o.sizeThreshold ?? 8 * MiB, windowsPerSample: (o.windowsPerLarge ?? 2) + 1, windowSize: o.windowSize ?? MiB },
     items,
     errors,
+    ...(o.skipVanished ? { vanished: gone.n } : {}),
   };
 }
 
@@ -105,13 +116,16 @@ async function getBytes(s3: S3Client, bucket: string, key: string, range?: strin
   return Buffer.from(await r.Body!.transformToByteArray());
 }
 
-async function auditBucket(s3: S3Client, bucket: string, o: AuditOptions, base: ScanOptions): Promise<ScannedItem[]> {
+const isNotFound = (e: unknown) =>
+  (e as { $metadata?: { httpStatusCode?: number } })?.$metadata?.httpStatusCode === 404 || (e as Error)?.name === "NoSuchKey";
+
+async function auditBucket(s3: S3Client, bucket: string, o: AuditOptions, base: ScanOptions, gone: { n: number }): Promise<ScannedItem[]> {
   const threshold = o.sizeThreshold ?? 8 * MiB;
   const win = o.windowSize ?? MiB;
   const all: Array<{ key: string; size: number }> = [];
   let token: string | undefined;
   do {
-    const r = await s3.send(new ListObjectsV2Command({ Bucket: bucket, ContinuationToken: token }));
+    const r = await s3.send(new ListObjectsV2Command({ Bucket: bucket, Prefix: o.prefix, ContinuationToken: token }));
     for (const c of r.Contents ?? []) all.push({ key: c.Key!, size: c.Size ?? 0 });
     token = r.NextContinuationToken;
   } while (token);
@@ -127,6 +141,7 @@ async function auditBucket(s3: S3Client, bucket: string, o: AuditOptions, base: 
       const buf = await getBytes(s3, bucket, obj.key);
       out.push({ source: "s3", name, size: obj.size, scannedBytes: buf.length, sampled: false, hits: scanBuffer(buf, base) });
     } catch (e) {
+      if (o.skipVanished && isNotFound(e)) { gone.n++; continue; }
       out.push({ source: "s3", name, size: obj.size, scannedBytes: 0, sampled: false, hits: [], error: (e as Error).message });
     }
   }
@@ -145,6 +160,7 @@ async function auditBucket(s3: S3Client, bucket: string, o: AuditOptions, base: 
       }
       out.push({ source: "s3", name, size: obj.size, scannedBytes: scanned, sampled: true, hits });
     } catch (e) {
+      if (o.skipVanished && isNotFound(e)) { gone.n++; continue; }
       out.push({ source: "s3", name, size: obj.size, scannedBytes: 0, sampled: true, hits: [], error: (e as Error).message });
     }
   }

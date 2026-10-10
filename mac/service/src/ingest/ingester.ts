@@ -100,6 +100,7 @@ export class Ingester {
   private timer: NodeJS.Timeout | undefined;
   private lastFull = new Map<string, number>();
   private stopped = false;
+  private pausedUntil: number | null = null;
   last: PollResult | null = null;
 
   constructor(ctx: Ctx) { this.ctx = ctx; }
@@ -122,6 +123,35 @@ export class Ingester {
    * older than the marker window can be waiting after a long absence.
    */
   requestFull(): void { this.lastFull.clear(); }
+
+  /**
+   * Pause ingest without locking: the key stays in memory, nothing is read from or
+   * deleted in the up-buckets until resume() or `ms` elapse (a safety net, so a
+   * caller that goes away cannot leave ingest off). Gate G1 (d) holds the PC's
+   * queue in R2 this way while the bucket audit (c) runs.
+   */
+  pause(ms: number): string {
+    this.pausedUntil = Date.now() + ms;
+    const until = new Date(this.pausedUntil).toISOString();
+    this.ctx.events.emit("ingest.paused", { until });
+    return until;
+  }
+
+  /** Resolves when no pass is in flight. */
+  async settle(): Promise<void> { await this.running?.catch(() => undefined); }
+
+  resume(): void {
+    if (this.pausedUntil === null) return;
+    this.pausedUntil = null;
+    this.requestFull(); // the pause may have outlasted the marker window
+    this.ctx.events.emit("ingest.resumed", {});
+  }
+
+  /** ISO time the pause ends, or null when not paused. */
+  pausedTill(): string | null {
+    if (this.pausedUntil !== null && Date.now() >= this.pausedUntil) this.resume();
+    return this.pausedUntil === null ? null : new Date(this.pausedUntil).toISOString();
+  }
 
   start(): void {
     this.stopped = false;
@@ -146,6 +176,7 @@ export class Ingester {
     const t0 = Date.now();
     const at = nowIso();
     if (!this.ctx.keystore.isUnlocked()) return { at, skipped: "locked", buckets: [], durationMs: 0 };
+    if (this.pausedTill()) return { at, skipped: "paused", buckets: [], durationMs: 0 };
     const r2 = this.ctx.r2();
     if (!r2) return { at, skipped: "r2 not configured", buckets: [], durationMs: 0 };
 

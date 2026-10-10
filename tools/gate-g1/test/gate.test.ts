@@ -5,20 +5,24 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { createHash, randomBytes } from "node:crypto";
+import { spawn } from "node:child_process";
 import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { encryptEnvelope, newOid, upKey, utf8 } from "@ivy/protocol";
 import { makeService, makeTokens, startS3, r2ConfigFor, tempDir, rm, PASS } from "../../../mac/service/test/helpers/harness.ts";
 import type { Service } from "../../../mac/service/src/service.ts";
-import { Gate, type GateOptions } from "../src/run.ts";
+import { Gate, markerCommand, winDir, type GateOptions } from "../src/run.ts";
 import type { GateIO, Step } from "../src/io.ts";
 import { markdownReport, terminalTable, writeReport } from "../src/report.ts";
-import { parseCli } from "../src/main.ts";
+import { main, parseCli } from "../src/main.ts";
 import { compareWithService, parseR2Json } from "../src/r2.ts";
 import { exemptBootstrap, redactRule } from "../src/run.ts";
 import { harvestVaultMarkers } from "../src/markers.ts";
 
-const PATH = "C:\\Users\\bunny\\Documents\\g1-test.pdf";
+const PATH = "C:\\Users\\admin\\Desktop\\IVY-G1\\g1-test.pdf";
+const DIR = "C:\\Users\\admin\\Desktop\\IVY-G1";
+const pkgDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const NOTIF = "Robotics collaboration offer attached";
 const sha = (b: Uint8Array) => createHash("sha256").update(b).digest("hex");
 
@@ -60,6 +64,8 @@ function operator(handlers: Record<string, (s: Step) => Promise<string> | string
     log: (l) => { log.push(l); if (process.env.GATE_DEBUG) console.log(l); },
     async ask(step) {
       asked.push(step.id);
+      // every prompt tells the operator how to skip it
+      if (!step.text.includes("type skip")) throw new Error(`prompt ${step.id} does not mention skip: ${step.text}`);
       const h = handlers[step.id];
       if (!h) throw new Error(`unexpected prompt ${step.id}: ${step.text}`);
       return h(step);
@@ -67,8 +73,9 @@ function operator(handlers: Record<string, (s: Step) => Promise<string> | string
   };
 }
 
+// default: the service audits the buckets (no r2.json); pass { r2File } for the fallback
 const fast = (o: Partial<GateOptions> = {}): GateOptions => ({
-  url, dataDir, r2File, workDir: work, windowsPath: PATH, minBytes: 250_000, chunkBytes: 64 * 1024,
+  url, dataDir, workDir: work, windowsPath: PATH, minBytes: 250_000, chunkBytes: 64 * 1024,
   reportIntervalMs: 3_000, graceMs: 4_000, pollEveryMs: 200, tickMs: 100, waitMs: 60_000, rebootFiles: 3, allowNonR2: true, ...o,
 });
 
@@ -92,9 +99,18 @@ describe("gate G1 end to end (mock R2, real service, simulated PC)", () => {
       "pair.fingerprints": (s) => (s.text.includes(sim!.fingerprint) && s.text.includes(svc.ctx.keystore.macFingerprint()!) ? "y" : "n"),
       "file.sha256": () => sha(pdf).toUpperCase(), // PowerShell prints upper case
       "reboot.prepare": (s) => { token = String(s.data!.token); sim!.stallAfterParts = 2; return ""; },
-      "reboot.now": (s) => { sim!.crash(); sim!.queueFiles(String(s.data!.token), Number(s.data!.count)); return ""; },
+      "reboot.now": async (s) => {
+        // the prompt names the folder of --path and creates the files with Set-Content only
+        expect(s.data!.dir).toBe(DIR);
+        expect(s.text).toContain(`$d = '${DIR}'`);
+        expect(s.text).not.toMatch(/New-Item|Documents\\IVY-G1/);
+        // while held: the vault is unlocked, ingest is paused
+        const ks = (await fetch(`${url}/api/keystore`, { headers: { authorization: `Bearer ${svc.token}` } }).then((r) => r.json())) as { locked: boolean; ingestPausedUntil: string | null };
+        expect(ks.locked).toBe(false);
+        expect(ks.ingestPausedUntil).toBeTruthy();
+        sim!.crash(); sim!.queueFiles(String(s.data!.token), Number(s.data!.count), String(s.data!.dir)); return "";
+      },
       "reboot.back": async () => { await sim!.restart(); return ""; },
-      "unlock": async () => { await svc.ctx.keystore.unlock(PASS); return ""; },
       "audit.pc": () => "PASS",
       "honesty.disable": async (s) => { await sim!.setEnabled(String(s.data!.collector), false); return ""; },
       "honesty.enable": async (s) => { await sim!.setEnabled(String(s.data!.collector), true); return ""; },
@@ -121,7 +137,14 @@ describe("gate G1 end to end (mock R2, real service, simulated PC)", () => {
     expect(by.honesty!.evidence.join("\n")).toContain("the timeline shows the missing period");
 
     expect(io.asked).toEqual(["network.mac", "network.pc", "pair.source", "pair.paste", "pair.fingerprints", "file.sha256",
-      "reboot.prepare", "reboot.now", "reboot.back", "unlock", "audit.pc", "honesty.disable", "honesty.enable"]);
+      "reboot.prepare", "reboot.now", "reboot.back", "audit.pc", "honesty.disable", "honesty.enable"]);
+    // c ran in the service with its own tokens; the vault was never locked; ingest is running again
+    expect(by.c!.evidence.join("\n")).toContain("audited by the service (POST /api/r2/audit)");
+    expect(svc.ctx.keystore.isUnlocked()).toBe(true);
+    expect(svc.ingester.pausedTill()).toBeNull();
+    // d requested the (then cached) file again with force and checked the fresh copy
+    expect(by.d!.evidence.join("\n")).toContain("already holds a copy");
+    expect(by.d!.evidence.join("\n")).toContain("the copy checked is this request's transfer");
     expect(result.manual.map((m) => m.id)).toEqual(io.asked);
     // POSIX file modes only: Windows reports 0o666 for any writable file.
     if (process.platform !== "win32") expect(statSync(join(work, "markers.txt")).mode & 0o777).toBe(0o600);
@@ -138,17 +161,96 @@ describe("gate G1 end to end (mock R2, real service, simulated PC)", () => {
     expect(terminalTable(result)).toContain("GATE G1: PASS");
   });
 
-  it("fails c on plaintext in a bucket without writing the marker into the report", async () => {
-    const key = upKey("usage_event", newOid());
-    await sim!.dev.up.put(key, utf8(JSON.stringify({ note: NOTIF })));
-    const result = await new Gate(fast({ only: ["c"] }), operator({})).run();
-    const c = result.items.find((i) => i.id === "c")!;
-    expect(c.status).toBe("FAIL");
-    expect(c.evidence.join("\n")).toContain(`ivy-up-windows/${key}`);
-    expect(c.evidence.join("\n")).toMatch(/marker \(\d+ chars\)/);
-    expect(markdownReport(result)).not.toContain(NOTIF);
-    expect(result.pass).toBe(false);
-    await svc.ingester.poll(); // the service quarantines it and removes it from the bucket
+  for (const mode of ["service", "--r2"] as const) {
+    it(`fails c on plaintext in a bucket without writing the marker into the report (${mode})`, async () => {
+      const key = upKey("usage_event", newOid());
+      await sim!.dev.up.put(key, utf8(JSON.stringify({ note: NOTIF })));
+      const result = await new Gate(fast({ only: ["c"], ...(mode === "--r2" ? { r2File } : {}) }), operator({})).run();
+      const c = result.items.find((i) => i.id === "c")!;
+      expect(c.status).toBe("FAIL");
+      expect(c.evidence.join("\n")).toContain(`ivy-up-windows/${key}`);
+      expect(c.evidence.join("\n")).toMatch(/marker \(\d+ chars\)/);
+      expect(c.evidence.join("\n")).toContain(mode === "service" ? "audited by the service" : "audited by the gate with the Mac's tokens");
+      expect(markdownReport(result)).not.toContain(NOTIF);
+      expect(result.pass).toBe(false);
+      await svc.ingester.poll(); // the service quarantines it and removes it from the bucket
+    });
+  }
+
+  it("b on a file cached by an earlier run still forces a fresh transfer and says so", async () => {
+    const result = await new Gate(fast({ only: ["b"], sha256: sha(pdf) }), operator({})).run();
+    const b = result.items.find((i) => i.id === "b")!;
+    const ev = b.evidence.join("\n");
+    expect(b.status, ev).toBe("PASS");
+    expect(ev).toContain("already holds a copy of g1-test.pdf from an earlier retrieval");
+    expect(ev).toMatch(/forced \(a fresh transfer from the PC/);
+    expect(ev).toContain("the copy checked is this request's transfer");
+    expect(ev).toMatch(/in-flight check: \d+ part object\(s\) caught/);
+  });
+
+  it("skip at a prompt records the item as SKIP, resumes held ingest and goes on", async () => {
+    const io = operator({
+      "network.mac": () => "skip",
+      "reboot.prepare": () => "",
+      "reboot.now": () => "SKIP",
+      "audit.pc": () => "skip",
+      "honesty.disable": () => "skip",
+    });
+    const result = await new Gate(fast({ sha256: sha(pdf), only: ["a", "d", "c", "audit", "honesty"] }), io).run();
+    const by = Object.fromEntries(result.items.map((i) => [i.id, i]));
+    const why = result.items.map((i) => `${i.id} ${i.status}\n  ${i.evidence.join("\n  ")}`).join("\n");
+    expect(by.a!.status, why).toBe("SKIP");
+    expect(by.a!.evidence.join("\n")).toContain("skipped by the operator at prompt network.mac");
+    expect(by.d!.status, why).toBe("SKIP");
+    expect(by.d!.evidence.join("\n")).toContain("prompt reboot.now");
+    expect(svc.ingester.pausedTill()).toBeNull(); // the hold was released
+    expect(by.c!.status, why).toMatch(/PASS|SKIP/); // c then audits on its own
+    expect(by.audit!.evidence.join("\n")).toContain("PC queue (vault-agent.db + queue/): not audited");
+    expect(by.honesty!.status).toBe("SKIP");
+    expect(io.asked).toEqual(["network.mac", "reboot.prepare", "reboot.now", "audit.pc", "honesty.disable"]);
+    expect(result.interrupted).toBeNull();
+  });
+
+  it("an error mid-run still writes the report: the item in progress INTERRUPTED, the rest NOT RUN", async () => {
+    const out = join(work, "gate-g1-error.md");
+    const io = operator({ "network.mac": () => { throw new Error("the operator's terminal went away"); } });
+    const code = await main(["--url", url, "--data", dataDir, "--allow-non-r2", "--only", "a,b,honesty", "--out", out, "--work", work], io);
+    expect(code).toBe(2);
+    const md = readFileSync(out, "utf8");
+    expect(md).toContain("The run stopped early (error: the operator's terminal went away)");
+    expect(md).toMatch(/\| G1 \(a\) \| .* \| \*\*INTERRUPTED\*\* \|/);
+    expect(md).toContain("while waiting at prompt `network.mac`");
+    expect(md).toMatch(/last log line: === G1 \(a\)/);
+    expect(md).toMatch(/\| G1 \(b\) \| .* \| \*\*NOT RUN\*\* \|/);
+    expect(md).toMatch(/\| Continuous: honesty test \| .* \| \*\*NOT RUN\*\* \|/);
+    expect(md).toMatch(/\| Preflight \| .* \| \*\*PASS\*\* \|/);
+  });
+
+  it("SIGINT to a child run writes the report and exits non-zero", async () => {
+    const out = join(work, "gate-g1-sigint.md");
+    const child = spawn(process.execPath, ["--disable-warning=ExperimentalWarning", "src/cli.ts",
+      "--url", url, "--data", dataDir, "--allow-non-r2", "--only", "a,b", "--out", out, "--work", work], { cwd: pkgDir, stdio: ["pipe", "pipe", "pipe"], env: { ...process.env, INIT_CWD: pkgDir } });
+    let stdout = "";
+    let stderr = "";
+    child.stderr.on("data", (d) => { stderr += d; });
+    const exited = new Promise<number | null>((r) => child.on("exit", (code) => r(code)));
+    await new Promise<void>((res, rej) => {
+      const t = setTimeout(() => rej(new Error(`no prompt from the child:\n${stdout}\n${stderr}`)), 30_000);
+      child.stdout.on("data", (d) => {
+        stdout += d;
+        if (stdout.includes("Which network is the Mac on")) { clearTimeout(t); res(); }
+      });
+    });
+    child.kill("SIGINT");
+    const code = await exited;
+    expect(code, stdout + stderr).toBe(130);
+    expect(stdout).toContain("SIGINT: stopping");
+    const md = readFileSync(out, "utf8");
+    expect(md).toContain("The run stopped early (interrupted by SIGINT)");
+    expect(md).toMatch(/\| Preflight \| .* \| \*\*PASS\*\* \|/);
+    expect(md).toMatch(/\| G1 \(a\) \| .* \| \*\*INTERRUPTED\*\* \|/);
+    expect(md).toContain("while waiting at prompt `network.mac`");
+    expect(md).toMatch(/\| G1 \(b\) \| .* \| \*\*NOT RUN\*\* \|/);
   });
 
   it("fails b when the PC's hash differs", async () => {
@@ -161,7 +263,7 @@ describe("gate G1 end to end (mock R2, real service, simulated PC)", () => {
   it("preflight refuses a non-R2 endpoint unless --allow-non-r2, and every item is then SKIP", async () => {
     const result = await new Gate(fast({ allowNonR2: false }), operator({})).run();
     expect(result.items.find((i) => i.id === "P")!.status).toBe("FAIL");
-    expect(result.items.filter((i) => i.id !== "P").every((i) => i.status === "SKIP")).toBe(true);
+    expect(result.items.filter((i) => i.id !== "P").every((i) => i.status === "NOT RUN")).toBe(true);
     expect(result.pass).toBe(false);
   });
 
@@ -182,6 +284,17 @@ describe("pieces", () => {
     const d = parseCli([], {}, w);
     if ("help" in d) throw new Error("help");
     expect(d.out.replace(/\\/g, "/")).toMatch(/docs\/reports\/gate-g1-\d{4}-\d\d-\d\d\.md$/);
+  });
+
+  it("uses the folder of --path for d and a PowerShell line without New-Item", () => {
+    expect(winDir("C:\\Users\\admin\\Desktop\\IVY-G1\\g1-50mb.pdf")).toBe("C:\\Users\\admin\\Desktop\\IVY-G1");
+    const ps = markerCommand("C:\\Users\\admin\\Desktop\\IVY-G1", "ivyg1abcd", 3);
+    expect(ps).toBe(`$d = 'C:\\Users\\admin\\Desktop\\IVY-G1'; 1..3 | ForEach-Object { Set-Content -LiteralPath (Join-Path $d "ivyg1abcd-$_.txt") -Value "IVY G1 reboot test ivyg1abcd $_" }`);
+    expect(markerCommand("%USERPROFILE%\\Desktop\\IVY-G1", "t", 1)).toContain("[Environment]::ExpandEnvironmentVariables('%USERPROFILE%\\Desktop\\IVY-G1')");
+    const p = parseCli(["--path", "C:\\x\\y.pdf"], {}, resolve("/w"));
+    if ("help" in p) throw new Error("help");
+    expect(p.opts.r2File).toBeUndefined();
+    expect(p.opts.rebootDir).toBeUndefined();
   });
 
   it("reads r2.json per bucket and cross-checks it against the service's redacted config", async () => {

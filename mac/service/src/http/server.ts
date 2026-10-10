@@ -27,6 +27,7 @@ import { coverage } from "../query/coverage.ts";
 import { coverageView, messageSources } from "../query/sources.ts";
 import { BinError, isBinType, listBin, purge, restore, retentionDays, setRetentionDays, softDelete, sweep } from "../bin/recovery.ts";
 import { redact } from "../r2/config.ts";
+import { auditBuckets, BUCKET_IDS, type BucketId } from "../r2/audit.ts";
 import { enrich, itemView } from "../query/details.ts";
 import { ITEM_TYPES, TYPE_DEFS, selectList, type ItemType } from "../query/types.ts";
 import { parseBound } from "../util/time.ts";
@@ -213,6 +214,35 @@ export async function buildServer(svc: Service): Promise<FastifyInstance> {
     const buckets = await r2.check();
     return { ok: buckets.every((b) => b.ok), buckets };
   });
+  // Zero-plaintext audit of the buckets with the service's own tokens (gate G1 (c)).
+  // Body: { markers?: string[], harvest?: boolean, buckets?: BucketId[], prefix?: string }.
+  // The result names object keys and rules only, never the plaintext that matched.
+  app.post("/api/r2/audit", async (req) => {
+    const r2 = ctx.r2();
+    if (!r2) throw new HttpError(409, "r2_not_configured", "configure R2 first");
+    const b = (req.body ?? {}) as { markers?: unknown; harvest?: unknown; buckets?: unknown; prefix?: unknown };
+    if (b.markers !== undefined && (!Array.isArray(b.markers) || b.markers.length > 10_000 || !b.markers.every((m) => typeof m === "string" && m.length <= 1000))) {
+      throw new HttpError(400, "bad_value", "markers must be an array of at most 10000 strings of at most 1000 characters");
+    }
+    if (b.harvest !== undefined && typeof b.harvest !== "boolean") throw new HttpError(400, "bad_value", "harvest must be a boolean");
+    if (b.buckets !== undefined && (!Array.isArray(b.buckets) || !b.buckets.every((x) => BUCKET_IDS.includes(x as BucketId)))) {
+      throw new HttpError(400, "bad_value", `buckets must be a list of ${BUCKET_IDS.join(", ")}`);
+    }
+    if (b.prefix !== undefined && (typeof b.prefix !== "string" || b.prefix.length > 512)) throw new HttpError(400, "bad_value", "prefix must be a string");
+    return auditBuckets(ctx, r2, { markers: b.markers as string[] | undefined, harvest: b.harvest as boolean | undefined, buckets: b.buckets as BucketId[] | undefined, prefix: b.prefix as string | undefined });
+  });
+  // Object keys and sizes in one bucket (keys are opaque ids, no content): GET /api/r2/objects?bucket=up-windows&prefix=up/blob/
+  app.get("/api/r2/objects", async (req) => {
+    const r2 = ctx.r2();
+    if (!r2) throw new HttpError(409, "r2_not_configured", "configure R2 first");
+    const q = req.query as { bucket?: string; prefix?: string };
+    if (!q.bucket || !BUCKET_IDS.includes(q.bucket as BucketId)) throw new HttpError(400, "bad_value", `bucket must be one of ${BUCKET_IDS.join(", ")}`);
+    const [dir, role] = q.bucket.split("-") as ["up" | "cmd", "windows" | "android"];
+    const bucket = r2.bucket(dir, role);
+    if (!bucket) throw new HttpError(409, "no_token", "no Mac token configured for this bucket");
+    const objects = await bucket.list(q.prefix || undefined, undefined, 10_000);
+    return { bucket: bucket.name, prefix: q.prefix ?? null, truncated: objects.length >= 10_000, objects: objects.map((o) => ({ key: o.key, size: o.size })) };
+  });
 
   // ---------------------------------------------------------------- pairing & devices
   app.post("/api/pairings", async (req) => {
@@ -235,10 +265,25 @@ export async function buildServer(svc: Service): Promise<FastifyInstance> {
 
   // ---------------------------------------------------------------- ingest & quarantine
   app.post("/api/ingest/poll", async (req) => svc.ingester.poll({ full: !!(req.body as { full?: boolean } | undefined)?.full }));
+  // Pause ingest without locking the vault (the key stays; nothing is read from or deleted in the
+  // up-buckets) for { minutes } (default 60, at most 1440), until POST /api/ingest/resume.
+  app.post("/api/ingest/pause", async (req) => {
+    const m = (req.body as { minutes?: unknown } | undefined)?.minutes;
+    const minutes = m === undefined ? 60 : num(m);
+    if (minutes === undefined || minutes <= 0 || minutes > 24 * 60) throw new HttpError(400, "bad_value", "minutes must be 1..1440");
+    const until = svc.ingester.pause(minutes * 60_000);
+    await svc.ingester.settle(); // a pass already in flight finishes before this answers
+    return { paused: true, until };
+  });
+  app.post("/api/ingest/resume", async () => {
+    svc.ingester.resume();
+    void svc.ingester.poll({ full: true }).catch(() => undefined);
+    return { paused: false };
+  });
   app.get("/api/ingest/status", async () => {
     const blobs = ctx.db.prepare("SELECT * FROM blobs WHERE status IN ('awaiting_manifest','assembling') ORDER BY updated_at DESC LIMIT 100").all() as BlobRow[];
     const ledger = ctx.db.prepare("SELECT status, COUNT(*) AS n FROM sync_objects GROUP BY status").all();
-    return { running: svc.ingester.isRunning(), last: svc.ingester.last, intervalMs: ctx.config.pollIntervalMs, ledger, pendingBlobs: blobs.map(blobProgress) };
+    return { running: svc.ingester.isRunning(), pausedUntil: svc.ingester.pausedTill(), last: svc.ingester.last, intervalMs: ctx.config.pollIntervalMs, ledger, pendingBlobs: blobs.map(blobProgress) };
   });
   app.get("/api/quarantine", async (req) => {
     const all = (req.query as { all?: string }).all === "1";

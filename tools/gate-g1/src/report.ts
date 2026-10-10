@@ -13,17 +13,18 @@ export function terminalTable(r: GateResult): string {
   const head = ["Item", "Result", "Started", "Finished", "Check"];
   const w = head.map((h, k) => Math.max(h.length, ...rows.map((x) => x[k]!.length)));
   const line = (x: string[]) => x.map((c, k) => c.padEnd(w[k]!)).join("  ");
-  return [line(head), w.map((n) => "-".repeat(n)).join("  "), ...rows.map(line), "", `GATE G1: ${r.pass ? "PASS" : "NOT PASSED"} (a-d must all be PASS)`].join("\n");
+  return [line(head), w.map((n) => "-".repeat(n)).join("  "), ...rows.map(line), "", `GATE G1: ${r.pass ? "PASS" : "NOT PASSED"} (a-d must all be PASS)${r.interrupted ? `; stopped early: ${r.interrupted}` : ""}`].join("\n");
 }
 
 export function markdownReport(r: GateResult): string {
   const out: string[] = [];
   out.push(`# Gate G1 run, ${r.startedAt.slice(0, 10)}`, "");
   out.push(`Written by \`@ivy/gate-g1\` (see \`docs/GATE-G1.md\`). Result: **${r.pass ? "PASS" : "NOT PASSED"}** (G1 passes when a, b, c and d are all PASS).`, "");
+  if (r.interrupted) out.push(`**The run stopped early (${r.interrupted}).** The item in progress is INTERRUPTED; items not reached are NOT RUN.`, "");
   out.push("| Item | Value |", "| --- | --- |");
   out.push(`| Started / finished | ${t(r.startedAt)} / ${t(r.finishedAt)} |`);
   out.push(`| Mac service | ${r.serviceUrl} (version ${r.serviceVersion ?? "?"}) |`);
-  out.push(`| R2 endpoint | ${r.r2Endpoint ? host(r.r2Endpoint) : "(from the service, no r2.json)"}${r.realR2 ? " (Cloudflare R2)" : ""} |`);
+  out.push(`| R2 endpoint | ${r.r2Endpoint ? host(r.r2Endpoint) : "?"}${r.realR2 ? " (Cloudflare R2)" : ""} |`);
   out.push(`| Mac fingerprint | \`${r.macFingerprint ?? "?"}\` |`);
   out.push(`| Windows device | ${r.device ? `\`${r.device.id}\`, fingerprint \`${r.device.fingerprint}\`` : "none"} |`, "");
   out.push("## Results", "", "| Item | Criterion | Result | Started | Finished |", "| --- | --- | --- | --- | --- |");

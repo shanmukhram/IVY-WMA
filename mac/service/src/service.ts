@@ -46,7 +46,7 @@ export interface Service {
   /** called after initialize/unlock: resume work that needs the key */
   onUnlocked(): void;
   /** GET /api/keystore: key store status plus whether ingest is running */
-  keystoreStatus(): ReturnType<Keystore["status"]> & { ingestRunning: boolean };
+  keystoreStatus(): ReturnType<Keystore["status"]> & { ingestRunning: boolean; ingestPausedUntil: string | null };
   listen(): Promise<string>;
   /** wait for background media work (tests) */
   idle(): Promise<void>;
@@ -108,7 +108,8 @@ export async function createService(overrides: Partial<ServiceConfig> = {}, opts
       if (config.pollIntervalMs > 0) void ingester.poll().catch(() => undefined);
     },
     keystoreStatus() {
-      return { ...keystore.status(), ingestRunning: keystore.isUnlocked() && ingester.isActive() };
+      const pausedUntil = ingester.pausedTill();
+      return { ...keystore.status(), ingestRunning: keystore.isUnlocked() && ingester.isActive() && !pausedUntil, ingestPausedUntil: pausedUntil };
     },
     async listen() {
       const addr = await svc.app.listen({ host: config.host, port: config.port });
