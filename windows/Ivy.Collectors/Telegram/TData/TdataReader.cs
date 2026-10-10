@@ -106,7 +106,10 @@ public static class TdataReader
         var dataFile = TdataLayout.ResolveSafeWrite(TdataLayout.AccountMtpBase(tdataDir, index));
         if (dataFile is null) return null;
         var payload = TdfFile.Read(File.ReadAllBytes(dataFile)).Payload;
-        var descriptor = TdataCrypto.DecryptLocal(payload, localKey);
+        // tdesktop writeData frames the encrypted blob as a single QByteArray inside the TDF payload, so
+        // unwrap that length-prefixed array before decrypting (the key file frames its parts the same way).
+        var encrypted = new TdeReader(payload).ReadByteArray();
+        var descriptor = TdataCrypto.DecryptLocal(encrypted, localKey);
         try
         {
             var r = new TdeReader(descriptor);

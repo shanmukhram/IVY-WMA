@@ -58,7 +58,10 @@ internal static class TdataWriter
             descriptor.WriteUInt32(TdataReader.DbiMtpAuthorization);
             descriptor.WriteByteArray(mtp.ToArray());
 
-            var file = TdfFile.Write(1, TdataCrypto.EncryptLocal(descriptor.ToArray(), localKey));
+            // tdesktop frames the encrypted blob as a QByteArray inside the TDF payload (writeData).
+            var framed = new TdeWriter();
+            framed.WriteByteArray(TdataCrypto.EncryptLocal(descriptor.ToArray(), localKey));
+            var file = TdfFile.Write(1, framed.ToArray());
             // The MTP file sits directly under tdata as <part> + 's', not inside the account folder.
             File.WriteAllBytes(TdataLayout.AccountMtpBase(tdataDir, a.Index) + "s", file);
         }
