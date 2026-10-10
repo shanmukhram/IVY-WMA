@@ -70,6 +70,9 @@ public sealed record LineNameTables
     public string? ContactTable { get; init; }
     public string? ContactMid { get; init; }
     public string? ContactDisplayName { get; init; }
+    /// <summary>The own-profile table and its mid column, used to mark the account's own messages (fromMe).</summary>
+    public string? OwnProfileTable { get; init; }
+    public string? OwnProfileMid { get; init; }
 }
 
 /// <summary>Units for the message time column.</summary>
@@ -152,6 +155,8 @@ public sealed record LineStoreMap
             ContactTable = "_contact",
             ContactMid = "_mid",
             ContactDisplayName = "_displayName",
+            OwnProfileTable = "_profile",
+            OwnProfileMid = "_mid",
         },
         TimeUnit = LineTimeUnit.UnixMilliseconds,
     };

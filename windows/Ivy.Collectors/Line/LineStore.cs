@@ -181,7 +181,13 @@ public sealed class LineStore : IDisposable
                 // In a 1:1 chat the chatId is the peer's mid: a message whose sender is not that peer is mine
                 // (own messages carry my own mid or an empty sender). Groups need the own mid, which we may not
                 // have, so fromMe stays unknown there rather than guessed.
-                bool? fromMe = isDm ? senderMid != chatId : (bool?)null;
+                // Prefer the account's own mid (works for groups too); a 1:1's non-peer sender (or an empty
+                // sender, which LINE uses for some own messages) is mine; otherwise unknown.
+                var ownMid = OwnMid();
+                bool? fromMe;
+                if (senderMid.Length > 0 && ownMid is not null) fromMe = senderMid == ownMid;
+                else if (isDm) fromMe = senderMid != chatId;
+                else fromMe = null;
                 var resolved = senderMid.Length > 0 && _names!.TryGetValue(senderMid, out var nv) ? nv.Item1 : null;
                 var senderName = fromMe == true ? "You" : resolved;
                 messages.Add(new ChatMessage
@@ -202,6 +208,29 @@ public sealed class LineStore : IDisposable
     }
 
     // ---------------------------------------------------------------- name resolution
+
+    private string? _ownMid;
+    private bool _ownMidLoaded;
+
+    /// <summary>The account's own mid from the profile table, cached; null if not readable. Marks fromMe.</summary>
+    private string? OwnMid()
+    {
+        if (_ownMidLoaded) return _ownMid;
+        _ownMidLoaded = true;
+        var n = _map.Names;
+        if (n?.OwnProfileTable is null || n.OwnProfileMid is null) return null;
+        var tables = TableNames();
+        if (!tables.Contains(n.OwnProfileTable) || !Columns(n.OwnProfileTable).Contains(n.OwnProfileMid)) return null;
+        try
+        {
+            using var cmd = _c.CreateCommand();
+            cmd.CommandText = $"SELECT {Q(n.OwnProfileMid)} FROM {Q(n.OwnProfileTable)} WHERE {Q(n.OwnProfileMid)} IS NOT NULL LIMIT 1";
+            var v = cmd.ExecuteScalar();
+            _ownMid = v is null or DBNull ? null : Convert.ToString(v, CultureInfo.InvariantCulture);
+        }
+        catch { _ownMid = null; }
+        return _ownMid;
+    }
 
     private void EnsureNames()
     {

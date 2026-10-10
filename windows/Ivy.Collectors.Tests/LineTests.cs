@@ -26,6 +26,7 @@ internal static class LineFixture
                                    _text TEXT, _contentType INTEGER, _contentMetadata TEXT);
             CREATE TABLE _contact (_mid TEXT PRIMARY KEY, _displayName TEXT, _displayNameOverridden TEXT, _type INTEGER);
             CREATE TABLE _groupChat (_chatMid TEXT PRIMARY KEY, _chatName TEXT);
+            CREATE TABLE _profile (_mid TEXT PRIMARY KEY, _displayName TEXT, _picturePath TEXT);
             """);
         return path;
     }
@@ -49,6 +50,9 @@ internal static class LineFixture
 
     public static void Contact(SqliteConnection c, string mid, string display) =>
         Run(c, "INSERT INTO _contact(_mid,_displayName) VALUES($m,$d)", ("$m", mid), ("$d", display));
+
+    public static void OwnProfile(SqliteConnection c, string mid, string display) =>
+        Run(c, "INSERT INTO _profile(_mid,_displayName) VALUES($m,$d)", ("$m", mid), ("$d", display));
 
     public static void Message(SqliteConnection c, string id, string chatId, string from, long createdMs, string text,
         int contentType = 0, string? meta = null) =>
@@ -505,6 +509,31 @@ public class LineCollectorTests : IDisposable
         Assert.Equal("Bob", theirs.GetProperty("senderName").GetString());
         Assert.True(mine.GetProperty("fromMe").GetBoolean());
         Assert.Equal("You", mine.GetProperty("senderName").GetString());
+    }
+
+    [Fact]
+    public async Task Group_marks_my_messages_from_me_via_the_own_profile_mid()
+    {
+        Seed(c =>
+        {
+            LineFixture.OwnProfile(c, "uME", "Me");
+            LineFixture.Contact(c, "uALICE", "Alice");
+            LineFixture.Group(c, "cTEAM", "Team");
+            LineFixture.Chat(c, "cTEAM");
+            LineFixture.Message(c, "m1", "cTEAM", "uALICE", 1_760_000_000_000, "hi all");   // Alice -> theirs
+            LineFixture.Message(c, "m2", "cTEAM", "uME", 1_760_000_100_000, "hi from me");  // me -> mine
+        });
+
+        var line = NewCollector();
+        await line.StartAsync(default);
+        await line.TickAsync(default);
+
+        var team = Batches().Single(b => b.Root.GetProperty("convKey").GetString() == "cTEAM");
+        var msgs = team.Root.GetProperty("messages");
+        Assert.False(msgs[0].GetProperty("fromMe").GetBoolean());
+        Assert.Equal("Alice", msgs[0].GetProperty("senderName").GetString());
+        Assert.True(msgs[1].GetProperty("fromMe").GetBoolean());
+        Assert.Equal("You", msgs[1].GetProperty("senderName").GetString());
     }
 
     private static int CountMessages(IReadOnlyList<CapturedRecord> batches) =>
