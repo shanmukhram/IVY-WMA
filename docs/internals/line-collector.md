@@ -70,3 +70,24 @@ re-verification against the new map. We cannot test a real encrypted LINE store,
 the real data-folder layout, or memory-based key derivation without a PC and a
 LINE install — hence the probe-first workflow.
 
+
+---
+
+## Verified scheme (Oct 10 2026): wxSQLite3 AES-128-CBC
+
+Source: Kang, Kim, Hur, Kim, "Forensic Analysis of wxSQLite3-Encrypted Databases and Its Application", Electronics 13(7):1325, MDPI, 2024 (LINE for Windows v7.x), cross-checked against the wxSQLite3 / SQLite3 Multiple Ciphers source (cipher_wxaes128.c, codec_algos.c). This replaces the earlier hypotheses; confidence high.
+
+Corrections to earlier notes: the data lives under `%LocalAppData%\LINE` (Local, not Roaming), and the format is a documented wxSQLite3 database, not an opaque app-internal one. LINE for Windows is a Qt app and ships the QtCipherSQLite plugin.
+
+Layout (matches the probe report exactly):
+- `%LocalAppData%\LINE\Data\db\` holds three `.edb` files per account: `qw<15-byte-hex>.edb` (the chat store — contacts, chats, all history), `keep_<hex>.edb`, `chatStats_<hex>.edb`. The chat store is the one with a `-wal` sidecar; the collector already selects it that way.
+- Thumbnails are `.eimg` files under `Cache`, AES-128-ECB, a per-file key deleted from memory after use (out of scope).
+
+Cipher (implemented in `windows/Ivy.Collectors/Line/LineWxCipher.cs`):
+- wxSQLite3 AES-128-CBC, page-based, new (non-legacy) mode. Page 1 keeps bytes 16..23 in the clear (the identification signature); its first 16 bytes decrypt to the SQLite magic.
+- Passphrase: a 32-character hex string LINE receives from its server at login. Account-specific and stable across PCs for the same account. NOT on disk; it is in LINE's process memory while logged in (bounded by `encryption_key=`/`encryptionkey=` and `mse`, or found by the regex `[0-9a-f]{32}`).
+- Base key: pad the passphrase, derive an owner key (MD5 x50 then RC4 x20), then the encryption key (MD5 x50). Per-page key = MD5(baseKey + page[LE4] + "sAlT"). Per-page IV = MD5 of a MODMULT sequence seeded by the page number. All implemented and round-trip tested.
+
+Schema: `_contact(_mid, display name)`, `_chats(_from, _to, content, created time)`.
+
+What remains: obtaining the passphrase, which is the one step that is not on disk. The decryptor is ready for it. See the collector integration plan: a key the user supplies once is stored in DPAPI and never uploaded (WX2); the collector decrypts to a temporary plaintext copy, reads it read-only, and deletes the copy.
