@@ -36,6 +36,7 @@ import { blobProgress, type BlobRow } from "../ingest/blobs.ts";
 import { registerUiRoutes } from "./ui-routes.ts"; // dashboard UI listings (@ivy/mac-ui)
 import { registerAiRoutes } from "./ai-routes.ts"; // AI layer (A1-A4) and Activity Vault import (S7)
 import { registerViewRoutes } from "./view-routes.ts"; // read-only views for the redesigned dashboard (PLAN decision 5)
+import { registerLineRoutes } from "./line-routes.ts"; // read-only views for the LINE settings page
 
 const LOOPBACK = new Set(["localhost", "127.0.0.1", "[::1]", "::1"]);
 const OPEN_ROUTES = new Set(["/api/health", "/api/session"]);
@@ -475,6 +476,7 @@ export async function buildServer(svc: Service): Promise<FastifyInstance> {
   registerUiRoutes(app, svc);
   registerAiRoutes(app, svc);
   registerViewRoutes(app, svc);
+  registerLineRoutes(app, svc);
 
   // ---------------------------------------------------------------- static UI
   const staticDir = ctx.config.staticDir;

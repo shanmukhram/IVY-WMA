@@ -607,6 +607,58 @@ ALTER TABLE conversations ADD COLUMN avatar_local_path TEXT;
 CREATE INDEX conversations_avatar ON conversations(avatar_blob_oid);
 `;
 
+// v7: the user's own LINE account state (line_account record), for a standalone LINE settings
+// page. Four tables hold a per-account snapshot: the own profile, the contact list (with the raw
+// store status/settings and a blocked flag the sender resolved, else unknown), each chat's options
+// (hidden/notification/pinned), and the app settings. A snapshot replaces the account's rows, so a
+// contact or option dropped at the source disappears. A contact/profile picture names a local copy
+// (picture_local_path) when its blob is already in the vault; it stays null until that blob lands.
+const v7 = `
+CREATE TABLE line_account_profile (
+  account TEXT PRIMARY KEY,
+  mid TEXT NOT NULL,
+  display_name TEXT,
+  user_id TEXT,
+  status_message TEXT,
+  picture_local_path TEXT,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE line_contacts (
+  account TEXT NOT NULL,
+  mid TEXT NOT NULL,
+  display_name TEXT,
+  status TEXT,                             -- the store's own _status value, verbatim
+  type TEXT,                               -- the store's own _type value, verbatim
+  settings INTEGER,                        -- the per-contact _settings integer, verbatim
+  blocked INTEGER,                         -- 1/0 only when the record resolved it; NULL = unknown
+  status_message TEXT,
+  picture_local_path TEXT,
+  thumbnail_url TEXT,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (account, mid)
+);
+
+CREATE TABLE line_chat_options (
+  account TEXT NOT NULL,
+  chat_id TEXT NOT NULL,
+  hidden INTEGER,
+  notification INTEGER,
+  pinned INTEGER,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (account, chat_id)
+);
+CREATE INDEX line_chat_options_hidden ON line_chat_options(account, hidden);
+
+CREATE TABLE line_settings (
+  account TEXT NOT NULL,
+  key TEXT NOT NULL,
+  value TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (account, key)
+);
+`;
+
 export const MIGRATIONS: Migration[] = [
   { version: 1, name: "initial vault schema", sql: v1 },
   { version: 2, name: "import progress, manifest commandId, transferring commands", sql: v2 },
@@ -614,4 +666,5 @@ export const MIGRATIONS: Migration[] = [
   { version: 4, name: "file originals (media policy) and document text", sql: v4 },
   { version: 5, name: "multi-source conversations: message provenance, coverage per source", sql: v5 },
   { version: 6, name: "sender identity (from_me, sender_name) and conversation avatars", sql: v6 },
+  { version: 7, name: "LINE account state: profile, contacts, chat options and settings", sql: v7 },
 ];

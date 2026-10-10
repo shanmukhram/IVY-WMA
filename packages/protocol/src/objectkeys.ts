@@ -83,6 +83,7 @@ const PREFIX_TO_KIND: Record<string, Kind> = {
   anotif: "android_notification",
   call: "call",
   msg: "message_batch",
+  lineacct: "line_account",
   cstat: "command_status",
   status: "device_report",
 };

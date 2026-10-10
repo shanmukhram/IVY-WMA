@@ -11,7 +11,7 @@
 import { randomUUID, createHash } from "node:crypto";
 import type {
   AndroidNotificationRecordT, CallRecordT, CommandStatusRecordT, DeviceReportRecordT, FileMetaRecordT,
-  MessageBatchRecordT, ScreenshotRecordT, UsageEventRecordT, WindowsNotificationRecordT,
+  LineAccountRecordT, MessageBatchRecordT, ScreenshotRecordT, UsageEventRecordT, WindowsNotificationRecordT,
 } from "@ivy/protocol";
 import type { DB } from "../db/index.ts";
 import { msOf, normTs, nowIso } from "../util/time.ts";
@@ -372,6 +372,59 @@ export function commitMessageBatch(db: DB, r: MessageBatchRecordT): CommitResult
   // the chat avatar is a blob too: return it so the ingester links it to this conversation once placed
   if (meta.avatarBlobOid) blobs.push(meta.avatarBlobOid);
   return { summary: { conversationId: conv.id, platform: r.platform, sourceSession: source, coverage: claim, inserted, edited, upgraded, linkedNotifications: linked }, blobs };
+}
+
+// ---------------------------------------------------------------- LINE account state
+
+/**
+ * One account snapshot of the user's own LINE state: the own profile, the contact list, each chat's
+ * options and the app settings. The snapshot replaces the account's rows, so a contact, option or
+ * setting dropped at the source disappears here too. Blocked is stored only when the record itself
+ * resolved it (the incoming `blocked` field); otherwise it stays NULL (unknown) and the raw store
+ * `status`/`settings` are kept as given, so the real rule can be finalized later. A contact or profile
+ * picture is linked to its local copy when the named avatar blob is already in the vault; otherwise
+ * picture_local_path stays null and fills in on a later snapshot once the blob has landed.
+ */
+export function commitLineAccount(db: DB, r: LineAccountRecordT): CommitResult {
+  const now = nowIso();
+  const account = r.account;
+  db.prepare("DELETE FROM line_account_profile WHERE account = ?").run(account);
+  db.prepare("DELETE FROM line_contacts WHERE account = ?").run(account);
+  db.prepare("DELETE FROM line_chat_options WHERE account = ?").run(account);
+  db.prepare("DELETE FROM line_settings WHERE account = ?").run(account);
+
+  const getBlob = db.prepare("SELECT local_path FROM blobs WHERE oid = ? AND status = 'complete' AND local_path IS NOT NULL LIMIT 1");
+  const localPicture = (picturePath?: string): string | null =>
+    picturePath ? ((getBlob.get(picturePath) as { local_path: string } | undefined)?.local_path ?? null) : null;
+
+  if (r.ownProfile) {
+    const p = r.ownProfile;
+    db.prepare(`INSERT INTO line_account_profile(account, mid, display_name, user_id, status_message, picture_local_path, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)`)
+      .run(account, p.mid, p.displayName ?? null, p.userId ?? null, p.statusMessage ?? null, localPicture(p.picturePath), now);
+  }
+
+  const insContact = db.prepare(`INSERT INTO line_contacts(account, mid, display_name, status, type, settings, blocked, status_message, picture_local_path, thumbnail_url, updated_at)
+                                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+  let blocked = 0;
+  for (const c of r.contacts) {
+    const b = c.blocked === undefined ? null : c.blocked ? 1 : 0;
+    if (b === 1) blocked++;
+    insContact.run(account, c.mid, c.displayName ?? null, c.status ?? null, c.type ?? null, c.settings ?? null, b, c.statusMessage ?? null, localPicture(c.picturePath), c.thumbnailUrl ?? null, now);
+  }
+
+  const insOption = db.prepare("INSERT INTO line_chat_options(account, chat_id, hidden, notification, pinned, updated_at) VALUES (?, ?, ?, ?, ?, ?)");
+  const bit = (v: boolean | undefined) => (v === undefined ? null : v ? 1 : 0);
+  let hidden = 0;
+  for (const o of r.chatOptions) {
+    if (o.hidden === true) hidden++;
+    insOption.run(account, o.chatId, o.hidden ? 1 : 0, bit(o.notification), bit(o.pinned), now);
+  }
+
+  const insSetting = db.prepare("INSERT INTO line_settings(account, key, value, updated_at) VALUES (?, ?, ?, ?)");
+  for (const s of r.settings) insSetting.run(account, s.key, s.value, now);
+
+  return { summary: { account, contacts: r.contacts.length, chatOptions: r.chatOptions.length, settings: r.settings.length, blocked, hidden } };
 }
 
 // ---------------------------------------------------------------- device report

