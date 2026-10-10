@@ -14,7 +14,7 @@ The outcome: one search bar on the Mac that finds the message, screenshot, file,
 
 Session Sync and Activity Vault stay separate products. The dashboard imports Activity Vault's browsing archive read-only as one more source. Session Sync is untouched; login and session availability are tracked nowhere in this product.
 
-Conversation priority is fixed: LINE first, Telegram second, WhatsApp third. It is also the build order — LINE's store is the least documented of the three and drifts most between app versions, so it lands first where the risk is; WhatsApp's store is the best-documented encrypted database in existence, so it goes last.
+Conversation priority is fixed: LINE first, Telegram second, WhatsApp third. (Amended Oct 10, 2026: Telegram history also arrives from the Windows desktop session, which covers all cloud chats; the Android Telegram adapter then adds secret chats and anything the cloud does not serve.) It is also the build order — LINE's store is the least documented of the three and drifts most between app versions, so it lands first where the risk is; WhatsApp's store is the best-documented encrypted database in existence, so it goes last.
 
 ## How this document is organised
 
@@ -93,7 +93,7 @@ A visible companion app for Windows 11: a full window plus a tray icon, with a w
 **Non-goals for v1**
 
 - No searching or browsing of the archive on Windows. The companion captures and serves; it does not read.
-- No conversation capture on Windows. Chat apps live on the phone.
+- ~~No conversation capture on Windows.~~ Amended Oct 10, 2026: Windows captures conversations from the desktop apps Bunny is already logged into, using their existing sessions and local stores. No new logins, ever. See "Conversation capture, Windows" below. Complete history still comes from the phone where a desktop app holds only a partial mirror.
 - No browsing-history capture. Activity Vault already does this as a separate product; the Mac dashboard imports Activity Vault's archive instead.
 - No Session Sync role. Cookie sync remains its own product.
 - No inbound content. The only thing Windows ever receives from the Mac is encrypted commands and collector config.
@@ -122,6 +122,24 @@ A visible companion app for Windows 11: a full window plus a tray icon, with a w
 | WC4 | Sample the foreground app every 30 seconds: executable, app name, window title (setting, default on, exclusion list); sessions are grouped on the Mac | Must |
 | WC5 | Read Windows notification records from the notification database where accessible; run elevated if required; record title, app, text, timestamp | Should |
 | WC6 | Capture policy: metadata always; originals per rule — screenshots always, everything else on request | Must |
+
+**Conversation capture, Windows** (added Oct 10, 2026)
+
+Principle: one roof, existing logins. Bunny is already signed in to these apps on the PC; IVY uses those sessions and never asks him to log in again anywhere. Each collector is a row in the Windows app with its own toggle, status, and honest coverage label.
+
+| ID | Requirement | Priority |
+| --- | --- | --- |
+| WT1 | Telegram via the existing Telegram Desktop session: read the logged-in session key from Telegram Desktop's data folder (unlocking it with the local passcode only if one is set, entered once in the Windows app and held in DPAPI) and use that same session over Telegram's protocol to pull complete cloud history for every chat, contact, and group: every message, with reply relationships, edits, and attachment references | Must |
+| WT2 | Telegram incremental sync from the same session: new messages, edits, and deletions picked up continuously while the PC is on; per-chat cursors; daily reconciliation from the Mac | Must |
+| WT3 | Telegram coverage labeled complete for cloud chats; secret chats are labeled phone-only (they never exist in the cloud) and come from the Android adapter | Must |
+| WT4 | Telegram attachments: metadata and hashes always; originals per the Windows media policy (images and documents under the caps automatically, the rest on request, fetched through the same session) | Must |
+| WL1 | LINE via the LINE for Windows local store: read the messages LINE has synced to the PC (recent chats, whatever the app holds), with conversation, sender, time, text, and attachment references; the store is encrypted and undocumented, so the adapter pins its mapping per installed LINE version and re-verifies after every app update, exactly like the Android LINE adapter (AC2a) | Should |
+| WL2 | LINE coverage from Windows is always labeled partial (mirror of what the phone synced); complete history comes from the Android adapter; a chat is never shown as complete on the strength of the Windows copy | Must |
+| WL3 | When the LINE store cannot be read (unknown version, layout change, locked), the collector reports red with the reason and captures nothing; nothing is guessed | Must |
+| WX1 | Every captured message carries its platform message id, so the Mac merges copies of the same message arriving from Windows, Android, or any other source into one record with each source listed as provenance; coverage per conversation reads per source (for example: Telegram complete via Windows session; LINE partial via Windows, complete via Android once imported) | Must |
+| WX2 | Session keys and store keys read from the desktop apps are held only in memory or DPAPI on the PC and are never uploaded; what reaches R2 is message records, encrypted like everything else | Must |
+
+Extension point: the same pattern (reuse the PC's existing login, read the app's local store or talk to its service with the stored session) applies to further desktop apps Bunny is logged into (WhatsApp Desktop, Discord, Slack, mail clients). Each is added as its own collector row with its own coverage label; none is built until Bunny lists it.
 
 **Upload and queue, Windows**
 
@@ -207,7 +225,7 @@ Local SQLite at `vault-agent.db`. The queue holds ciphertext only; the file cach
 A full app window plus a tray icon, in the family's Supabase-style dark look: near-black background, 1px borders, one green accent, monospace for timestamps and fingerprints.
 
 - Not paired: a single field for the one-time code. That is the only input Windows ever has.
-- Paused/running toggle, per-collector rows: files, screenshots, usage, notifications — each with an on/off toggle, last capture, last upload, queue depth, status dot.
+- Paused/running toggle, per-collector rows: files, screenshots, usage, notifications, Telegram, LINE — each with an on/off toggle, last capture, last upload, queue depth, status dot, and for the chat collectors a coverage label (complete / partial / needs attention with the reason) and per-chat sync progress.
 - Live capture-activity feed: every capture, encrypt, and upload event as it happens, plus import progress for the initial index.
 - Folder picker, bandwidth cap, pause, "Sync now."
 - Footer: bucket reachability, pairing fingerprint.
@@ -311,7 +329,7 @@ The face of the product. An Electron app over a local service: it pulls cipherte
 | C5 | Capture new messages incrementally from device cursors; find missed records in daily reconciliation | Must |
 | C6 | Keep archived copies when the source deletes, per the retention setting; mark deleted-at-source distinctly | Must |
 | C7 | Search a word, phrase, or sentence across all indexed conversations; highlight the match and open the archived thread directly at it, with expand before and after | Must |
-| C8 | Reconcile a message captured first as a notification preview and later from the database into one record with both provenances | Must |
+| C8 | Reconcile a message captured first as a notification preview and later from the database into one record with both provenances; likewise merge copies of the same message arriving from different devices or sessions (Windows Telegram session, Android database, notification) by platform message id into one record listing every source | Must |
 | C9 | Label coverage per app: complete, partial, or notification-only | Must |
 | C10 | Exclude view-once and disappearing content from automatic archiving; label the exclusion in coverage | Must |
 

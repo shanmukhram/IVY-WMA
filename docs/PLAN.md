@@ -26,7 +26,8 @@ tools/           zero-plaintext audit, honesty/kill tests, gate scripts.
 6. **No expiry on up-buckets (Bunny, Oct 10 2026).** R2 holds encrypted captures for as long as the Mac is offline; nothing is lost if the Mac is away for weeks. Up-objects are deleted only after the Mac commits them. The 7-day lifecycle rule in the PRD is dropped; the 30-day rule on cmd-buckets stays.
 7. **Device-record authentication deferred (Bunny, Oct 10 2026).** Records are accepted when they decrypt and name a paired device; a leaked up-write token could forge records. Accepted for now; a per-object authentication tag derived from the device and Mac keys can be added later as a protocol version bump.
 8. **Windows media policy widened (Bunny, Oct 10 2026).** The point is never having to go back to the PC. In every indexed root: images (png, jpg, jpeg, heic, webp, gif, bmp) upload automatically under a size cap (default 25 MB) so the Mac OCRs them; documents (pdf, docx, xlsx, pptx, txt, md) upload automatically under a cap (default 10 MB) so the Mac indexes their text; everything else is metadata + thumbnail with the original on request. All caps and types are settings in the Windows app. Supersedes PRD WC6's "screenshots always, everything else on request".
-9. **Model routing confirmed by Bunny:** Fable 5.1 orchestrates and verifies; Opus 5.5 for complex tasks; Sonnet 5.5 for standard tasks; Haiku 5.5 for mechanical chores.
+9. **Windows conversation capture from existing logins (Bunny, Oct 10 2026).** PRD Part 1 gained WT1–WT4 (Telegram via the Telegram Desktop session key: complete cloud history, no new login), WL1–WL3 (LINE for Windows local store, always labeled partial), WX1–WX2 (merge by platform message id; session keys never leave the PC). No app ever asks Bunny to log in again. Further desktop apps follow the same pattern only when Bunny names them.
+10. **Model routing confirmed by Bunny:** Fable 5.1 orchestrates and verifies; Opus 5.5 for complex tasks; Sonnet 5.5 for standard tasks; Haiku 5.5 for mechanical chores.
 
 ## Phase 1 tasks
 
@@ -43,6 +44,15 @@ tools/           zero-plaintext audit, honesty/kill tests, gate scripts.
 | 1.9 | Integration tests: pairing + ingest + retrieval through the mock, reboot-mid-queue, zero-plaintext audit; G1 script | Opus | all |
 
 Phases 2–4 are broken down when Phase 1 reaches gate G1.
+
+## Windows conversation capture tasks (PRD WT/WL/WX, after gate G1)
+
+| # | Task | Model | Depends on |
+| --- | --- | --- | --- |
+| 1.10 | Protocol: `message_batch` gains `sourceSession` (e.g. `windows:telegram-desktop`), per-message `platformMsgId` is mandatory, attachments reference blobs; Mac committers merge by platform + msg id with provenance list (WX1) | Opus | G1 |
+| 1.11 | Telegram collector: read Telegram Desktop `tdata` (local key, passcode if set, auth key + DC), MTProto client using that session, full history walk with per-chat cursors, incremental updates, attachment policy, coverage labels; tested on Mac with a fake tdata fixture and a mock MTProto layer; real verification on the PC | Opus | 1.10 |
+| 1.12 | LINE desktop collector: locate and snapshot LINE for Windows store, per-version mapping with verification, partial coverage label, red-with-reason on mismatch; fixture-based tests; real verification on the PC | Opus | 1.10 |
+| 1.13 | Windows app rows for Telegram and LINE (toggle, status, coverage, per-chat progress, passcode entry once); Mac conversations view shows per-source coverage | Opus | 1.11, 1.12 |
 
 ## Phase status
 
