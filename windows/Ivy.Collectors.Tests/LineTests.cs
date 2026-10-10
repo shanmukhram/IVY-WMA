@@ -121,6 +121,29 @@ public class LineProbeTests : IDisposable
     }
 
     [Fact]
+    public void Probe_with_a_decryptor_lists_the_encrypted_store_schema()
+    {
+        var root = _dir.Sub("line-dec");
+        // A real encrypted LINE-shaped store.
+        var dbPath = LineFixture.Create(root, "qwabc.edb");
+        SqliteConnection.ClearAllPools();
+        var plain = File.ReadAllBytes(dbPath);
+        var pageSize = (plain[16] << 8) | (plain[17] << 16);
+        var key = LineWxCipher.DeriveKey(System.Text.Encoding.ASCII.GetBytes("0123456789abcdef0123456789abcdef"));
+        File.WriteAllBytes(dbPath, LineWxCipher.Encrypt(plain, key, pageSize));
+
+        Func<string, byte[]?> decryptor = path => LineWxCipher.Decrypt(File.ReadAllBytes(path), key);
+        var report = new LineStoreProbe(new[] { new LineProbeRoot("installer", root) }).Run("26.5", DateTimeOffset.UtcNow, decryptor);
+
+        var enc = report.Locations.Single().Files.Single(f => f.RelativePath == "qwabc.edb");
+        Assert.True(enc.LooksEncrypted);
+        Assert.NotNull(enc.Tables); // decrypted schema listed
+        Assert.Contains(enc.Tables!, t => t.Name == "_message");
+        Assert.Contains(enc.Tables!, t => t.Name == "_contact");
+        Assert.Contains("decrypted schema", enc.Note);
+    }
+
+    [Fact]
     public void Probe_reports_missing_location_without_throwing()
     {
         var report = new LineStoreProbe(new[] { new LineProbeRoot("installer", _dir.Sub("nope")) })

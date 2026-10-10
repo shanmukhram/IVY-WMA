@@ -252,7 +252,20 @@ public sealed class LineDesktopCollector : Collector<LineSettings>
             var roots = _rootsOverride ?? (Settings.DataPath is { } p
                 ? new[] { new LineProbeRoot("override", p) }
                 : LineStoreProbe.DefaultRoots());
-            var report = new LineStoreProbe(roots).Run(version, Now);
+            // With a key set, let the probe list the decrypted store's table/column names (no row data) so the
+            // settings/blocked/hidden layout can be mapped.
+            Func<string, byte[]?>? decryptor = _keyStore is { HasKey: true }
+                ? path =>
+                {
+                    var passphrase = _keyStore.LoadKey();
+                    byte[] baseKey;
+                    try { baseKey = LineWxCipher.DeriveKey(passphrase); }
+                    finally { System.Security.Cryptography.CryptographicOperations.ZeroMemory(passphrase); }
+                    try { return LineWxCipher.Decrypt(File.ReadAllBytes(path), baseKey); }
+                    finally { System.Security.Cryptography.CryptographicOperations.ZeroMemory(baseKey); }
+                }
+            : null;
+            var report = new LineStoreProbe(roots).Run(version, Now, decryptor);
             System.IO.Directory.CreateDirectory(_reportDir);
             var path = Path.Combine(_reportDir, $"line-probe-{Sanitize(version)}.json");
             File.WriteAllText(path, report.ToJson());

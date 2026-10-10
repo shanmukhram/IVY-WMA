@@ -118,7 +118,7 @@ public sealed class LineStoreProbe
         return roots;
     }
 
-    public LineProbeReport Run(string lineVersion, DateTimeOffset now)
+    public LineProbeReport Run(string lineVersion, DateTimeOffset now, Func<string, byte[]?>? decryptor = null)
     {
         var locations = new List<LineProbeLocation>();
         var total = 0;
@@ -132,7 +132,7 @@ public sealed class LineStoreProbe
             {
                 foreach (var full in SafeFiles(root.Path))
                 {
-                    var file = Describe(root, full);
+                    var file = Describe(root, full, decryptor);
                     files.Add(file);
                     total++;
                     if (file.Kind == nameof(LineFileKind.Sqlite)) { databases++; readable++; }
@@ -151,7 +151,7 @@ public sealed class LineStoreProbe
         };
     }
 
-    private static LineProbeFile Describe(LineProbeRoot root, string full)
+    private static LineProbeFile Describe(LineProbeRoot root, string full, Func<string, byte[]?>? decryptor = null)
     {
         var info = new FileInfo(full);
         var head = ReadHead(full, 16);
@@ -163,6 +163,17 @@ public sealed class LineStoreProbe
             try { tables = ListTables(full); }
             catch (SqliteException e) { note = "could not list tables: " + e.Message; }
             catch (IOException e) { note = "could not open: " + e.Message; }
+        }
+        else if (looksEncrypted && decryptor is not null)
+        {
+            // With the key, decrypt and list the real tables and columns (names only, no row data) so the
+            // store's settings/blocked/hidden layout can be mapped. Never reads message contents.
+            try
+            {
+                var plain = decryptor(full);
+                if (plain is not null) { tables = ListTablesFromBytes(plain); note = "decrypted schema (names only)"; }
+            }
+            catch (Exception e) { note = "could not read decrypted schema: " + e.Message; }
         }
         return new LineProbeFile
         {
@@ -216,6 +227,13 @@ public sealed class LineStoreProbe
         }
         catch (IOException) { return Array.Empty<byte>(); }
         catch (UnauthorizedAccessException) { return Array.Empty<byte>(); }
+    }
+
+    private static IReadOnlyList<LineProbeTable> ListTablesFromBytes(byte[] plain)
+    {
+        var tmp = Path.Combine(Path.GetTempPath(), "ivy-line-probe-" + Guid.NewGuid().ToString("N")[..10] + ".db");
+        try { File.WriteAllBytes(tmp, plain); return ListTables(tmp); }
+        finally { try { File.Delete(tmp); } catch { /* best effort */ } }
     }
 
     private static IReadOnlyList<LineProbeTable> ListTables(string path)
