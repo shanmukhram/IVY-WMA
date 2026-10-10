@@ -96,20 +96,33 @@ public sealed class LineStoreProbe
 
     public LineStoreProbe(IReadOnlyList<LineProbeRoot> roots) => _roots = roots;
 
-    /// <summary>The two default locations (NOTES.md): classic installer and Store-app build.</summary>
+    /// <summary>
+    /// Candidate LINE data locations (NOTES.md). The chat store lives under the classic installer's
+    /// <c>LINE\Data</c> or the Store-app <c>LocalState</c>; chat media (images/videos/files received in
+    /// chats) is not under <c>Data</c> in the probe we have, so we also walk the <c>LINE</c> parent and the
+    /// Roaming <c>LINE</c> folder to find where media and thumbnails are cached. The probe records only file
+    /// names, sizes, mtimes and the first 16 bytes, so widening the roots stays safe to run blind.
+    /// </summary>
     public static IReadOnlyList<LineProbeRoot> DefaultRoots()
     {
         var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        var roaming = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
         var roots = new List<LineProbeRoot>
         {
             new("installer", Path.Combine(local, "LINE", "Data")),
+            // the LINE parent and Roaming LINE: where a desktop client usually caches media/thumbnails
+            new("installer-parent", Path.Combine(local, "LINE")),
+            new("roaming", Path.Combine(roaming, "LINE")),
         };
-        // Store-app build: %LOCALAPPDATA%\Packages\NAVER.LINEwin8_*\LocalState\
+        // Store-app build: %LOCALAPPDATA%\Packages\NAVER.LINEwin8_*\LocalState\ (and the package root above it)
         var packages = Path.Combine(local, "Packages");
         if (Directory.Exists(packages))
         {
             foreach (var dir in SafeDirs(packages, "NAVER.LINEwin8_*"))
+            {
                 roots.Add(new LineProbeRoot("store", Path.Combine(dir, "LocalState")));
+                roots.Add(new LineProbeRoot("store-package", dir));
+            }
         }
         else
         {
