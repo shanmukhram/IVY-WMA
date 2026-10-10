@@ -67,7 +67,7 @@ describe("record schemas", () => {
     const rec = {
       ...common, kind: "message_batch",
       platform: "line", account: "bunny", convKey: "c1", convKind: "dm",
-      coverage: "complete", cursor: "rowid:42",
+      sourceSession: "android:root-db", coverage: "complete", cursor: "rowid:42",
       messages: [{
         msgId: "m1", sender: "alice", sentAt: "2026-10-09T10:00:00.000Z",
         text: "hi", sourceStatus: "live",
@@ -75,6 +75,30 @@ describe("record schemas", () => {
       }],
     };
     expect(validateRecord(rec).kind).toBe("message_batch");
+  });
+
+  it("message_batch requires sourceSession and accepts the multi-source fields (WX1, C8)", () => {
+    const msg = { msgId: "7781", sender: "aki", sentAt: "2026-10-09T10:00:00.000Z", text: "hi", sourceStatus: "live", attachments: [] };
+    const rec = {
+      ...common, kind: "message_batch", platform: "telegram", account: "@bunny", convKey: "-100123", convKind: "group",
+      sourceSession: "windows:telegram-desktop", coverage: "complete", cursor: "7781",
+      chatMeta: { title: "Robotics lab", participantCount: 42, chatType: "supergroup" },
+      messages: [
+        { ...msg, forwardedFrom: "Robotics News", mediaKind: "photo" },
+        { ...msg, msgId: "7782", sourceStatus: "deleted_at_source", deletedAtSource: "2026-10-09T11:00:00.000Z" },
+      ],
+    };
+    const ok = validateRecordKind("message_batch", rec);
+    expect(ok.sourceSession).toBe("windows:telegram-desktop");
+    expect(ok.chatMeta).toEqual({ title: "Robotics lab", participantCount: 42, chatType: "supergroup" });
+    expect(ok.messages[0]).toMatchObject({ forwardedFrom: "Robotics News", mediaKind: "photo" });
+    const { sourceSession: _s, ...noSession } = rec;
+    expect(() => validateRecord(noSession)).toThrow();
+    expect(() => validateRecord({ ...rec, sourceSession: "telegram" })).toThrow();
+    expect(() => validateRecord({ ...rec, sourceSession: "mac:telegram" })).toThrow();
+    expect(() => validateRecord({ ...rec, messages: [{ ...msg, deletedAtSource: "2026-10-09T11:00:00.000Z" }] })).toThrow(/deletedAtSource/);
+    expect(() => validateRecord({ ...rec, messages: [{ ...msg, msgId: "" }] })).toThrow();
+    expect(() => validateRecord({ ...rec, chatMeta: { participantCount: -1 } })).toThrow();
   });
 
   it("accepts a command (file_request) and command_status", () => {

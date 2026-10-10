@@ -130,6 +130,7 @@ export function purge(ctx: Ctx, type: BinType, id: string, opts: { requireInBin?
         }
         ctx.db.prepare("DELETE FROM attachments WHERE message_id = ?").run(mid);
         ctx.db.prepare("DELETE FROM message_edits WHERE message_id = ?").run(mid);
+        ctx.db.prepare("DELETE FROM message_sources WHERE message_id = ?").run(mid);
         ctx.db.prepare("UPDATE notifications SET linked_message_id = NULL, link_confidence = NULL WHERE linked_message_id = ?").run(mid);
         ctx.db.prepare("UPDATE messages SET reply_to = NULL WHERE reply_to = ?").run(mid);
         ids.push(mid);

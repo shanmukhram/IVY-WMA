@@ -27,8 +27,8 @@ beforeAll(async () => {
     text: i === 0 ? "Here is the robotics collaboration offer from Kyoto" : `pagination filler message number ${i} about widgets`,
     sourceStatus: "live" as const, attachments: [],
   }));
-  commitMessageBatch(db, { ...b(AND, "message_batch"), kind: "message_batch", platform: "line", account: "bunny", convKey: "c1", peer: "Aki", convKind: "dm", coverage: "complete", cursor: "30", messages: msgs });
-  commitMessageBatch(db, { ...b(AND, "message_batch"), kind: "message_batch", platform: "telegram", account: "bunny", convKey: "t1", peer: "Lab", convKind: "group", coverage: "partial", cursor: "1",
+  commitMessageBatch(db, { ...b(AND, "message_batch"), kind: "message_batch", sourceSession: "android:root-db", platform: "line", account: "bunny", convKey: "c1", peer: "Aki", convKind: "dm", coverage: "complete", cursor: "30", messages: msgs });
+  commitMessageBatch(db, { ...b(AND, "message_batch"), kind: "message_batch", sourceSession: "android:root-db", platform: "telegram", account: "bunny", convKey: "t1", peer: "Lab", convKind: "group", coverage: "partial", cursor: "1",
     messages: [{ msgId: "x", sender: "Lab", sentAt: "2026-09-25T09:00:00.000Z", text: "colaboration typo in the source text, robotics later", sourceStatus: "live", attachments: [] }] });
 });
 afterAll(async () => { await svc.close(); rm(dir); });

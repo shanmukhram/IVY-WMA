@@ -124,14 +124,45 @@ export const MessageAttachment = z.object({
 });
 
 export const Message = z.object({
-  msgId: z.string(),
+  /**
+   * The platform's own message id (Telegram message id, LINE local/server id, WhatsApp key id, SMS
+   * provider id), never one the collector made up. The Mac merges copies of the same message that
+   * arrive from different sources (Windows session, Android database, notification) on
+   * platform + account + convKey + msgId (WX1, C8).
+   */
+  msgId: z.string().min(1),
   sender: z.string(),
   sentAt: ts,
   text: z.string(),
   replyTo: z.string().optional(),
   editedAt: ts.optional(),
   sourceStatus: z.enum(["live", "deleted_at_source"]),
+  /** who the message was forwarded from, as the platform shows it (a name, channel or id) */
+  forwardedFrom: z.string().min(1).optional(),
+  /** the media kind as the platform names it (photo, sticker, voice, video_note, ...); absent for plain text */
+  mediaKind: z.string().min(1).optional(),
+  /** when the source observed the deletion; only with sourceStatus deleted_at_source (C6) */
+  deletedAtSource: ts.optional(),
   attachments: z.array(MessageAttachment).default([]),
+}).superRefine((m, ctx) => {
+  if (m.deletedAtSource !== undefined && m.sourceStatus !== "deleted_at_source") {
+    ctx.addIssue({ code: "custom", path: ["deletedAtSource"], message: "deletedAtSource requires sourceStatus deleted_at_source" });
+  }
+});
+
+/**
+ * The capture source of a batch, `<role>:<collector>`: for example `windows:telegram-desktop`,
+ * `windows:line-desktop`, `android:root-db`, `android:notification`. Lowercase; the role is the
+ * sending device's role.
+ */
+export const SourceSession = z.string().regex(/^(windows|android):[a-z0-9][a-z0-9._-]*$/, "sourceSession must be <role>:<collector>");
+
+/** Optional chat metadata as the platform reports it. */
+export const ChatMeta = z.object({
+  title: z.string().optional(),
+  participantCount: z.number().int().nonnegative().optional(),
+  /** the chat type as the platform names it (private, group, supergroup, channel, secret, ...) */
+  chatType: z.string().min(1).optional(),
 });
 
 export const MessageBatchRecord = z.object({
@@ -142,7 +173,11 @@ export const MessageBatchRecord = z.object({
   convKey: z.string(),
   peer: z.string().optional(),
   convKind: z.enum(["dm", "group"]),
+  /** which capture source produced this batch (WX1) */
+  sourceSession: SourceSession,
+  /** what THIS source holds for the conversation; the Mac keeps one claim per source */
   coverage: z.enum(["complete", "partial", "notification_only"]),
+  chatMeta: ChatMeta.optional(),
   messages: z.array(Message),
   /** per-conversation progress cursor (rowid or hash) */
   cursor: z.string(),
@@ -272,6 +307,8 @@ export type WindowsNotificationRecordT = z.infer<typeof WindowsNotificationRecor
 export type AndroidNotificationRecordT = z.infer<typeof AndroidNotificationRecord>;
 export type CallRecordT = z.infer<typeof CallRecord>;
 export type MessageBatchRecordT = z.infer<typeof MessageBatchRecord>;
+export type MessageT = z.infer<typeof Message>;
+export type ChatMetaT = z.infer<typeof ChatMeta>;
 export type ManifestRecordT = z.infer<typeof ManifestRecord>;
 export type CommandRecordT = z.infer<typeof CommandRecord>;
 export type CommandStatusRecordT = z.infer<typeof CommandStatusRecord>;

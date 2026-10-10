@@ -89,7 +89,8 @@ const COMMITTERS: Partial<Record<Kind, (db: Ctx["db"], rec: never) => CommitResu
 
 /** Kinds a device may send in each role's bucket. Android kinds are accepted from Android only, and so on. */
 const ALLOWED: Record<Role, Set<string>> = {
-  windows: new Set(["file_meta", "screenshot", "usage_event", "windows_notification", "device_report", "command_status"]),
+  // message_batch from Windows: Telegram Desktop session, LINE for Windows store (PRD WT1-WT4, WL1-WL3)
+  windows: new Set(["file_meta", "screenshot", "usage_event", "windows_notification", "message_batch", "device_report", "command_status"]),
   android: new Set(["file_meta", "screenshot", "usage_event", "android_notification", "call", "message_batch", "device_report", "command_status"]),
 };
 
@@ -436,6 +437,10 @@ export class Ingester {
     const dev = this.ctx.db.prepare("SELECT role FROM devices WHERE id = ?").get(rec.deviceId) as { role: Role } | undefined;
     if (!dev) return this.quarantine(src, key, kind, `record from unknown or revoked device ${rec.deviceId}`, bytes, rec.deviceId);
     if (dev.role !== src.role) return this.quarantine(src, key, kind, `device ${rec.deviceId} is ${dev.role} but wrote to the ${src.role} bucket`, bytes, rec.deviceId);
+    if (kind === "message_batch") {
+      const session = (rec as unknown as { sourceSession: string }).sourceSession;
+      if (!session.startsWith(`${dev.role}:`)) return this.quarantine(src, key, kind, `sourceSession ${session} does not belong to a ${dev.role} device`, bytes, rec.deviceId);
+    }
 
     const committer = COMMITTERS[kind];
     if (!committer) return this.quarantine(src, key, kind, `no committer for kind ${kind}`, bytes, rec.deviceId);

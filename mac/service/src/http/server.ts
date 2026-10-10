@@ -24,6 +24,7 @@ import { CommandError, cancelCommand, commandView, getCommand, issueCommand, lis
 import { search, SearchError } from "../query/search.ts";
 import { timeline, TimelineError } from "../query/timeline.ts";
 import { coverage } from "../query/coverage.ts";
+import { coverageView, messageSources } from "../query/sources.ts";
 import { BinError, isBinType, listBin, purge, restore, retentionDays, setRetentionDays, softDelete, sweep } from "../bin/recovery.ts";
 import { redact } from "../r2/config.ts";
 import { enrich, itemView } from "../query/details.ts";
@@ -324,15 +325,20 @@ export async function buildServer(svc: Service): Promise<FastifyInstance> {
   app.get("/api/conversations/:id/messages", async (req) => {
     const id = (req.params as { id: string }).id;
     const q = req.query as { around?: string; before?: string; after?: string };
-    const conv = ctx.db.prepare("SELECT id, platform, account, conv_key, peer, kind, coverage, deleted_at FROM conversations WHERE id = ?").get(id);
-    if (!conv) throw new HttpError(404, "not_found", "no such conversation");
+    const row = ctx.db.prepare(`SELECT id, platform, account, conv_key, peer, kind, coverage, coverage_by_source, chat_title, participant_count, chat_type, deleted_at
+                                FROM conversations WHERE id = ?`).get(id) as (Record<string, unknown> & { coverage_by_source: string }) | undefined;
+    if (!row) throw new HttpError(404, "not_found", "no such conversation");
+    const { coverage_by_source, ...convCols } = row;
+    const conv = { ...convCols, ...coverageView(coverage_by_source) };
     const before = Math.min(num(q.before) ?? 20, 200), after = Math.min(num(q.after) ?? 20, 200);
     let pivot = q.around ? (ctx.db.prepare("SELECT sent_at, rid FROM messages WHERE id = ? AND conversation_id = ?").get(q.around, id) as { sent_at: string; rid: number } | undefined) : undefined;
     pivot ??= ctx.db.prepare("SELECT sent_at, rid FROM messages WHERE conversation_id = ? AND deleted_at IS NULL ORDER BY sent_at DESC, rid DESC LIMIT 1").get(id) as { sent_at: string; rid: number } | undefined;
-    const cols = "id, sender, sent_at, captured_at, text, reply_to, edited_at, source_status";
+    const cols = "id, msg_key, sender, sent_at, captured_at, text, text_quality, reply_to, edited_at, source_status, source_deleted_at, forwarded_from, media_kind";
     const older = pivot ? ctx.db.prepare(`SELECT ${cols} FROM messages WHERE conversation_id = ? AND deleted_at IS NULL AND (sent_at < ? OR (sent_at = ? AND rid < ?)) ORDER BY sent_at DESC, rid DESC LIMIT ?`).all(id, pivot.sent_at, pivot.sent_at, pivot.rid, before).reverse() : [];
     const newer = pivot ? ctx.db.prepare(`SELECT ${cols} FROM messages WHERE conversation_id = ? AND deleted_at IS NULL AND (sent_at > ? OR (sent_at = ? AND rid >= ?)) ORDER BY sent_at ASC, rid ASC LIMIT ?`).all(id, pivot.sent_at, pivot.sent_at, pivot.rid, after + 1) : [];
-    return { conversation: conv, around: q.around ?? null, messages: [...older, ...newer] };
+    const msgs = [...older, ...newer] as Array<Record<string, unknown> & { id: string }>;
+    const prov = messageSources(ctx.db, msgs.map((m) => m.id));
+    return { conversation: conv, around: q.around ?? null, messages: msgs.map((m) => ({ ...m, sources: prov.get(m.id) ?? [] })) };
   });
   app.get("/api/files", async (req) => {
     const q = req.query as { device?: string; status?: string; page?: string; pageSize?: string };

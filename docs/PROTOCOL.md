@@ -362,12 +362,51 @@ means no title was captured at all.
 durationS` (AC8).
 
 **message_batch** — `platform(line|telegram|whatsapp|sms|instagram|snapchat),
-account, convKey, peer?, convKind(dm|group), coverage(complete|partial|
-notification_only), cursor, messages[]`. Each message:
+account, convKey, peer?, convKind(dm|group), sourceSession, coverage(complete|partial|
+notification_only), chatMeta?, cursor, messages[]`. Each message:
 `msgId, sender, sentAt, text, replyTo?, editedAt?,
-sourceStatus(live|deleted_at_source), attachments[]`. Each attachment:
+sourceStatus(live|deleted_at_source), forwardedFrom?, mediaKind?, deletedAtSource?,
+attachments[]`. Each attachment:
 `attId, kind(image|video|audio|doc), filename, size, originHash?, blobOid?`
-(C1–C10, AC2/AC5/AC6; `sentAt` is the source's truth, `captureTime` is ours).
+(C1–C10, AC2/AC5/AC6, WT1–WT4, WL1–WL3, WX1; `sentAt` is the source's truth,
+`captureTime` is ours).
+
+- `sourceSession` (required) names the capture source as `<role>:<collector>`,
+  lowercase, where `<role>` is the sending device's role: for example
+  `windows:telegram-desktop`, `windows:line-desktop`, `android:root-db`,
+  `android:notification`. The Mac quarantines a batch whose role prefix is not
+  the sending device's role.
+- `coverage` is what **this source** holds for the conversation. The Mac keeps
+  one claim per source and shows the best any source claims, with every source
+  listed (e.g. "complete via windows:telegram-desktop; partial via
+  android:notification"). Each source's latest claim replaces its earlier one. A
+  notification source (`*:notification`) is never counted above `partial`, and
+  LINE from a `windows:` source is never counted above `partial` (WL2), whatever
+  the batch says.
+- `msgId` (required, non-empty) is the **platform's own message id**, never one
+  the collector invents. Copies of one message from different sources merge on
+  `platform + account + convKey + msgId` into one record listing every source
+  (WX1, C8). A notification source sends a batch only when the notification
+  exposes the platform id; otherwise its previews stay `android_notification`
+  records and the Mac links them (N3): a linked notification is listed as a
+  `<role>:notification` source of the message too.
+- Merge rules on the Mac: a notification preview never overwrites text from a
+  non-notification source; a fuller copy replaces a preview (not recorded as an
+  edit); a changed text with a later `editedAt`, or from the source that gave
+  the current text, is an edit (the prior text goes to the edit history); a copy
+  with an older `editedAt` never reverts a newer one; between sources with the
+  same `editedAt` the longer text wins (the shorter goes to the edit history);
+  a deletion reported by any source marks the message deleted at source and
+  never removes it.
+- `forwardedFrom?` — who it was forwarded from, as the platform shows it.
+- `mediaKind?` — the media kind as the platform names it (`photo`, `sticker`,
+  `voice`, …); absent for plain text.
+- `deletedAtSource?` — when the source observed the deletion; only valid with
+  `sourceStatus: deleted_at_source` (a deletion without it is dated by
+  `captureTime`).
+- `chatMeta?` — `{ title?, participantCount?, chatType? }`, as the platform
+  reports them (`chatType` in the platform's own words: `private`, `group`,
+  `supergroup`, `channel`, `secret`, …).
 
 **manifest** — see §2.2 (`objectId, payloadKind, totalSize, chunkSize,
 totalChunks, cek, chunks[], commandId?, committedParts?`).

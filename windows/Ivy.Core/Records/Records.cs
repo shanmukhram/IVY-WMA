@@ -171,6 +171,157 @@ public sealed record WindowsNotificationRecord() : IvyRecord(Protocol.Kind.Windo
     }
 }
 
+/// <summary>Wire values for <c>message_batch.coverage</c>: what the sending source holds for the conversation.</summary>
+public static class MessageCoverage
+{
+    public const string Complete = "complete";
+    public const string Partial = "partial";
+    public const string NotificationOnly = "notification_only";
+
+    public static bool IsValid(string s) => s is Complete or Partial or NotificationOnly;
+}
+
+/// <summary>Wire values for <c>message_batch.platform</c>.</summary>
+public static class MessagePlatforms
+{
+    public const string Line = "line";
+    public const string Telegram = "telegram";
+    public const string WhatsApp = "whatsapp";
+    public const string Sms = "sms";
+    public const string Instagram = "instagram";
+    public const string Snapchat = "snapchat";
+
+    public static bool IsValid(string s) => s is Line or Telegram or WhatsApp or Sms or Instagram or Snapchat;
+}
+
+/// <summary>
+/// <c>message_batch.sourceSession</c> (§6, PRD WX1): the capture source as <c>&lt;role&gt;:&lt;collector&gt;</c>, lowercase,
+/// where the role is the sending device's role. The Mac quarantines a batch whose role is not the sender's.
+/// </summary>
+public static class SourceSessions
+{
+    public const string WindowsTelegramDesktop = "windows:telegram-desktop";
+    public const string WindowsLineDesktop = "windows:line-desktop";
+    public const string AndroidRootDb = "android:root-db";
+    public const string AndroidNotification = "android:notification";
+
+    private static readonly System.Text.RegularExpressions.Regex Pattern =
+        new("^(windows|android):[a-z0-9][a-z0-9._-]*$", System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
+    public static bool IsValid(string? s) => s is not null && Pattern.IsMatch(s);
+}
+
+/// <summary>One attachment reference of a message (C4).</summary>
+public sealed record MessageAttachment
+{
+    [JsonPropertyName("attId")] public required string AttId { get; init; }
+    /// <summary><c>image</c>, <c>video</c>, <c>audio</c> or <c>doc</c>.</summary>
+    [JsonPropertyName("kind")] public required string Kind { get; init; }
+    [JsonPropertyName("filename")] public required string Filename { get; init; }
+    [JsonPropertyName("size")] public required long Size { get; init; }
+    [JsonPropertyName("originHash")] public string? OriginHash { get; init; }
+    /// <summary>oid of the chunked blob holding the original, when uploaded.</summary>
+    [JsonPropertyName("blobOid")] public string? BlobOid { get; init; }
+}
+
+/// <summary>One message of a <see cref="MessageBatchRecord"/>.</summary>
+public sealed record ChatMessage
+{
+    /// <summary>
+    /// The platform's own message id (Telegram message id, LINE local/server id, ...), never one the collector
+    /// invents: the Mac merges copies from different sources on platform + account + convKey + msgId (WX1, C8).
+    /// </summary>
+    [JsonPropertyName("msgId")] public required string MsgId { get; init; }
+    [JsonPropertyName("sender")] public required string Sender { get; init; }
+    /// <summary>The source's own send time (ISO-8601).</summary>
+    [JsonPropertyName("sentAt")] public required string SentAt { get; init; }
+    [JsonPropertyName("text")] public required string Text { get; init; }
+    /// <summary>The platform id of the message this one replies to.</summary>
+    [JsonPropertyName("replyTo")] public string? ReplyTo { get; init; }
+    [JsonPropertyName("editedAt")] public string? EditedAt { get; init; }
+    /// <summary><c>live</c> or <c>deleted_at_source</c> (<see cref="MessageSourceStatus"/>).</summary>
+    [JsonPropertyName("sourceStatus")] public required string SourceStatus { get; init; }
+    /// <summary>Who it was forwarded from, as the platform shows it.</summary>
+    [JsonPropertyName("forwardedFrom")] public string? ForwardedFrom { get; init; }
+    /// <summary>The media kind as the platform names it (<c>photo</c>, <c>sticker</c>, <c>voice</c>, ...); null for plain text.</summary>
+    [JsonPropertyName("mediaKind")] public string? MediaKind { get; init; }
+    /// <summary>When the source observed the deletion; only with <c>sourceStatus: deleted_at_source</c>.</summary>
+    [JsonPropertyName("deletedAtSource")] public string? DeletedAtSource { get; init; }
+    [JsonPropertyName("attachments")] public IReadOnlyList<MessageAttachment> Attachments { get; init; } = Array.Empty<MessageAttachment>();
+}
+
+/// <summary>Wire values for <c>message.sourceStatus</c>.</summary>
+public static class MessageSourceStatus
+{
+    public const string Live = "live";
+    public const string DeletedAtSource = "deleted_at_source";
+
+    public static bool IsValid(string s) => s is Live or DeletedAtSource;
+}
+
+/// <summary>Optional chat metadata, as the platform reports it.</summary>
+public sealed record ChatMeta
+{
+    [JsonPropertyName("title")] public string? Title { get; init; }
+    [JsonPropertyName("participantCount")] public int? ParticipantCount { get; init; }
+    /// <summary>The chat type in the platform's own words (<c>private</c>, <c>group</c>, <c>supergroup</c>, <c>channel</c>, <c>secret</c>, ...).</summary>
+    [JsonPropertyName("chatType")] public string? ChatType { get; init; }
+}
+
+/// <summary><c>message_batch</c> (C1-C10, WT1-WT4, WL1-WL3, WX1): messages of one conversation from one capture source.</summary>
+public sealed record MessageBatchRecord() : IvyRecord(Protocol.Kind.MessageBatch)
+{
+    /// <summary><see cref="MessagePlatforms"/>.</summary>
+    [JsonPropertyName("platform")] public required string Platform { get; init; }
+    [JsonPropertyName("account")] public required string Account { get; init; }
+    [JsonPropertyName("convKey")] public required string ConvKey { get; init; }
+    [JsonPropertyName("peer")] public string? Peer { get; init; }
+    /// <summary><c>dm</c> or <c>group</c>.</summary>
+    [JsonPropertyName("convKind")] public required string ConvKind { get; init; }
+    /// <summary>The capture source (<see cref="SourceSessions"/>).</summary>
+    [JsonPropertyName("sourceSession")] public required string SourceSession { get; init; }
+    /// <summary>What THIS source holds for the conversation (<see cref="MessageCoverage"/>); the Mac keeps one claim per source.</summary>
+    [JsonPropertyName("coverage")] public required string Coverage { get; init; }
+    [JsonPropertyName("chatMeta")] public ChatMeta? ChatMeta { get; init; }
+    [JsonPropertyName("messages")] public required IReadOnlyList<ChatMessage> Messages { get; init; }
+    /// <summary>Per-conversation progress cursor (message id, rowid or hash).</summary>
+    [JsonPropertyName("cursor")] public required string Cursor { get; init; }
+
+    public override void Validate()
+    {
+        base.Validate();
+        if (!MessagePlatforms.IsValid(Platform)) throw new RecordValidationException($"invalid platform '{Platform}'");
+        if (ConvKind is not ("dm" or "group")) throw new RecordValidationException($"invalid convKind '{ConvKind}'");
+        if (!SourceSessions.IsValid(SourceSession)) throw new RecordValidationException($"sourceSession '{SourceSession}' must be <role>:<collector>");
+        if (!MessageCoverage.IsValid(Coverage)) throw new RecordValidationException($"invalid coverage '{Coverage}'");
+        if (ChatMeta is { ParticipantCount: < 0 }) throw new RecordValidationException("chatMeta.participantCount must be non-negative");
+        if (ChatMeta is not null) Optional(ChatMeta.ChatType, "chatMeta.chatType");
+        if (Messages is null) throw new RecordValidationException("messages is required");
+        foreach (var m in Messages)
+        {
+            Require(m.MsgId, "msgId");
+            Require(m.SentAt, "sentAt");
+            if (m.Sender is null) throw new RecordValidationException("sender is required");
+            if (m.Text is null) throw new RecordValidationException("text is required");
+            if (!MessageSourceStatus.IsValid(m.SourceStatus)) throw new RecordValidationException($"invalid sourceStatus '{m.SourceStatus}'");
+            Optional(m.EditedAt, "editedAt");
+            Optional(m.ForwardedFrom, "forwardedFrom");
+            Optional(m.MediaKind, "mediaKind");
+            Optional(m.DeletedAtSource, "deletedAtSource");
+            if (m.DeletedAtSource is not null && m.SourceStatus != MessageSourceStatus.DeletedAtSource)
+                throw new RecordValidationException("deletedAtSource requires sourceStatus deleted_at_source");
+            if (m.Attachments is null) throw new RecordValidationException("attachments is required");
+            foreach (var a in m.Attachments)
+            {
+                Require(a.AttId, "attId");
+                if (a.Kind is not ("image" or "video" or "audio" or "doc")) throw new RecordValidationException($"invalid attachment kind '{a.Kind}'");
+                if (a.Filename is null) throw new RecordValidationException("filename is required");
+                NonNegative(a.Size, "size");
+            }
+        }
+    }
+}
+
 /// <summary>Command parameters: a discriminated union on <c>type</c>.</summary>
 [JsonConverter(typeof(CommandParamsConverter))]
 public abstract record CommandParams

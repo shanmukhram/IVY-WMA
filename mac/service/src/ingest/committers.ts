@@ -14,7 +14,8 @@ import type {
   MessageBatchRecordT, ScreenshotRecordT, UsageEventRecordT, WindowsNotificationRecordT,
 } from "@ivy/protocol";
 import type { DB } from "../db/index.ts";
-import { normTs, nowIso } from "../util/time.ts";
+import { msOf, normTs, nowIso } from "../util/time.ts";
+import { bestCoverage, effectiveClaim, isNotificationSource, parseCoverageBySource, stableJson, type Coverage } from "../query/sources.ts";
 import { extOf, baseName } from "../util/ext.ts";
 
 export interface CommitResult {
@@ -124,7 +125,8 @@ function insertNotification(db: DB, n: {
   db.prepare(`INSERT INTO notifications(id, device_id, source, app, title, sender, preview, notif_key, posted_at, captured_at, ingested_at, dedupe_key)
               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
     .run(id, n.deviceId, n.source, n.app, n.title, n.sender, n.preview, n.notifKey, n.postedAt, n.capturedAt, nowIso(), dedupe);
-  return { summary: { notificationId: id, app: n.app } };
+  const link = linkNotification(db, id); // N3: the message may already be archived
+  return { summary: { notificationId: id, app: n.app, ...(link ? { linkedMessageId: link.messageId, linkConfidence: link.confidence } : {}) } };
 }
 
 export function commitWindowsNotification(db: DB, r: WindowsNotificationRecordT): CommitResult {
@@ -158,47 +160,200 @@ export function commitCall(db: DB, r: CallRecordT): CommitResult {
 
 // ---------------------------------------------------------------- conversations
 
+interface StoredMsg {
+  id: string; text: string; sender: string; edited_at: string | null; text_source: string | null; text_quality: "full" | "preview";
+}
+
+type TextDecision = "same" | "keep" | "upgrade" | "edit";
+
+/**
+ * Non-destructive merge of one copy of a message into the stored record (WX1, C8, PROTOCOL §6):
+ * a notification preview never overwrites full text; a full copy (or a longer preview) replaces a
+ * preview and that is not an edit; between full copies a later edit wins, a stale copy (older
+ * editedAt) is ignored, the same source re-sending changed text is an edit, and of two copies from
+ * different sources with the same edit stamp the richer (longer) text wins. Replaced full text always
+ * goes to message_edits, so nothing is lost.
+ */
+function decideText(ex: StoredMsg, inc: { text: string; editedAt: string | null; preview: boolean; source: string }): TextDecision {
+  if (inc.preview && ex.text_quality === "full") return "keep";
+  if (!inc.preview && ex.text_quality === "preview") return "upgrade";
+  if (inc.text === ex.text) return "same";
+  if (inc.preview) return inc.text.length > ex.text.length ? "upgrade" : "keep"; // two previews: keep the fuller one
+  const a = inc.editedAt ?? "", b = ex.edited_at ?? "";
+  if (a > b) return "edit";
+  if (a < b) return "keep";
+  if (ex.text_source === null || ex.text_source === inc.source) return "edit";
+  return inc.text.length > ex.text.length ? "edit" : "keep";
+}
+
+function upsertSource(db: DB, s: { messageId: string; deviceId: string | null; source: string; capturedAt: string; deletedAt: string | null }) {
+  db.prepare(`INSERT INTO message_sources(message_id, device_id, source_session, captured_at, last_seen_at, source_deleted_at) VALUES (?, ?, ?, ?, ?, ?)
+              ON CONFLICT(message_id, source_session) DO UPDATE SET device_id = COALESCE(excluded.device_id, device_id),
+                captured_at = MIN(captured_at, excluded.captured_at), last_seen_at = MAX(last_seen_at, excluded.last_seen_at),
+                source_deleted_at = COALESCE(source_deleted_at, excluded.source_deleted_at)`)
+    .run(s.messageId, s.deviceId, s.source, s.capturedAt, s.capturedAt, s.deletedAt);
+}
+
+/** Record a source's coverage claim for a conversation; conversations.coverage is the best claim. */
+function claimCoverage(db: DB, conversationId: string, source: string, claim: Coverage, opts: { onlyIfAbsent?: boolean } = {}) {
+  const row = db.prepare("SELECT coverage_by_source FROM conversations WHERE id = ?").get(conversationId) as { coverage_by_source: string } | undefined;
+  if (!row) return;
+  const by = parseCoverageBySource(row.coverage_by_source);
+  if (opts.onlyIfAbsent && by[source]) return;
+  by[source] = claim;
+  db.prepare("UPDATE conversations SET coverage_by_source = ?, coverage = ? WHERE id = ?").run(stableJson(by), bestCoverage(by), conversationId);
+}
+
+// ---- notification previews -> archived messages (N3, C8)
+
+/** Notification app (Android package or Windows app name) -> message platform. */
+const NOTIF_APP_PLATFORM: Record<string, string> = {
+  "jp.naver.line.android": "line",
+  "org.telegram.messenger": "telegram", "org.telegram.messenger.web": "telegram", "org.thunderdog.challegram": "telegram",
+  "com.whatsapp": "whatsapp", "com.whatsapp.w4b": "whatsapp",
+  "com.google.android.apps.messaging": "sms", "com.samsung.android.messaging": "sms", "com.android.mms": "sms",
+  "com.instagram.android": "instagram", "com.snapchat.android": "snapchat",
+};
+
+export function platformOfNotificationApp(app: string): string | null {
+  const a = app.trim().toLowerCase();
+  if (NOTIF_APP_PLATFORM[a]) return NOTIF_APP_PLATFORM[a]!;
+  if (a.includes("telegram")) return "telegram";
+  if (a === "line" || a.startsWith("line ")) return "line";
+  if (a.includes("whatsapp")) return "whatsapp";
+  if (a.includes("instagram")) return "instagram";
+  if (a.includes("snapchat")) return "snapchat";
+  return null;
+}
+
+const LINK_WINDOW_MS = 2 * 60_000;
+const squash = (s: string) => s.normalize("NFC").replace(/\s+/g, " ").trim().toLowerCase();
+
+/** A preview matches a message when it is the text or a (possibly ellipsised) prefix of it. */
+function previewMatches(preview: string, text: string): boolean {
+  const p = squash(preview).replace(/(…|\.\.\.)$/, "").trim();
+  const t = squash(text);
+  return p.length > 0 && (t === p || t.startsWith(p));
+}
+
+/**
+ * Link one notification to the archived message it previews, when a match can be established:
+ * same platform, sent within two minutes of the notification, preview equal to (or a prefix of) the
+ * text. The link is "high" confidence when exactly one message matches and the notification's sender
+ * or title names its sender or chat; otherwise it is labeled "uncertain" (N3). A link adds the
+ * notification as a provenance row of the message (C8).
+ */
+function linkNotification(db: DB, notificationId: string): { messageId: string; confidence: string } | null {
+  const n = db.prepare(`SELECT id, device_id, source, app, title, sender, preview, posted_at, captured_at, linked_message_id FROM notifications
+                        WHERE id = ? AND deleted_at IS NULL`).get(notificationId) as {
+    id: string; device_id: string; source: string; app: string; title: string | null; sender: string | null; preview: string | null;
+    posted_at: string; captured_at: string; linked_message_id: string | null;
+  } | undefined;
+  if (!n || n.linked_message_id || !n.preview) return null;
+  const platform = platformOfNotificationApp(n.app);
+  const at = msOf(n.posted_at);
+  if (!platform || at === null) return null;
+  const cands = (db.prepare(`SELECT m.id, m.sender, m.text, m.sent_at, m.conversation_id, c.peer, c.chat_title FROM messages m JOIN conversations c ON c.id = m.conversation_id
+                             WHERE c.platform = ? AND m.sent_at BETWEEN ? AND ? AND m.deleted_at IS NULL AND c.deleted_at IS NULL`)
+    .all(platform, new Date(at - LINK_WINDOW_MS).toISOString(), new Date(at + LINK_WINDOW_MS).toISOString()) as Array<{
+      id: string; sender: string; text: string; sent_at: string; conversation_id: string; peer: string | null; chat_title: string | null;
+    }>).filter((m) => previewMatches(n.preview!, m.text));
+  if (!cands.length) return null;
+  cands.sort((x, y) => Math.abs(msOf(x.sent_at)! - at) - Math.abs(msOf(y.sent_at)! - at));
+  const best = cands[0]!;
+  const who = [n.sender, n.title].filter((s): s is string => !!s).map(squash);
+  const names = [best.sender, best.peer, best.chat_title].filter((s): s is string => !!s).map(squash);
+  const confidence = cands.length === 1 && who.some((w) => names.includes(w)) ? "high" : "uncertain";
+  db.prepare("UPDATE notifications SET linked_message_id = ?, link_confidence = ? WHERE id = ?").run(best.id, confidence, n.id);
+  const source = `${n.source}:notification`;
+  upsertSource(db, { messageId: best.id, deviceId: n.device_id, source, capturedAt: n.captured_at, deletedAt: null });
+  claimCoverage(db, best.conversation_id, source, "notification_only", { onlyIfAbsent: true });
+  return { messageId: best.id, confidence };
+}
+
+/** Try to link the unlinked notifications posted around a newly archived message. */
+function linkNotificationsAround(db: DB, sentAt: string): number {
+  const at = msOf(sentAt);
+  if (at === null) return 0;
+  const ids = db.prepare(`SELECT id FROM notifications WHERE linked_message_id IS NULL AND deleted_at IS NULL AND preview IS NOT NULL AND posted_at BETWEEN ? AND ?`)
+    .all(new Date(at - LINK_WINDOW_MS).toISOString(), new Date(at + LINK_WINDOW_MS).toISOString()) as Array<{ id: string }>;
+  let n = 0;
+  for (const { id } of ids) if (linkNotification(db, id)) n++;
+  return n;
+}
+
 export function commitMessageBatch(db: DB, r: MessageBatchRecordT): CommitResult {
   const now = nowIso();
-  let conv = db.prepare("SELECT id FROM conversations WHERE platform = ? AND account = ? AND conv_key = ?").get(r.platform, r.account, r.convKey) as { id: string } | undefined;
+  const source = r.sourceSession;
+  const preview = isNotificationSource(source);
+  const claim = effectiveClaim(source, r.platform, r.coverage);
+  const meta = r.chatMeta ?? {};
+  let conv = db.prepare("SELECT id, coverage_by_source FROM conversations WHERE platform = ? AND account = ? AND conv_key = ?").get(r.platform, r.account, r.convKey) as
+    { id: string; coverage_by_source: string } | undefined;
+  const by = parseCoverageBySource(conv?.coverage_by_source);
+  by[source] = claim; // the latest claim of each source stands
   if (conv) {
-    db.prepare(`UPDATE conversations SET peer = COALESCE(?, peer), kind = ?, coverage = ?, cursor = ?, device_id = COALESCE(device_id, ?), updated_at = ? WHERE id = ?`)
-      .run(r.peer ?? null, r.convKind, r.coverage, r.cursor, r.deviceId, now, conv.id);
+    db.prepare(`UPDATE conversations SET peer = COALESCE(?, peer), kind = ?, coverage = ?, coverage_by_source = ?, cursor = ?, device_id = COALESCE(device_id, ?),
+                  chat_title = COALESCE(?, chat_title), participant_count = COALESCE(?, participant_count), chat_type = COALESCE(?, chat_type), updated_at = ? WHERE id = ?`)
+      .run(r.peer ?? null, r.convKind, bestCoverage(by), stableJson(by), r.cursor, r.deviceId, meta.title ?? null, meta.participantCount ?? null, meta.chatType ?? null, now, conv.id);
   } else {
-    conv = { id: randomUUID() };
-    db.prepare(`INSERT INTO conversations(id, device_id, platform, account, conv_key, peer, kind, coverage, cursor, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-      .run(conv.id, r.deviceId, r.platform, r.account, r.convKey, r.peer ?? null, r.convKind, r.coverage, r.cursor, now, now);
+    conv = { id: randomUUID(), coverage_by_source: "" };
+    db.prepare(`INSERT INTO conversations(id, device_id, platform, account, conv_key, peer, kind, coverage, coverage_by_source, cursor, chat_title, participant_count, chat_type, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(conv.id, r.deviceId, r.platform, r.account, r.convKey, r.peer ?? null, r.convKind, bestCoverage(by), stableJson(by), r.cursor,
+        meta.title ?? null, meta.participantCount ?? null, meta.chatType ?? null, now, now);
   }
   const captured = normTs(r.captureTime)!;
   const blobs: string[] = [];
-  let inserted = 0, edited = 0;
-  const getMsg = db.prepare("SELECT id, text, edited_at FROM messages WHERE conversation_id = ? AND msg_key = ?");
+  let inserted = 0, edited = 0, upgraded = 0, linked = 0;
+  const getMsg = db.prepare("SELECT id, text, sender, edited_at, text_source, text_quality FROM messages WHERE conversation_id = ? AND msg_key = ?");
   for (const m of r.messages) {
-    const ex = getMsg.get(conv.id, m.msgId) as { id: string; text: string; edited_at: string | null } | undefined;
+    const ex = getMsg.get(conv.id, m.msgId) as StoredMsg | undefined;
+    const editedAt = normTs(m.editedAt);
+    const deletedAt = m.sourceStatus === "deleted_at_source" ? (normTs(m.deletedAtSource) ?? captured) : null;
     const replyId = m.replyTo
       ? ((db.prepare("SELECT id FROM messages WHERE conversation_id = ? AND msg_key = ?").get(conv.id, m.replyTo) as { id: string } | undefined)?.id ?? null)
       : null;
     let msgId: string;
+    let relink = false;
     if (ex) {
       msgId = ex.id;
-      if (ex.text !== m.text) {
+      const d = decideText(ex, { text: m.text, editedAt, preview, source });
+      if (d === "edit") {
         // C3: an observable edit updates the record and keeps the prior text; no duplicate row
         db.prepare("INSERT INTO message_edits(message_id, text, edited_at, recorded_at) VALUES (?, ?, ?, ?)").run(ex.id, ex.text, ex.edited_at, now);
         edited++;
       }
-      db.prepare(`UPDATE messages SET text = ?, edited_at = COALESCE(?, edited_at), source_status = ?, sender = ?,
+      if (d === "upgrade") upgraded++;
+      if (d === "edit" || d === "upgrade") {
+        // a copy from a fuller source also corrects what a preview guessed (sender, time)
+        const fromPreview = ex.text_quality === "preview" && !preview;
+        db.prepare(`UPDATE messages SET text = ?, text_source = ?, text_quality = ?, sender = CASE WHEN ? THEN ? ELSE sender END,
+                      sent_at = CASE WHEN ? THEN ? ELSE sent_at END WHERE id = ?`)
+          .run(m.text, source, preview ? "preview" : "full", fromPreview ? 1 : 0, m.sender, fromPreview ? 1 : 0, normTs(m.sentAt), ex.id);
+      }
+      // never removed by any source: a deletion only marks it (C6); the earliest observed deletion stands
+      db.prepare(`UPDATE messages SET edited_at = CASE WHEN edited_at IS NULL OR ? > edited_at THEN ? ELSE edited_at END,
+                    source_status = CASE WHEN ? IS NOT NULL THEN 'deleted_at_source' ELSE source_status END,
+                    source_deleted_at = CASE WHEN ? IS NOT NULL AND (source_deleted_at IS NULL OR ? < source_deleted_at) THEN ? ELSE source_deleted_at END,
+                    forwarded_from = COALESCE(forwarded_from, ?), media_kind = COALESCE(media_kind, ?),
                     reply_to = COALESCE(?, reply_to), reply_to_key = COALESCE(?, reply_to_key) WHERE id = ?`)
-        .run(m.text, normTs(m.editedAt), m.sourceStatus, m.sender, replyId, m.replyTo ?? null, ex.id);
+        .run(editedAt, editedAt, deletedAt, deletedAt, deletedAt, deletedAt, m.forwardedFrom ?? null, m.mediaKind ?? null, replyId, m.replyTo ?? null, ex.id);
+      relink = d === "upgrade";
     } else {
       msgId = randomUUID();
-      db.prepare(`INSERT INTO messages(id, conversation_id, device_id, msg_key, sender, sent_at, captured_at, text, reply_to, reply_to_key, edited_at, source_status)
-                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-        .run(msgId, conv.id, r.deviceId, m.msgId, m.sender, normTs(m.sentAt), captured, m.text, replyId, m.replyTo ?? null, normTs(m.editedAt), m.sourceStatus);
+      db.prepare(`INSERT INTO messages(id, conversation_id, device_id, msg_key, sender, sent_at, captured_at, text, reply_to, reply_to_key, edited_at, source_status,
+                    text_source, text_quality, forwarded_from, media_kind, source_deleted_at)
+                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+        .run(msgId, conv.id, r.deviceId, m.msgId, m.sender, normTs(m.sentAt), captured, m.text, replyId, m.replyTo ?? null, editedAt,
+          deletedAt ? "deleted_at_source" : "live", source, preview ? "preview" : "full", m.forwardedFrom ?? null, m.mediaKind ?? null, deletedAt);
       // resolve earlier replies that pointed at this message before it arrived
       db.prepare("UPDATE messages SET reply_to = ? WHERE conversation_id = ? AND reply_to_key = ? AND reply_to IS NULL").run(msgId, conv.id, m.msgId);
       inserted++;
+      relink = true;
     }
+    upsertSource(db, { messageId: msgId, deviceId: r.deviceId, source, capturedAt: captured, deletedAt });
+    if (relink) linked += linkNotificationsAround(db, normTs(m.sentAt)!); // N3, after this source's own provenance row
     for (const a of m.attachments ?? []) {
       db.prepare(`INSERT INTO attachments(id, message_id, att_key, kind, filename, size, origin_hash, blob_oid, status)
                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -208,7 +363,7 @@ export function commitMessageBatch(db: DB, r: MessageBatchRecordT): CommitResult
       if (a.blobOid) blobs.push(a.blobOid);
     }
   }
-  return { summary: { conversationId: conv.id, platform: r.platform, inserted, edited }, blobs };
+  return { summary: { conversationId: conv.id, platform: r.platform, sourceSession: source, coverage: claim, inserted, edited, upgraded, linkedNotifications: linked }, blobs };
 }
 
 // ---------------------------------------------------------------- device report

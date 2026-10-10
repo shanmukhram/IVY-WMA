@@ -4,6 +4,7 @@
  */
 import type { Ctx } from "../context.ts";
 import type { ItemType } from "./types.ts";
+import { messageSources } from "./sources.ts";
 
 export interface BaseItem {
   type: ItemType; rid: number; id: string; device_id: string | null; app: string | null; event_time: string | null;
@@ -28,6 +29,7 @@ export function enrich(ctx: Ctx, items: BaseItem[]): Array<BaseItem & { detail: 
     if (!ids.length) continue;
     const q = inClause(ids.length);
     if (type === "message") {
+      const prov = messageSources(db, ids);
       for (const r of db.prepare(`SELECT x.id, x.conversation_id, c.platform, c.account, c.peer, c.kind AS conv_kind, c.coverage, x.sent_at,
                                          x.edited_at, x.reply_to, x.source_status, x.msg_key,
                                          (SELECT COUNT(*) FROM attachments a WHERE a.message_id = x.id AND a.deleted_at IS NULL) AS attachments
@@ -36,6 +38,7 @@ export function enrich(ctx: Ctx, items: BaseItem[]): Array<BaseItem & { detail: 
           conversationId: r.conversation_id, platform: r.platform, account: r.account, peer: r.peer, conversationKind: r.conv_kind,
           coverage: r.coverage, sentAt: r.sent_at, editedAt: r.edited_at, replyTo: r.reply_to, sourceStatus: r.source_status,
           attachments: r.attachments, open: { conversationId: r.conversation_id, messageId: r.id },
+          sources: (prov.get(String(r.id)) ?? []).map((p) => p.source),
         });
       }
     } else if (type === "notification") {

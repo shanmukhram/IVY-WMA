@@ -5,8 +5,17 @@ import { Chip, Empty, ErrorLine, Link, Pager, Time } from "../ui.tsx";
 
 const COVERAGE_LABEL: Record<string, string> = { complete: "complete", partial: "partial", notification_only: "notification-only" };
 
-export function CoverageBadge({ coverage }: { coverage: string }) {
-  return <Chip kind={`cov-${coverage}`}>{COVERAGE_LABEL[coverage] ?? coverage}</Chip>;
+type SourceClaim = { source: string; coverage: string };
+
+/** The best coverage any source claims, with every source's own claim (WX1, C9). */
+export function CoverageBadge({ coverage, sources }: { coverage: string; sources?: SourceClaim[] }) {
+  const text = (sources ?? []).map((s) => `${COVERAGE_LABEL[s.coverage] ?? s.coverage} via ${s.source}`).join("; ");
+  return (
+    <span className="coverage" title={text || undefined}>
+      <Chip kind={`cov-${coverage}`}>{COVERAGE_LABEL[coverage] ?? coverage}</Chip>
+      {text && <span className="small muted" data-testid="coverage-sources"> {text}</span>}
+    </span>
+  );
 }
 
 export function ConversationsView() {
@@ -34,7 +43,7 @@ function ConversationList() {
       </div>
       <ErrorLine error={r.error} />
       {d && d.total === 0 && (
-        <Empty>No conversations in the vault yet. Conversation history comes from the Android companion's rooted database reads (LINE first, then Telegram, WhatsApp, SMS). Until then nothing is captured here; notification previews are under Notifications.</Empty>
+        <Empty>No conversations in the vault yet. Conversation history comes from the Windows app (Telegram Desktop session, LINE for Windows) and the Android companion's rooted database reads (LINE first, then Telegram, WhatsApp, SMS). Until then nothing is captured here; notification previews are under Notifications.</Empty>
       )}
       {d && d.total > 0 && (
         <table>
@@ -44,7 +53,7 @@ function ConversationList() {
               <tr key={c.id}>
                 <td>{c.platform}</td>
                 <td><Link to={`/conversations/${c.id}`}>{c.peer ?? c.convKey}</Link></td>
-                <td>{c.account}</td><td>{c.kind}</td><td><CoverageBadge coverage={c.coverage} /></td>
+                <td>{c.account}</td><td>{c.kind}</td><td><CoverageBadge coverage={c.coverage} sources={c.coverageSources} /></td>
                 <td>{c.messageCount}</td><td><Time at={c.lastMessageAt} /></td>
               </tr>
             ))}
@@ -81,7 +90,7 @@ function Thread({ id }: { id: string }) {
       <p><Link to="/conversations">← All conversations</Link></p>
       <ErrorLine error={r.error} />
       {conv && (
-        <h2>{conv.platform} · {conv.peer ?? conv.conv_key} <span className="small muted">{conv.account} · {conv.kind}</span> <CoverageBadge coverage={conv.coverage} /></h2>
+        <h2>{conv.platform} · {conv.peer ?? conv.conv_key} <span className="small muted">{conv.account} · {conv.kind}</span> <CoverageBadge coverage={conv.coverage} sources={conv.coverageSources} /></h2>
       )}
       {conv && msgs.length === 0 && <Empty>This conversation has no archived messages.</Empty>}
       {msgs.length > 0 && <button onClick={() => setBefore((b) => b + 20)}>Show 20 earlier</button>}
@@ -92,6 +101,11 @@ function Thread({ id }: { id: string }) {
               {m.edited_at && <Chip>edited <Time at={m.edited_at} /></Chip>}
               {m.source_status === "deleted_at_source" && <Chip kind="warn">deleted at source (kept in vault)</Chip>}
               {m.reply_to && <Chip>reply</Chip>}
+              {m.forwarded_from && <Chip>forwarded from {m.forwarded_from}</Chip>}
+              {m.text_quality === "preview" && <Chip kind="warn">notification preview only</Chip>}
+              {((m.sources ?? []) as Array<{ source: string; deletedAtSource: string | null }>).map((s) => (
+                <Chip key={s.source} kind="source">{s.source}{s.deletedAtSource ? " (deleted there)" : ""}</Chip>
+              ))}
             </div>
             <p className="msg-text">{m.text}</p>
             {(atts[m.id] ?? []).map((a) => (

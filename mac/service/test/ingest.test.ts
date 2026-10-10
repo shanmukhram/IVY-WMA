@@ -370,7 +370,7 @@ describe("pairing edge cases and Android kinds", () => {
     await phone.put("android_notification", { app: "jp.naver.line.android", title: "Aki", sender: "Aki", preview: "see the robotics offer", notifKey: "k1", postedAt: "2026-09-24T14:00:00.000Z" });
     await phone.put("call", { direction: "missed", contact: "Aki", number: "+819000", startedAt: "2026-09-24T15:00:00.000Z", durationS: 0 });
     const batch = (text: string) => ({
-      platform: "line", account: "bunny", convKey: "c-aki", peer: "Aki", convKind: "dm", coverage: "complete", cursor: "42",
+      sourceSession: "android:root-db", platform: "line", account: "bunny", convKey: "c-aki", peer: "Aki", convKind: "dm", coverage: "complete", cursor: "42",
       messages: [
         { msgId: "1", sender: "Aki", sentAt: "2026-09-24T14:00:00.000Z", text, sourceStatus: "live", attachments: [] },
         { msgId: "2", sender: "bunny", sentAt: "2026-09-24T14:01:00.000Z", text: "thanks!", replyTo: "1", sourceStatus: "live", attachments: [{ attId: "a1", kind: "image", filename: "offer.jpg", size: 10 }] },
@@ -389,6 +389,20 @@ describe("pairing edge cases and Android kinds", () => {
     expect(db().prepare("SELECT source, preview FROM notifications WHERE source = 'android'").get()).toEqual({ source: "android", preview: "see the robotics offer" });
     expect(db().prepare("SELECT direction, number FROM calls").get()).toEqual({ direction: "missed", number: "+819000" });
     phone.close();
+  });
+
+  it("accepts message batches from the Windows session and quarantines a sourceSession of another role (WX1)", async () => {
+    const tg = (sourceSession: string) => ({
+      platform: "telegram", account: "@bunny", convKey: "-100123", convKind: "group", sourceSession, coverage: "complete", cursor: "9",
+      messages: [{ msgId: "9001", sender: "Aki", sentAt: "2026-09-24T16:00:00.000Z", text: "from the desktop session", sourceStatus: "live", attachments: [] }],
+    });
+    const ok = await dev.put("message_batch", tg("windows:telegram-desktop"));
+    const bad = await dev.put("message_batch", tg("android:root-db"));
+    await st.svc.ingester.poll();
+    expect(ledger(ok)).toEqual({ status: "committed", kind: "message_batch" });
+    expect(db().prepare("SELECT reason FROM quarantine WHERE object_key = ?").get(bad)).toMatchObject({ reason: expect.stringMatching(/sourceSession android:root-db does not belong to a windows device/) });
+    expect(db().prepare(`SELECT s.source_session AS source, s.device_id AS deviceId FROM message_sources s JOIN messages m ON m.id = s.message_id WHERE m.msg_key = '9001'`).all())
+      .toEqual([{ source: "windows:telegram-desktop", deviceId: dev.deviceId }]);
   });
 
   it("revoking a device quarantines its later uploads and keeps its content", async () => {

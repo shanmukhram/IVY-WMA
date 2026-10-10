@@ -33,7 +33,7 @@ describe("timeline (T1, T3, T4, T5)", () => {
     commitFileMeta(db, { ...base("file_meta"), kind: "file_meta", path: "C:\\a.txt", name: "a.txt", ext: "txt", size: 1, mtime: T(7), quickHash: "q" });
     commitScreenshot(db, { ...base("screenshot"), kind: "screenshot", sourcePath: "C:\\s.png", sha256: "s", blobOid: "01JABCDEFGHJKMNPQRSTVWXYZ0", takenAt: T(10) });
     // captured on Oct 1 but SENT on Sep 24 at 06:00: it belongs at 06:00 on the 24th
-    commitMessageBatch(db, { ...base("message_batch"), kind: "message_batch", platform: "line", account: "me", convKey: "c", convKind: "dm", coverage: "complete", cursor: "1",
+    commitMessageBatch(db, { ...base("message_batch"), kind: "message_batch", sourceSession: "android:root-db", platform: "line", account: "me", convKey: "c", convKind: "dm", coverage: "complete", cursor: "1",
       messages: [{ msgId: "1", sender: "Aki", sentAt: T(6), text: "morning", sourceStatus: "live", attachments: [] }] });
     commitUsage(db, { ...base("usage_event"), kind: "usage_event", app: "NextDay", startedAt: "2026-09-25T09:00:00.000Z", endedAt: "2026-09-25T09:01:00.000Z" });
   }

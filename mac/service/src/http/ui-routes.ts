@@ -4,7 +4,7 @@
  * behind the same guards: bearer/cookie token, loopback Host, same-site Origin,
  * and 423 while the vault is locked.
  *
- *   GET /api/conversations?platform=&page=&pageSize=      conversation list with coverage badge (C9)
+ *   GET /api/conversations?platform=&page=&pageSize=      conversation list with coverage badge and its sources (C9, WX1)
  *   GET /api/attachments?message=<id,id,...>              attachments for messages, with status (C4)
  *   GET /api/notifications/apps                           per-app counts (N2)
  *   GET /api/notifications?app=&page=&pageSize=           newest first; every item is a partial record (N4)
@@ -18,6 +18,7 @@ import type { Service } from "../service.ts";
 import { enrich, itemView, type BaseItem } from "../query/details.ts";
 import { TYPE_DEFS, selectList } from "../query/types.ts";
 import { getSetting, setSetting } from "../db/index.ts";
+import { coverageView } from "../query/sources.ts";
 
 const int = (v: unknown, dflt: number, min: number, max: number): number => {
   const n = v === undefined || v === "" ? NaN : Number(v);
@@ -49,13 +50,15 @@ export function registerUiRoutes(app: FastifyInstance, svc: Service): void {
     const w = where.join(" AND ");
     const total = (db().prepare(`SELECT COUNT(*) AS n FROM conversations c WHERE ${w}`).get(...args) as { n: number }).n;
     const rows = db().prepare(`
-      SELECT c.id, c.device_id AS deviceId, c.platform, c.account, c.conv_key AS convKey, c.peer, c.kind, c.coverage, c.updated_at AS updatedAt,
+      SELECT c.id, c.device_id AS deviceId, c.platform, c.account, c.conv_key AS convKey, c.peer, c.kind, c.coverage, c.coverage_by_source, c.updated_at AS updatedAt,
+             c.chat_title AS chatTitle, c.participant_count AS participantCount, c.chat_type AS chatType,
              (SELECT COUNT(*) FROM messages m WHERE m.conversation_id = c.id AND m.deleted_at IS NULL) AS messageCount,
              (SELECT MAX(m.sent_at) FROM messages m WHERE m.conversation_id = c.id AND m.deleted_at IS NULL) AS lastMessageAt
       FROM conversations c WHERE ${w}
-      ORDER BY lastMessageAt IS NULL, lastMessageAt DESC, c.rid DESC LIMIT ? OFFSET ?`).all(...args, pageSize, (page - 1) * pageSize);
+      ORDER BY lastMessageAt IS NULL, lastMessageAt DESC, c.rid DESC LIMIT ? OFFSET ?`).all(...args, pageSize, (page - 1) * pageSize) as Array<Record<string, unknown> & { coverage_by_source: string }>;
+    const items = rows.map(({ coverage_by_source, ...c }) => ({ ...c, ...coverageView(coverage_by_source) }));
     const platforms = db().prepare("SELECT platform, coverage, COUNT(*) AS n FROM conversations WHERE deleted_at IS NULL GROUP BY platform, coverage ORDER BY platform").all();
-    return { total, page, pageSize, pages: Math.max(1, Math.ceil(total / pageSize)), items: rows, platforms };
+    return { total, page, pageSize, pages: Math.max(1, Math.ceil(total / pageSize)), items, platforms };
   });
 
   app.get("/api/attachments", async (req) => {

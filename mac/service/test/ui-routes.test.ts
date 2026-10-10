@@ -16,7 +16,7 @@ beforeAll(async () => {
   await svc.ctx.keystore.initialize(PASS);
   const db = svc.ctx.db;
   db.prepare("INSERT INTO devices(id, role, public_key, fingerprint, paired_at) VALUES (?, 'android', 'k', 'FP', 't')").run(AND);
-  commitMessageBatch(db, { ...b(AND, "message_batch"), kind: "message_batch", platform: "line", account: "bunny", convKey: "c1", peer: "Aki", convKind: "dm", coverage: "complete", cursor: "2",
+  commitMessageBatch(db, { ...b(AND, "message_batch"), kind: "message_batch", sourceSession: "android:root-db", platform: "line", account: "bunny", convKey: "c1", peer: "Aki", convKind: "dm", coverage: "complete", cursor: "2",
     messages: [
       { msgId: "1", sender: "Aki", sentAt: "2026-09-24T14:00:00.000Z", text: "look at this", sourceStatus: "live", attachments: [{ attId: "a1", kind: "image", filename: "offer.jpg", size: 10, originHash: SHA }] },
       { msgId: "2", sender: "bunny", sentAt: "2026-09-24T14:01:00.000Z", text: "thanks", sourceStatus: "live", attachments: [] },

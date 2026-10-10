@@ -554,9 +554,50 @@ ${fts("files", ["name", "path", "content_text"])}
 INSERT INTO files_fts(files_fts) VALUES ('rebuild');
 `;
 
+// v5: multi-source conversation capture (PRD WX1, C8; PLAN task 1.10). A message is one record per
+// platform + account + convKey + msgId (conversations are unique on platform/account/conv_key and messages
+// on (conversation_id, msg_key) since v1, which is that key); every source that delivered it gets a
+// provenance row. Coverage is kept per source (coverage_by_source JSON: source -> claim) and
+// conversations.coverage becomes the best any source claims. Rows from before v5 came from Android
+// (the only role that could send message_batch) and are attributed to `<role>:legacy`.
+const v5 = `
+CREATE TABLE message_sources (
+  rid INTEGER PRIMARY KEY,
+  message_id TEXT NOT NULL,
+  device_id TEXT,
+  source_session TEXT NOT NULL,            -- e.g. windows:telegram-desktop, android:root-db, android:notification
+  captured_at TEXT NOT NULL,               -- when this source first delivered the message
+  last_seen_at TEXT NOT NULL,              -- when this source last delivered it
+  source_deleted_at TEXT,                  -- this source reported it deleted at source (C6)
+  UNIQUE (message_id, source_session)
+);
+
+ALTER TABLE messages ADD COLUMN text_source TEXT;            -- source_session whose text is shown
+ALTER TABLE messages ADD COLUMN text_quality TEXT NOT NULL DEFAULT 'full' CHECK (text_quality IN ('full','preview'));
+ALTER TABLE messages ADD COLUMN forwarded_from TEXT;
+ALTER TABLE messages ADD COLUMN media_kind TEXT;
+ALTER TABLE messages ADD COLUMN source_deleted_at TEXT;      -- earliest deletion any source observed
+
+ALTER TABLE conversations ADD COLUMN coverage_by_source TEXT NOT NULL DEFAULT '{}';
+ALTER TABLE conversations ADD COLUMN chat_title TEXT;
+ALTER TABLE conversations ADD COLUMN participant_count INTEGER;
+ALTER TABLE conversations ADD COLUMN chat_type TEXT;
+
+UPDATE conversations SET coverage_by_source = json_object(
+  COALESCE((SELECT d.role FROM devices d WHERE d.id = conversations.device_id), 'android') || ':legacy', coverage);
+INSERT OR IGNORE INTO message_sources(message_id, device_id, source_session, captured_at, last_seen_at)
+  SELECT m.id, COALESCE(m.device_id, c.device_id),
+         COALESCE((SELECT d.role FROM devices d WHERE d.id = COALESCE(m.device_id, c.device_id)), 'android') || ':legacy',
+         m.captured_at, m.captured_at
+    FROM messages m JOIN conversations c ON c.id = m.conversation_id;
+UPDATE messages SET text_source = (SELECT s.source_session FROM message_sources s WHERE s.message_id = messages.id),
+                    source_deleted_at = CASE WHEN source_status = 'deleted_at_source' THEN captured_at END;
+`;
+
 export const MIGRATIONS: Migration[] = [
   { version: 1, name: "initial vault schema", sql: v1 },
   { version: 2, name: "import progress, manifest commandId, transferring commands", sql: v2 },
   { version: 3, name: "activity vault import, ai conversations, embeddings", sql: v3 },
   { version: 4, name: "file originals (media policy) and document text", sql: v4 },
+  { version: 5, name: "multi-source conversations: message provenance, coverage per source", sql: v5 },
 ];
