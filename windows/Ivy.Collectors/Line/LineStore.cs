@@ -428,6 +428,9 @@ public sealed class LineStore : IDisposable
         {
             var name = Path.GetFileName(f);
             if (name.EndsWith("-wal", StringComparison.OrdinalIgnoreCase) || name.EndsWith("-shm", StringComparison.OrdinalIgnoreCase)) continue;
+            // These are not the chat store: Keep, albums, chat stats and auto-suggest have their own databases.
+            if (name.StartsWith("keep_", StringComparison.OrdinalIgnoreCase) || name.StartsWith("album_", StringComparison.OrdinalIgnoreCase)
+                || name.StartsWith("chatStats_", StringComparison.OrdinalIgnoreCase)) continue;
             if (!Common.Glob.ToRegex(pattern).IsMatch(name)) continue;
             var size = new FileInfo(f).Length;
             if (size > anySize) { anySize = size; anyMatch = f; }

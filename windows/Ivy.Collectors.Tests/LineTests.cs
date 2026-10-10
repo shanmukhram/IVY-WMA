@@ -37,6 +37,19 @@ internal static class LineFixture
     public static SqliteConnection Open(string path) =>
         OpenRaw(new SqliteConnectionStringBuilder { DataSource = path, Pooling = false }.ToString());
 
+    public static string CreateKeep(string dir, string name = "keep_abc.edb")
+    {
+        Directory.CreateDirectory(dir);
+        var path = Path.Combine(dir, name);
+        using var c = Open(path);
+        Exec(c, "CREATE TABLE _keep_content (_contentId TEXT PRIMARY KEY, _createdTime INTEGER, _name TEXT, _mainType TEXT, _size INTEGER, _messageId TEXT);");
+        return path;
+    }
+
+    public static void Keep(SqliteConnection c, string id, long createdMs, string name, string mainType) =>
+        Run(c, "INSERT INTO _keep_content(_contentId,_createdTime,_name,_mainType,_size) VALUES($i,$t,$n,$m,0)",
+            ("$i", id), ("$t", createdMs), ("$n", name), ("$m", mainType));
+
     private static SqliteConnection OpenRaw(string cs)
     {
         var c = new SqliteConnection(cs);
@@ -578,6 +591,42 @@ public class LineCollectorTests : IDisposable
         Assert.True(hiddenOpt.GetProperty("hidden").GetBoolean());        // hidden is reliable now
         Assert.Contains(System.Linq.Enumerable.Range(0, acct.Root.GetProperty("settings").GetArrayLength())
             .Select(i => acct.Root.GetProperty("settings")[i]), x => x.GetProperty("key").GetString() == "notification.enabled");
+    }
+
+    [Fact]
+    public async Task Captures_line_keep_as_a_conversation()
+    {
+        // main chat store (encrypted, keyed) so the collector reaches the keep step
+        Seed(c => { LineFixture.OwnProfile(c, "uME", "Me"); LineFixture.Chat(c, "uX"); LineFixture.Message(c, "m", "uX", "uX", 1_760_000_000_000, "hi"); });
+        var key = System.Text.Encoding.ASCII.GetBytes("0123456789abcdef0123456789abcdef");
+        // Encrypt the main store too (the collector has a key, so it expects an encrypted store).
+        SqliteConnection.ClearAllPools();
+        var mplain = File.ReadAllBytes(_dbPath);
+        var mps = (mplain[16] << 8) | (mplain[17] << 16);
+        File.WriteAllBytes(_dbPath, LineWxCipher.Encrypt(mplain, LineWxCipher.DeriveKey(key), mps));
+
+        // a keep store next to it, encrypted with the same key
+        var keepPlain = LineFixture.CreateKeep(_dataFolder);
+        using (var kc = LineFixture.Open(keepPlain))
+        {
+            LineFixture.Keep(kc, "k1", 1_760_000_000_000, "My note", "TEXT");
+            LineFixture.Keep(kc, "k2", 1_760_000_100_000, "beach.jpg", "IMAGE");
+        }
+        SqliteConnection.ClearAllPools();
+        var kplain = File.ReadAllBytes(keepPlain);
+        var ps = (kplain[16] << 8) | (kplain[17] << 16);
+        File.WriteAllBytes(keepPlain, LineWxCipher.Encrypt(kplain, LineWxCipher.DeriveKey(key), ps));
+
+        var line = new LineDesktopCollector(_env.Context, new LineSettings(),
+            roots: new[] { new LineProbeRoot("test", _dataFolder) },
+            reportDir: _dir.Sub("rk"), tempRoot: _dir.Sub("tk"),
+            keyStore: new InMemoryLineKeyStore(key));
+        await line.StartAsync(default);
+        await line.TickAsync(default);
+
+        var keep = Batches().Single(b => b.Root.GetProperty("convKey").GetString() == "keep");
+        Assert.Equal("LINE Keep", keep.Root.GetProperty("chatMeta").GetProperty("title").GetString());
+        Assert.Equal(2, keep.Root.GetProperty("messages").GetArrayLength());
     }
 
     private static int CountMessages(IReadOnlyList<CapturedRecord> batches) =>

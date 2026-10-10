@@ -217,6 +217,7 @@ public sealed class LineDesktopCollector : Collector<LineSettings>
         }
 
         EmitAccount(sink, store);
+        EmitKeep(sink);
 
         State = LineState.OkPartial;
         Cursor = $"chats={chats.Count}";
@@ -224,6 +225,77 @@ public sealed class LineDesktopCollector : Collector<LineSettings>
         // history we cannot see from Windows, so it is confirmed complete only once the phone's import runs.
         Detail = $"Capturing all {chats.Count} chats on this PC ({newMessages} new this tick). Full history confirmed from the phone.";
         return Task.CompletedTask;
+    }
+
+    private string? _lastKeepHash;
+
+    // Read LINE Keep (the user's own saved notes/media) from keep_*.edb and emit it as a "LINE Keep" conversation.
+    private void EmitKeep(IRecordSink sink)
+    {
+        if (_keyStore is not { HasKey: true }) return;
+        var dataFolder = ResolveDataFolder();
+        if (dataFolder is null) return;
+        var keepDb = LineKeep.FindKeepDb(dataFolder);
+        if (keepDb is null) return;
+
+        string plainPath;
+        try
+        {
+            using var snap = LineSnapshot.TryCreate(keepDb, _tempRoot, out _);
+            var src = snap is null ? keepDb : LineStore.FindDb(snap.Directory, "keep_*.edb") ?? keepDb;
+            var passphrase = _keyStore.LoadKey();
+            byte[] baseKey;
+            try { baseKey = LineWxCipher.DeriveKey(passphrase); }
+            finally { System.Security.Cryptography.CryptographicOperations.ZeroMemory(passphrase); }
+            byte[]? plain;
+            try { plain = LineWxCipher.Decrypt(File.ReadAllBytes(src), baseKey); }
+            finally { System.Security.Cryptography.CryptographicOperations.ZeroMemory(baseKey); }
+            if (plain is null) return;
+            plainPath = Path.Combine(_tempRoot, "keep-" + Guid.NewGuid().ToString("N")[..10] + ".db");
+            Directory.CreateDirectory(_tempRoot);
+            File.WriteAllBytes(plainPath, plain);
+            System.Security.Cryptography.CryptographicOperations.ZeroMemory(plain);
+        }
+        catch { return; }
+
+        try
+        {
+            var items = LineKeep.Read(plainPath);
+            if (items.Count == 0) return;
+            var messages = items.Select(it => new ChatMessage
+            {
+                MsgId = it.ContentId,
+                Sender = "keep",
+                FromMe = true,
+                SenderName = "You",
+                SentAt = IvyTime.Format(it.CreatedAt ?? DateTimeOffset.UnixEpoch),
+                Text = string.IsNullOrEmpty(it.Name) ? "(Keep item)" : it.Name!,
+                SourceStatus = MessageSourceStatus.Live,
+                MediaKind = it.MainType,
+            }).ToList();
+
+            var record = new MessageBatchRecord
+            {
+                DeviceId = DeviceId(sink),
+                EventTime = messages[messages.Count - 1].SentAt,
+                CaptureTime = IvyTime.Format(Now),
+                Platform = MessagePlatforms.Line,
+                Account = Settings.Account,
+                ConvKey = "keep",
+                Peer = "LINE Keep",
+                ConvKind = "group",
+                SourceSession = SourceSessions.WindowsLineDesktop,
+                Coverage = MessageCoverage.Partial,
+                ChatMeta = new ChatMeta { Title = "LINE Keep", ChatType = "keep" },
+                Messages = messages,
+                Cursor = $"keep={items.Count}",
+            };
+            var hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(Ivy.Core.Protocol.IvyJson.Serialize(record))));
+            if (hash == _lastKeepHash) return;
+            Emit(sink, record);
+            _lastKeepHash = hash;
+        }
+        finally { try { File.Delete(plainPath); } catch { } }
     }
 
     private void EmitAccount(IRecordSink sink, LineStore store)
