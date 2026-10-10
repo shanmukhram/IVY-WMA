@@ -79,19 +79,18 @@ No product or test code needed changes in Part 1. This report is the only commit
 
 All done except that the test folder had to move, see item 2.
 
-1. **Fresh, unpaired PC.** Quit from the tray (exit under 1 s), `%LOCALAPPDATA%IVY` deleted, the `IVY` value under `HKCUSoftwareMicrosoftWindowsCurrentVersionRun` deleted. Verified afterwards: no state directory, no Run value, no `Ivy.App.exe` process. The fake Mac is stopped. The old Windows device still has to be revoked in the real Mac dashboard before the run.
-2. **Test folder and PDF.** `DocumentsIVY-G1` cannot be created from PowerShell on this PC: **Controlled Folder Access** is on (Defender event 1123: "powershell.exe has been blocked from modifying %userprofile%DocumentsIVY-G1"). `cmd.exe` is blocked the same way, and the allowed-app list needs an administrator. Desktop is not protected here, so the file was created with the runbook snippet at
+1. **Fresh, unpaired PC.** Quit from the tray (exit under 1 s), `%LOCALAPPDATA%\IVY` deleted, the `IVY` value under `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` deleted. Verified afterwards: no state directory, no Run value, no `Ivy.App.exe` process. The fake Mac is stopped. The old Windows device still has to be revoked in the real Mac dashboard before the run.
+2. **Test folder and PDF.** `Documents\IVY-G1` cannot be created from PowerShell on this PC: **Controlled Folder Access** is on (Defender event 1123: "powershell.exe has been blocked from modifying %userprofile%\Documents\IVY-G1"). `cmd.exe` is blocked the same way, and the allowed-app list needs an administrator. Desktop is not protected here, so the file was created with the runbook snippet at
 
    | | |
    | --- | --- |
-   | Path | `C:SERSDMINDESKTOPIVY-G1G1-50MB.PDF` |
-   | SIZE | 52 429 198 BYTES (A 398-BYTE PDF FOLLOWED BY 50 MB OF RANDOM PADDING) |
+   | Path | `C:\Users\admin\Desktop\IVY-G1\g1-50mb.pdf` |
+   | Size | 52 429 198 bytes (a 398-byte PDF followed by 50 MB of random padding) |
    | SHA-256 | `C3D5C1CC926F624051D02E7C682B4334B5344CC4363103BA2DE7D3A8E3813C7E` |
 
-   PASS THAT PATH TO THE GATE WITH `--PATH`. THE SAME RESTRICTION WILL HIT THE `REBOOT.NOW` STEP, WHOSE POWERSHELL LINE WRITES 10 MARKER FILES INTO THE INDEXED FOLDER, SO THE INDEXED FOLDER MUST BE OUTSIDE THE PROTECTED SET (OR POWERSHELL MUST BE ALLOWED IN CONTROLLED FOLDER ACCESS, WHICH NEEDS AN ADMINISTRATOR; CLAUDE DOES NOT CHANGE SECURITY SETTINGS). IVY ITSELF ONLY READS INDEXED FILES AND WRITES UNDER `%LOCALAPPDATA%`, WHICH IS NOT PROTECTED.
-3. **BUILD.** `DOTNET BUILD WINDOWS/IVY.WINDOWS.SLN -C RELEASE` REBUILT CLEAN; THE EXE AT `WINDOWSIVY.APPINDRELEASE
-ET8.0-WINDOWS10.0.19041.0WIN-X64IVY.APP.EXE` IS READY AND NOT RUNNING. THE DOCUMENT CAP IS AT ITS DEFAULT (10 MB) ON A FRESH DATA DIRECTORY, SO THE 50 MB PDF WILL BE INDEXED AS METADATA AND UPLOADED ONLY ON REQUEST.
+   Pass that path to the gate with `--path`. The same restriction will hit the `reboot.now` step, whose PowerShell line writes 10 marker files into the indexed folder, so the indexed folder must be outside the protected set, or PowerShell must be allowed in Controlled Folder Access, which needs an administrator (Claude does not change security settings). IVY itself only reads indexed files and writes under `%LOCALAPPDATA%`, which is not protected.
+3. **Build.** `dotnet build windows/Ivy.Windows.sln -c Release` rebuilt clean; the exe at `windows\Ivy.App\bin\x64\Release\net8.0-windows10.0.19041.0\win-x64\Ivy.App.exe` is ready and not running. The document cap is at its default (10 MB) on a fresh data directory, so the 50 MB PDF will be indexed as metadata and uploaded only on request.
 
-## PART 3: THE GATE RUN
+## Part 3: the gate run
 
-FILLED IN AFTER THE RUN.
+Filled in after the run.
