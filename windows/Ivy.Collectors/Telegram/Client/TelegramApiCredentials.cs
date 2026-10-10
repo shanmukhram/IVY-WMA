@@ -14,5 +14,10 @@ public sealed record TelegramApiCredentials(int ApiId, string ApiHash)
     /// The desktop client's own constants, filled in for the real build. Left unset here so a wrong value is
     /// never shipped by accident; the collector works against the fake client without them.
     /// </summary>
-    public static TelegramApiCredentials? DesktopDefault { get; set; }
+    public static TelegramApiCredentials? DesktopDefault { get; set; } =
+        // Telegram Desktop's own public constants, from the open-source tdesktop tree
+        // (Telegram/SourceFiles/config.h: ApiId / ApiHash, now the TDESKTOP_API_ID / TDESKTOP_API_HASH build
+        // defaults). Set on the PC in the third Windows run; the "no new session in Settings > Devices" check
+        // is still pending because no Telegram Desktop install was available on that PC.
+        new(2040, "b18441a1ff607e10a989891a5462e627");
 }
