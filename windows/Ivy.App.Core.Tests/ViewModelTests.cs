@@ -251,6 +251,7 @@ public class MainViewModelTests
         vm.Pairing.PairingText = "  IVYPAIR1.xyz\r\n";
         Assert.True(vm.Pairing.PairCommand.CanExecute(null));
         await vm.Pairing.PairAsync();
+        await vm.LastHostWork; // host start and run at login happen off the UI thread
 
         Assert.True(vm.Pairing.Completed);
         Assert.Equal("AAAA-BBBB-CCCC-DDDD", vm.Pairing.DeviceFingerprint);

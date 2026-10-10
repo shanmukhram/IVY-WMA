@@ -67,7 +67,7 @@ public sealed class MainViewModel : ObservableObject
         Conversation = new ConversationViewModel(host, openFile);
         foreach (var n in CollectorNames.All) Collectors.Add(new CollectorRowViewModel(n, SetCollectorEnabled));
         SyncNowCommand = new AsyncRelayCommand(SyncNowAsync, () => _agent.IsPaired);
-        Pairing.Paired += (_, _) => OnPaired();
+        Pairing.Paired += (_, _) => LastHostWork = OnPairedAsync();
         Pairing.Continued += (_, _) => ShowMain = true;
     }
 
@@ -384,13 +384,15 @@ public sealed class MainViewModel : ObservableObject
         catch (Exception e) { HostErrorText = "Collector host failed to start: " + e.Message; }
     }
 
-    private async void OnPaired()
+    /// <summary>UI thread, right after pairing. Host start and run-at-login go to the thread pool; this completes when both did.</summary>
+    private async Task OnPairedAsync()
     {
         UpdateFingerprints();
         SyncNowCommand.RaiseCanExecuteChanged();
         Settings.Load();
         Settings.EnableRunAtLoginByDefault();
         await StartHostAsync();
+        await Settings.LastWork;
         await RefreshAsync();
     }
 

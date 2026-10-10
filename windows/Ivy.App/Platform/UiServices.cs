@@ -4,16 +4,21 @@ using Windows.Storage.Pickers;
 
 namespace Ivy.App.Platform;
 
-/// <summary><see cref="IUiDispatcher"/> over the WinUI DispatcherQueue; runs inline when already on the UI thread.</summary>
+/// <summary>
+/// <see cref="IUiDispatcher"/> over the WinUI DispatcherQueue; runs inline when already on the UI thread.
+/// Returns TryEnqueue's result: false means the action will never run (the queue is shutting down), and the
+/// caller must undo whatever it set up for it (MainViewModel clears its feed-flush flag and logs a warning).
+/// </summary>
 internal sealed class DispatcherQueueUiDispatcher : IUiDispatcher
 {
     private readonly DispatcherQueue _queue;
     public DispatcherQueueUiDispatcher(DispatcherQueue queue) => _queue = queue;
 
-    public void Post(Action action)
+    public bool Post(Action action)
     {
-        if (_queue.HasThreadAccess) action();
-        else _queue.TryEnqueue(() => action());
+        if (!_queue.HasThreadAccess) return _queue.TryEnqueue(() => action());
+        action();
+        return true;
     }
 }
 
@@ -45,8 +50,9 @@ internal static class AppPaths
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "IVY");
 
     public static string KeysDirectory => Path.Combine(DataDirectory, "keys");
-    public static string LogFile => Path.Combine(DataDirectory, "logs", "ivy-app.log");
-    public static string CrashFile => Path.Combine(DataDirectory, "logs", "ivy-app-crash.log");
+    public static string LogDirectory => Path.Combine(DataDirectory, "logs");
+    public static string LogFile => Path.Combine(LogDirectory, "ivy-app.log");
+    public static string CrashFile => Path.Combine(LogDirectory, "ivy-app-crash.log");
     public static string ExePath => Environment.ProcessPath ?? Path.Combine(AppContext.BaseDirectory, "Ivy.App.exe");
     public static string IconPath => Path.Combine(AppContext.BaseDirectory, "Assets", "ivy.ico");
 

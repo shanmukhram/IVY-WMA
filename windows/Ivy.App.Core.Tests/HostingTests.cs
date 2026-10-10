@@ -104,6 +104,7 @@ public class VaultAgentViewTests : IDisposable
         var (code, macFp) = r2.MacPrepares(DateTimeOffset.UtcNow);
         vm.Pairing.PairingText = code[..20] + "\r\n" + code[20..]; // a line break picked up while copying
         await vm.Pairing.PairAsync();
+        await vm.LastHostWork;
         Assert.True(vm.Pairing.Completed, vm.Pairing.Status);
         Assert.Equal(macFp, vm.Pairing.MacFingerprint);
         Assert.Equal(agent.PairingState!.DeviceFingerprint, vm.Pairing.DeviceFingerprint);

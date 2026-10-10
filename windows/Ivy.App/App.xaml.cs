@@ -1,10 +1,12 @@
 using Ivy.App.Core;
+using Ivy.App.Core.Diagnostics;
 using Ivy.App.Core.Hosting;
 using Ivy.App.Core.ViewModels;
 using Ivy.App.Hosting;
 using Ivy.App.Platform;
 using Ivy.Core.Agent;
 using Ivy.Core.KeyStore;
+using Ivy.Core.Storage;
 using Microsoft.Extensions.Logging;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Windowing;
@@ -31,6 +33,9 @@ public partial class App : Application
     private TrayIcon? _tray;
     private DispatcherQueueTimer? _timer;
     private DispatcherQueue? _dispatcher;
+    private UiWatchdog? _watchdog;
+    private WindowEventLog? _windowEvents;
+    private DateTimeOffset? _lastTickAt;
     private bool _quitting;
     private int _hiddenTicks;
 
@@ -57,6 +62,14 @@ public partial class App : Application
             _log = _loggers.CreateLogger("Ivy.App");
             _log.LogInformation("IVY {Version} starting (minimized={Minimized}) data={Dir}", AppPaths.Version, minimized, AppPaths.DataDirectory);
 
+            // Hang diagnostics (second Windows run, AppHangB1): VaultDb writes on this thread are logged, the
+            // usage probe never sends WM_GETTEXT to our own window, and a watchdog reports and dumps a stuck UI.
+            IvyUiThread.SetCurrent();
+            IvyUiThread.Logger = _loggers.CreateLogger("Ivy.UiThreadGuard");
+            Ivy.Collectors.Usage.ForegroundTitleReader.OwnProcessTitle = "IVY";
+            _watchdog = new UiWatchdog(_dispatcher, SampleUi, _loggers.CreateLogger("Ivy.Watchdog"), AppPaths.LogDirectory);
+            _watchdog.Start();
+
             var keys = DeviceKeyStores.CreateDefault(AppPaths.KeysDirectory); // DPAPI, CurrentUser (WP3)
             _agent = new VaultAgent(new VaultAgentOptions
             {
@@ -64,16 +77,17 @@ public partial class App : Application
                 Reporter = new DeviceReporterOptions { AppVersion = AppPaths.Version },
             }, keys, loggers: _loggers);
             await _agent.StartAsync();
-            _view = new VaultAgentView(_agent);
+            _view = new VaultAgentView(_agent); // reads the paired state once; the UI uses the cached value
             _host = CollectorHostAdapter.Create(_agent, _loggers, AppPaths.KeysDirectory);
 
             var picker = new FolderPickerService(() => _window?.Hwnd ?? IntPtr.Zero);
             _vm = new MainViewModel(_view, _host, new DispatcherQueueUiDispatcher(_dispatcher), new RegistryStartupRegistration(),
-                picker.PickAsync, AppPaths.ExePath, AppPaths.Version, openFile: OpenInShell);
+                picker.PickAsync, AppPaths.ExePath, AppPaths.Version, openFile: OpenInShell, log: _loggers.CreateLogger("Ivy.App.Ui"));
             _window = new MainWindow(_vm);
             _window.AppWindow.Closing += OnWindowClosing;
+            _windowEvents = new WindowEventLog(_window, _window.Hwnd, _log);
 
-            _tray = new TrayIcon(AppPaths.IconPath, "IVY", ShowWindow, TrayMenu, e => _log?.LogError(e, "tray handler failed"));
+            _tray = new TrayIcon(AppPaths.IconPath, "IVY", ShowWindow, TrayMenu, e => _log?.LogError(e, "tray handler failed"), _log);
             Program.RedirectedActivation += (_, _) => _dispatcher.TryEnqueue(ShowWindow);
 
             await _vm.StartAsync();
@@ -96,13 +110,26 @@ public partial class App : Application
     private async void OnTick(DispatcherQueueTimer sender, object args)
     {
         if (_vm is null || _window is null) return;
-        if (_tray is not null) _tray.Tooltip = "IVY: " + _vm.RunStateText + ", " + _vm.PendingObjectsText + " queued";
-        // Hidden: refresh every 10 s only, to keep the tray tooltip roughly current. The workers do not depend on this timer.
-        if (!_window.AppWindow.IsVisible && ++_hiddenTicks % 10 != 0) return;
+        using (UiBreadcrumb.Enter("OnTick"))
+        {
+            _lastTickAt = DateTimeOffset.UtcNow;
+            // The tray applies it (on its own thread) only when the text changed.
+            if (_tray is not null) _tray.Tooltip = "IVY: " + _vm.RunStateText + ", " + _vm.PendingObjectsText + " queued";
+            // Hidden: refresh every 10 s only, to keep the tray tooltip roughly current. The workers do not depend on this timer.
+            if (!_window.AppWindow.IsVisible && ++_hiddenTicks % 10 != 0) return;
+        }
+        // Not inside the breadcrumb: the UI thread is free while the refresh gathers on the pool (Apply has its own).
         try { await _vm.RefreshAsync(); }
         catch (Exception e) { _log?.LogWarning(e, "refresh failed"); }
     }
 
+    /// <summary>UI thread, with each watchdog heartbeat.</summary>
+    private UiSample SampleUi() => new(_vm?.Feed.Items.Count ?? 0, _window?.AppWindow.IsVisible == true, _lastTickAt);
+
+    /// <summary>
+    /// Runs on the tray thread: reads cached state only (labels, the cached paired flag). The actions run on the UI
+    /// thread (the tray marshals them through the DispatcherQueue).
+    /// </summary>
     private IReadOnlyList<TrayMenuItem> TrayMenu()
     {
         var paired = _view?.IsPaired == true;
@@ -112,7 +139,7 @@ public partial class App : Application
             new TrayMenuItem(_vm?.PauseMenuText ?? "Pause", () => _vm?.TogglePause(), paired),
             new TrayMenuItem("Sync now", () => _vm?.SyncNowCommand.Execute(null), paired && _vm?.SyncNowCommand.CanExecute(null) == true),
             TrayMenuItem.Separator,
-            new TrayMenuItem("Quit", () => _dispatcher?.TryEnqueue(() => _ = QuitAsync())),
+            new TrayMenuItem("Quit", () => _ = QuitAsync()),
         };
     }
 
@@ -126,6 +153,7 @@ public partial class App : Application
     private void ShowWindow()
     {
         if (_window is null) return;
+        using var crumb = UiBreadcrumb.Enter("ShowWindow");
         if (_window.AppWindow.Presenter is OverlappedPresenter { State: OverlappedPresenterState.Minimized } p) p.Restore();
         _window.AppWindow.Show();
         _window.Activate();
@@ -137,6 +165,7 @@ public partial class App : Application
     private void OnWindowClosing(AppWindow sender, AppWindowClosingEventArgs args)
     {
         if (_quitting) return;
+        _log?.LogInformation("window: close requested; hiding to the tray");
         args.Cancel = true;
         sender.Hide();
     }
@@ -147,6 +176,8 @@ public partial class App : Application
         _quitting = true;
         _log?.LogInformation("quit requested");
         _timer?.Stop();
+        _watchdog?.Dispose();
+        _windowEvents?.Dispose();
         _tray?.Dispose();
         _window?.AppWindow.Hide();
         try

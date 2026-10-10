@@ -142,6 +142,7 @@ windows/
 - **Coalescing:** consecutive samples with the same exe and recorded title extend one event.
 - **When an event closes:** when the foreground changes (ended at the new sample), when there is no foreground window, after `idleMinutes` without input (ended at the last input, from GetLastInputInfo), or every `maxEventMinutes` for long sessions (the session continues as a new event).
 - **Crash recovery:** the open interval is saved every sample. After a crash it is emitted ending at its last sample.
+- **Title read (hang diagnostics):** titles are read with `SendMessageTimeout(WM_GETTEXT, SMTO_ABORTIFHUNG, 500 ms)`, never `GetWindowTextW`, so a hung foreground window cannot stall the collector. IVY's own windows are never asked; they are recorded with the app's title (`ForegroundTitleReader.OwnProcessTitle`, `IVY`). See `Ivy.App/README.md`, "Hang diagnostics", for the app-side watchdog, heartbeat lines and hang dumps.
 
 **Notifications:**
 - **Snapshot read:** each poll copies `wpndatabase.db`, `-wal` and `-shm` to a private temp directory using shared-read streams. It retries until the three files' sizes and mtimes match before and after the copy, then queries the copy (the WAL is applied) and deletes it.
