@@ -53,10 +53,12 @@ public sealed class SettingsViewModel : ObservableObject
         ApplyCapsCommand = new RelayCommand(ApplyCaps);
         ResyncConversationsCommand = new AsyncRelayCommand(ResyncConversationsAsync);
         IndexStandardFoldersCommand = new AsyncRelayCommand(IndexStandardFoldersAsync);
+        CatalogMyPcCommand = new AsyncRelayCommand(CatalogMyPcAsync);
     }
 
     public AsyncRelayCommand ResyncConversationsCommand { get; }
     public AsyncRelayCommand IndexStandardFoldersCommand { get; }
+    public AsyncRelayCommand CatalogMyPcCommand { get; }
     private string _maintenanceStatus = "";
     public string MaintenanceStatus { get => _maintenanceStatus; private set => Set(ref _maintenanceStatus, value); }
 
@@ -79,6 +81,19 @@ public sealed class SettingsViewModel : ObservableObject
             MaintenanceStatus = "Indexed roots: " + string.Join(", ", roots);
         }
         catch (Exception e) { MaintenanceStatus = "Add folders failed: " + e.Message; }
+    }
+
+    private async Task CatalogMyPcAsync()
+    {
+        MaintenanceStatus = "Starting catalogue...";
+        try
+        {
+            var task = _work.Run(() => _host.CatalogMyPcAsync());
+            LastWork = task;
+            var roots = await task;
+            MaintenanceStatus = "Cataloguing (names, sizes, dates only): " + string.Join(", ", roots);
+        }
+        catch (Exception e) { MaintenanceStatus = "Catalogue failed: " + e.Message; }
     }
 
     public StringListViewModel IndexedRoots { get; }

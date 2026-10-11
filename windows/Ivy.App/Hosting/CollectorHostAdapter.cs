@@ -160,6 +160,7 @@ public sealed class CollectorHostAdapter : ICollectorHostView
 
     private const string Telegram = "telegram";
     private const string Line = "line";
+    private const string Catalog = "catalog";
 
     public async Task ApplyTelegramPasscodeAsync(string passcode)
     {
@@ -204,6 +205,15 @@ public sealed class CollectorHostAdapter : ICollectorHostView
             if (seen.Add(folder)) merged.Add(folder);
         await UpdateAsync(Files, new() { ["roots"] = JsonSerializer.SerializeToElement(merged) });
         return merged;
+    }
+
+    public async Task<IReadOnlyList<string>> CatalogMyPcAsync()
+    {
+        // Metadata-only listing of every file (names, sizes, dates; no contents). The catalog collector is
+        // idle until its roots are set; this sets them to the whole-PC scope so it starts listing.
+        var roots = Ivy.Core.Policy.MediaPolicyDefaults.CatalogScope();
+        await UpdateAsync(Catalog, new() { ["roots"] = JsonSerializer.SerializeToElement(roots) });
+        return roots;
     }
 
     public bool LineHasKey => _host.Get<LineDesktopCollector>().HasKey;

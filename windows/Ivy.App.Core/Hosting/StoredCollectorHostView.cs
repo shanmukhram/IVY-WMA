@@ -80,6 +80,7 @@ public sealed class StoredCollectorHostView : ICollectorHostView
     public string? LineReportPath => null;
     public Task ResyncConversationsAsync() => Task.CompletedTask;
     public Task<IReadOnlyList<string>> IndexStandardFoldersAsync() => Task.FromResult(GetSettings().IndexedRoots);
+    public Task<IReadOnlyList<string>> CatalogMyPcAsync() => Task.FromResult<IReadOnlyList<string>>(System.Array.Empty<string>());
 
     public ValueTask DisposeAsync() => ValueTask.CompletedTask;
 

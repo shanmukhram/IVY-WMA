@@ -188,6 +188,8 @@ public sealed class FakeHost : ICollectorHostView
     public Task ResyncConversationsAsync() { ResyncRuns++; return Task.CompletedTask; }
     public List<string> StandardFolders { get; } = new();
     public Task<IReadOnlyList<string>> IndexStandardFoldersAsync() { StandardFolders.Add("standard"); return Task.FromResult<IReadOnlyList<string>>(StandardFolders); }
+    public int CatalogRuns { get; private set; }
+    public Task<IReadOnlyList<string>> CatalogMyPcAsync() { CatalogRuns++; return Task.FromResult<IReadOnlyList<string>>(new[] { @"C:\Users\me" }); }
 }
 
 public sealed class FakeStartup : IStartupRegistration

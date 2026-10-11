@@ -48,6 +48,9 @@
                         <Button Content="Index my standard folders"
                                 Command="{x:Bind ViewModel.Settings.IndexStandardFoldersCommand}"
                                 AutomationProperties.Name="Index my standard folders" />
+                        <Button Content="Catalog my PC"
+                                Command="{x:Bind ViewModel.Settings.CatalogMyPcCommand}"
+                                AutomationProperties.Name="Catalog my PC" />
                     </StackPanel>
                     <TextBlock Text="{x:Bind ViewModel.Settings.MaintenanceStatus, Mode=OneWay}"
                                Style="{StaticResource SecondaryTextStyle}" TextWrapping="Wrap" />

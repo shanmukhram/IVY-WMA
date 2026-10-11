@@ -105,4 +105,9 @@ public interface ICollectorHostView : IAsyncDisposable
     /// <summary>Add the standard user folders (Downloads, Desktop, Documents, Pictures that exist) to the file
     /// index roots, de-duped against the current roots. Returns the resulting roots.</summary>
     Task<IReadOnlyList<string>> IndexStandardFoldersAsync();
+
+    /// <summary>Set the catalog collector's roots to the whole-PC catalog scope (profile and data drives, OS
+    /// excluded), so it starts listing every file's metadata (names, sizes, dates; no contents). Returns the
+    /// roots set.</summary>
+    Task<IReadOnlyList<string>> CatalogMyPcAsync();
 }

@@ -459,6 +459,7 @@ public class MainViewModelTests
         public string? LineReportPath => null;
         public Task ResyncConversationsAsync() => Task.CompletedTask;
         public Task<IReadOnlyList<string>> IndexStandardFoldersAsync() => Task.FromResult<IReadOnlyList<string>>(System.Array.Empty<string>());
+        public Task<IReadOnlyList<string>> CatalogMyPcAsync() => Task.FromResult<IReadOnlyList<string>>(System.Array.Empty<string>());
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 }
