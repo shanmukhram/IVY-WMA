@@ -40,6 +40,14 @@ export const FileMetaRecord = z.object({
    */
   originalBlobOid: z.string().min(1).optional(),
   /**
+   * True when this is a catalog entry: metadata only (name, size, mtime), no thumbnail and no
+   * original uploaded, recorded so the Mac can browse everything on the device and fetch any file's
+   * bytes on demand (fetch issues a `file_request`; the original then persists in R2 and caches on the
+   * Mac). Default false. Catalog entries populate the device file browser, not the main indexed-files
+   * list, until they are fetched. An indexed root's files are not catalogOnly (the media policy applies).
+   */
+  catalogOnly: z.boolean().optional(),
+  /**
    * True when this record reports a deletion (default false). When true, `size`,
    * `mtime` and `quickHash` MAY be omitted and `eventTime` is when the deletion was
    * observed. A live record (deleted absent/false) still carries all three.
@@ -50,7 +58,8 @@ export const FileMetaRecord = z.object({
   if (!r.deleted) {
     if (r.size === undefined) ctx.addIssue({ code: "custom", path: ["size"], message: "size is required unless deleted" });
     if (r.mtime === undefined) ctx.addIssue({ code: "custom", path: ["mtime"], message: "mtime is required unless deleted" });
-    if (r.quickHash === undefined) ctx.addIssue({ code: "custom", path: ["quickHash"], message: "quickHash is required unless deleted" });
+    // a catalog entry is metadata only and never hashed; everything else carries a quickHash
+    if (!r.catalogOnly && r.quickHash === undefined) ctx.addIssue({ code: "custom", path: ["quickHash"], message: "quickHash is required unless deleted or catalogOnly" });
   }
 });
 

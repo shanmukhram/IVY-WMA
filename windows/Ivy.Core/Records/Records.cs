@@ -75,6 +75,14 @@ public sealed record FileMetaRecord() : IvyRecord(Protocol.Kind.FileMeta)
     [JsonPropertyName("originalBlobOid")] public string? OriginalBlobOid { get; init; }
 
     /// <summary>
+    /// True when this is a catalog entry: metadata only (name, size, mtime), no thumbnail, no original and
+    /// no quick hash (hashing would mean reading the file). Recorded so the Mac can browse everything on the
+    /// device and fetch a file's bytes on demand. Default false; omitted from the wire when false.
+    /// </summary>
+    [JsonPropertyName("catalogOnly"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public bool CatalogOnly { get; init; }
+
+    /// <summary>
     /// True when this record reports a deletion (default false; omitted from the wire when false). When
     /// true, <c>size</c>/<c>mtime</c>/<c>quickHash</c> MAY be omitted and <c>eventTime</c> is when the
     /// deletion was observed. A live record still carries all three.
@@ -92,7 +100,7 @@ public sealed record FileMetaRecord() : IvyRecord(Protocol.Kind.FileMeta)
         {
             if (Size is null) throw new RecordValidationException("size is required unless deleted");
             Require(Mtime, "mtime");
-            Require(QuickHash, "quickHash");
+            if (!CatalogOnly) Require(QuickHash, "quickHash"); // a catalog entry is metadata only, never hashed
         }
     }
 }
