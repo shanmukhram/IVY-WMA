@@ -12,14 +12,32 @@ public sealed record LineKeepItem(string ContentId, DateTimeOffset? CreatedAt, s
 /// </summary>
 public static class LineKeep
 {
-    /// <summary>The keep store file in the LINE data folder, if present.</summary>
-    public static string? FindKeepDb(string dataFolder)
+    /// <summary>
+    /// The keep store file that belongs to the open chat store. LINE names an account's stores after the same
+    /// id: chat store <c>qw&lt;hex&gt;.edb</c>, Keep store <c>keep_qw&lt;hex&gt;.edb</c>. With
+    /// <paramref name="chatDbPath"/> given, the Keep store named after it wins. If no file has that name and there
+    /// is exactly one Keep store, that one is used (a single account whose naming differs); with several Keep
+    /// stores and none matching, null, so another account's Keep is never read under this account.
+    /// Without <paramref name="chatDbPath"/>, the only Keep store, or null when there are several.
+    /// </summary>
+    public static string? FindKeepDb(string dataFolder, string? chatDbPath = null)
     {
         if (!Directory.Exists(dataFolder)) return null;
-        foreach (var f in Directory.EnumerateFiles(dataFolder, "keep_*.edb", SearchOption.AllDirectories))
-            if (!f.EndsWith("-wal", StringComparison.OrdinalIgnoreCase) && !f.EndsWith("-shm", StringComparison.OrdinalIgnoreCase))
-                return f;
-        return null;
+        var candidates = Directory.EnumerateFiles(dataFolder, "keep_*.edb", SearchOption.AllDirectories)
+            .Where(f => f.EndsWith(".edb", StringComparison.OrdinalIgnoreCase))
+            .OrderBy(f => f, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        if (chatDbPath is not null)
+        {
+            var wanted = "keep_" + Path.GetFileNameWithoutExtension(chatDbPath) + ".edb";
+            var chatDir = Path.GetDirectoryName(Path.GetFullPath(chatDbPath));
+            var named = candidates.Where(f => string.Equals(Path.GetFileName(f), wanted, StringComparison.OrdinalIgnoreCase)).ToList();
+            // Prefer the one beside the chat store if the same name appears in more than one folder.
+            var match = named.FirstOrDefault(f => string.Equals(Path.GetDirectoryName(Path.GetFullPath(f)), chatDir, StringComparison.OrdinalIgnoreCase))
+                        ?? named.FirstOrDefault();
+            if (match is not null) return match;
+        }
+        return candidates.Count == 1 ? candidates[0] : null;
     }
 
     /// <summary>Read the Keep items from a plaintext keep database path.</summary>

@@ -1080,6 +1080,322 @@ public class LineCollectorTests : IDisposable
         batches.Sum(b => b.Root.GetProperty("messages").GetArrayLength());
 }
 
+/// <summary>
+/// Two LINE accounts used in turn on one PC: LINE keeps one store per account (<c>qw&lt;hex&gt;.edb</c>), the
+/// logged-in one marked by its <c>-wal</c> sidecar. Records carry that account's own mid, and cursors, the
+/// account-snapshot hash and Keep are kept per account.
+/// </summary>
+public class LineMultiAccountTests : IDisposable
+{
+    private readonly TempDir _dir = new();
+    private readonly TestEnv _env;
+    private readonly string _dataFolder;
+    private static readonly byte[] Key = System.Text.Encoding.ASCII.GetBytes("0123456789abcdef0123456789abcdef");
+
+    public LineMultiAccountTests()
+    {
+        _env = new TestEnv(_dir);
+        _dataFolder = _dir.Sub("LINE", "Data", "db");
+    }
+
+    public void Dispose()
+    {
+        _env.Dispose();
+        _dir.Dispose();
+    }
+
+    private LineDesktopCollector NewCollector(LineSettings? settings = null, ILineKeyStore? keyStore = null, CollectorContext? ctx = null) =>
+        new(ctx ?? _env.Context, settings ?? new LineSettings(),
+            roots: new[] { new LineProbeRoot("test", _dataFolder) },
+            reportDir: _dir.Sub("report"),
+            tempRoot: _dir.Sub("line-tmp"),
+            keyStore: keyStore);
+
+    private string Store(string name, Action<SqliteConnection> seed)
+    {
+        var path = LineFixture.Create(_dataFolder, name);
+        Seed(path, seed);
+        return path;
+    }
+
+    private static void Seed(string path, Action<SqliteConnection> seed)
+    {
+        using (var c = LineFixture.Open(path)) seed(c);
+        SqliteConnection.ClearAllPools();
+    }
+
+    private static void EncryptInPlace(string path)
+    {
+        SqliteConnection.ClearAllPools();
+        var plain = File.ReadAllBytes(path);
+        File.WriteAllBytes(path, LineWxCipher.Encrypt(plain, LineWxCipher.DeriveKey(Key), (plain[16] << 8) | (plain[17] << 16)));
+    }
+
+    // Mark which store is the logged-in one, the way LINE does: only that store has a -wal beside it.
+    private static void MakeActive(string active, params string[] others)
+    {
+        File.WriteAllBytes(active + "-wal", Array.Empty<byte>());
+        foreach (var o in others) if (File.Exists(o + "-wal")) File.Delete(o + "-wal");
+    }
+
+    private IReadOnlyList<CapturedRecord> Batches() => _env.Sink.Of(Kind.MessageBatch);
+
+    private static string Account(CapturedRecord r) => r.Root.GetProperty("account").GetString()!;
+
+    private static List<string> MessageIds(IEnumerable<CapturedRecord> batches) =>
+        batches.SelectMany(b => b.Root.GetProperty("messages").EnumerateArray())
+            .Select(m => m.GetProperty("msgId").GetString()!).OrderBy(s => s, StringComparer.Ordinal).ToList();
+
+    // An encrypted chat store with an own profile and a Keep store named after it, as LINE lays them out.
+    private void EncryptedStoreWithKeep(string storeName, string ownMid)
+    {
+        var store = Store(storeName, c =>
+        {
+            LineFixture.OwnProfile(c, ownMid, "Me");
+            LineFixture.Chat(c, "uX");
+            LineFixture.Message(c, "m1", "uX", "uX", 1_760_000_000_000, "hi");
+        });
+        EncryptInPlace(store);
+        var keep = LineFixture.CreateKeep(_dataFolder, "keep_" + Path.GetFileNameWithoutExtension(storeName) + ".edb");
+        Seed(keep, kc => LineFixture.Keep(kc, "k1", 1_760_000_000_000, "My note", "TEXT"));
+        EncryptInPlace(keep);
+    }
+
+    [Fact]
+    public async Task Batches_keep_and_account_records_carry_the_own_profile_mid_as_account()
+    {
+        EncryptedStoreWithKeep("qwaaa.edb", "uME");
+
+        var line = NewCollector(keyStore: new InMemoryLineKeyStore(Key));
+        await line.StartAsync(default);
+        await line.TickAsync(default);
+
+        Assert.Equal(LineState.OkPartial, line.State);
+        Assert.Equal("uME", line.CurrentAccount);
+        Assert.Contains("uME", line.Detail);
+        var batches = Batches();
+        Assert.Contains(batches, b => b.Root.GetProperty("convKey").GetString() == "keep");
+        Assert.Contains(batches, b => b.Root.GetProperty("convKey").GetString() == "uX");
+        Assert.All(batches, b => Assert.Equal("uME", Account(b)));
+        Assert.Equal("uME", Account(_env.Sink.Of(Kind.LineAccount).Single()));
+    }
+
+    [Fact]
+    public async Task An_explicit_account_setting_overrides_the_mid()
+    {
+        EncryptedStoreWithKeep("qwaaa.edb", "uME");
+
+        var line = NewCollector(new LineSettings { Account = "work" }, new InMemoryLineKeyStore(Key));
+        await line.StartAsync(default);
+        await line.TickAsync(default);
+
+        Assert.Equal("work", line.CurrentAccount);
+        Assert.Contains(Batches(), b => b.Root.GetProperty("convKey").GetString() == "keep");
+        Assert.All(Batches(), b => Assert.Equal("work", Account(b)));
+        Assert.Equal("work", Account(_env.Sink.Of(Kind.LineAccount).Single()));
+        // Cursors are still kept per store (by its mid), not under the label.
+        Assert.NotNull(_env.Context.Settings.LoadJson(CollectorNames.Line, "cursors:uME"));
+    }
+
+    [Fact]
+    public async Task Without_a_readable_mid_the_store_file_name_is_the_account()
+    {
+        Store("qwfeed.edb", c => { LineFixture.Chat(c, "uX"); LineFixture.Message(c, "m1", "uX", "uX", 1_760_000_000_000, "hi"); });
+
+        var line = NewCollector();
+        await line.StartAsync(default);
+        await line.TickAsync(default);
+
+        Assert.Equal("qwfeed", line.CurrentAccount);
+        Assert.Equal("qwfeed", Account(Batches().Single()));
+    }
+
+    [Fact]
+    public async Task Switching_the_active_store_changes_the_account_and_uses_its_own_cursors()
+    {
+        // Both accounts have a chat with the same id, so a shared cursor would hide account B's message.
+        var a = Store("qwaaa.edb", c =>
+        {
+            LineFixture.OwnProfile(c, "uA", "Work me");
+            LineFixture.Chat(c, "uSAME");
+            LineFixture.Message(c, "a1", "uSAME", "uSAME", 1_760_000_000_000, "work one");
+            LineFixture.Message(c, "a2", "uSAME", "uSAME", 1_760_000_100_000, "work two");
+        });
+        var b = Store("qwbbb.edb", c =>
+        {
+            LineFixture.OwnProfile(c, "uB", "Personal me");
+            LineFixture.Chat(c, "uSAME");
+            LineFixture.Message(c, "b1", "uSAME", "uSAME", 1_760_000_000_000, "personal one");
+        });
+
+        MakeActive(a, b);
+        var line = NewCollector();
+        await line.StartAsync(default);
+        await line.TickAsync(default);
+        Assert.Equal("uA", line.CurrentAccount);
+        Assert.Equal(new[] { "a1", "a2" }, MessageIds(Batches()));
+        Assert.All(Batches(), r => Assert.Equal("uA", Account(r)));
+        Assert.Equal("uA", Account(_env.Sink.Of(Kind.LineAccount).Single()));
+
+        // Log in with the other account: B is read from its own start, under its own mid.
+        _env.Sink.Clear();
+        Seed(a, c => LineFixture.Message(c, "a3", "uSAME", "uSAME", 1_760_000_200_000, "work three"));
+        MakeActive(b, a);
+        await line.TickAsync(default);
+        Assert.Equal("uB", line.CurrentAccount);
+        Assert.Contains("uB", line.Detail);
+        Assert.Equal(new[] { "b1" }, MessageIds(Batches()));
+        Assert.All(Batches(), r => Assert.Equal("uB", Account(r)));
+        Assert.Equal("uB", Account(_env.Sink.Of(Kind.LineAccount).Single()));
+        Assert.Contains(_env.Activity.Recent(), e => e.Event == CollectorActivity.Config && e.Detail != null && e.Detail.Contains("uA -> uB"));
+
+        // Back to the first account: its own cursors are reused, so only the new message goes out.
+        _env.Sink.Clear();
+        MakeActive(a, b);
+        await line.TickAsync(default);
+        Assert.Equal("uA", line.CurrentAccount);
+        Assert.Equal(new[] { "a3" }, MessageIds(Batches()));
+        Assert.All(Batches(), r => Assert.Equal("uA", Account(r)));
+        Assert.Empty(_env.Sink.Of(Kind.LineAccount));   // A's snapshot is unchanged since it was last sent
+
+        var ca = (System.Text.Json.Nodes.JsonObject)_env.Context.Settings.LoadJson(CollectorNames.Line, "cursors:uA")!;
+        var cb = (System.Text.Json.Nodes.JsonObject)_env.Context.Settings.LoadJson(CollectorNames.Line, "cursors:uB")!;
+        Assert.Equal(3, (long)ca["uSAME"]!);
+        Assert.Equal(1, (long)cb["uSAME"]!);
+    }
+
+    [Fact]
+    public async Task A_resync_while_one_account_is_open_also_rereads_the_other_when_it_returns()
+    {
+        var a = Store("qwaaa.edb", c => { LineFixture.OwnProfile(c, "uA", "A"); LineFixture.Chat(c, "c1"); LineFixture.Message(c, "a1", "c1", "c1", 1_760_000_000_000, "x"); });
+        var b = Store("qwbbb.edb", c => { LineFixture.OwnProfile(c, "uB", "B"); LineFixture.Chat(c, "c2"); LineFixture.Message(c, "b1", "c2", "c2", 1_760_000_000_000, "y"); });
+        var line = NewCollector();
+        await line.StartAsync(default);
+        MakeActive(a, b); await line.TickAsync(default);
+        MakeActive(b, a); await line.TickAsync(default);
+        MakeActive(a, b); await line.TickAsync(default);
+
+        _env.Sink.Clear();
+        line.RequestResync();
+        await line.TickAsync(default);                       // applied to A, which is open
+        Assert.Equal(new[] { "a1" }, MessageIds(Batches()));
+
+        _env.Sink.Clear();
+        MakeActive(b, a);
+        await line.TickAsync(default);                       // B re-reads from the start when it is next open
+        Assert.Equal(new[] { "b1" }, MessageIds(Batches()));
+
+        _env.Sink.Clear();
+        await line.TickAsync(default);                       // and only once
+        Assert.Empty(Batches());
+    }
+
+    [Fact]
+    public async Task AccountKeyV1_resends_once_under_the_mid_and_moves_the_legacy_cursors()
+    {
+        var store = Store("qwaaa.edb", c =>
+        {
+            LineFixture.OwnProfile(c, "uME", "Me");
+            LineFixture.Chat(c, "uBOB");
+            LineFixture.Message(c, "m1", "uBOB", "uBOB", 1_760_000_000_000, "one");
+            LineFixture.Message(c, "m2", "uBOB", "uBOB", 1_760_000_100_000, "two");
+        });
+        // An install from before accounts were told apart: one cursors blob covering everything, names already done.
+        _env.Context.Settings.SaveJson(CollectorNames.Line, "cursors", new System.Text.Json.Nodes.JsonObject { ["uBOB"] = 1_000_000 });
+        _env.Context.Settings.SaveJson(CollectorNames.Line, "namesV2", System.Text.Json.Nodes.JsonValue.Create(true));
+
+        var line = NewCollector();
+        await line.StartAsync(default);
+        Assert.Null(_env.Context.Settings.LoadJson(CollectorNames.Line, "accountKeyV1"));   // not applied before a tick
+        await line.TickAsync(default);
+
+        Assert.NotNull(_env.Context.Settings.LoadJson(CollectorNames.Line, "accountKeyV1"));
+        Assert.Equal(new[] { "m1", "m2" }, MessageIds(Batches()));                      // every chat re-sent
+        Assert.All(Batches(), b => Assert.Equal("uME", Account(b)));                    // under the mid
+        Assert.Null(_env.Context.Settings.LoadJson(CollectorNames.Line, "cursors"));    // legacy blob gone
+        var moved = (System.Text.Json.Nodes.JsonObject)_env.Context.Settings.LoadJson(CollectorNames.Line, "cursors:uME")!;
+        Assert.Equal(2, (long)moved["uBOB"]!);
+
+        _env.Sink.Clear();
+        var restarted = NewCollector(ctx: _env.Restart());
+        await restarted.StartAsync(default);
+        await restarted.TickAsync(default);
+        Assert.Empty(Batches());                                                        // only once
+        Assert.True(File.Exists(store));
+    }
+
+    [Fact]
+    public async Task Legacy_cursors_move_to_the_open_account_without_a_resend_once_the_flag_is_set()
+    {
+        Store("qwaaa.edb", c =>
+        {
+            LineFixture.OwnProfile(c, "uME", "Me");
+            LineFixture.Chat(c, "uBOB");
+            LineFixture.Message(c, "m1", "uBOB", "uBOB", 1_760_000_000_000, "one");
+        });
+        _env.Context.Settings.SaveJson(CollectorNames.Line, "cursors", new System.Text.Json.Nodes.JsonObject { ["uBOB"] = 1_000_000 });
+        _env.Context.Settings.SaveJson(CollectorNames.Line, "namesV2", System.Text.Json.Nodes.JsonValue.Create(true));
+        _env.Context.Settings.SaveJson(CollectorNames.Line, "accountKeyV1", System.Text.Json.Nodes.JsonValue.Create(true));
+
+        var line = NewCollector();
+        await line.StartAsync(default);
+        await line.TickAsync(default);
+
+        Assert.Empty(Batches());
+        Assert.Null(_env.Context.Settings.LoadJson(CollectorNames.Line, "cursors"));
+        var moved = (System.Text.Json.Nodes.JsonObject)_env.Context.Settings.LoadJson(CollectorNames.Line, "cursors:uME")!;
+        Assert.Equal(1_000_000, (long)moved["uBOB"]!);
+    }
+
+    [Fact]
+    public void Keep_db_selection_follows_the_open_chat_store()
+    {
+        var a = LineFixture.Create(_dataFolder, "qwaaa.edb");
+        var b = LineFixture.Create(_dataFolder, "qwbbb.edb");
+        var keepA = LineFixture.CreateKeep(_dataFolder, "keep_qwaaa.edb");   // sorts first
+        var keepB = LineFixture.CreateKeep(_dataFolder, "keep_qwbbb.edb");
+        SqliteConnection.ClearAllPools();
+        File.WriteAllBytes(keepB + "-wal", new byte[1_000_000]);            // a sidecar is never picked
+
+        Assert.Equal(keepA, LineKeep.FindKeepDb(_dataFolder, a));
+        Assert.Equal(keepB, LineKeep.FindKeepDb(_dataFolder, b));
+        // Several Keep stores and none named after the chat store: none is guessed.
+        Assert.Null(LineKeep.FindKeepDb(_dataFolder, Path.Combine(_dataFolder, "qwccc.edb")));
+        Assert.Null(LineKeep.FindKeepDb(_dataFolder));
+
+        // A single Keep store is used even if its name does not match (one account, other naming).
+        var solo = _dir.Sub("solo");
+        var chat = LineFixture.Create(solo, "chat.edb");
+        var keep = LineFixture.CreateKeep(solo, "keep_abc.edb");
+        SqliteConnection.ClearAllPools();
+        Assert.Equal(keep, LineKeep.FindKeepDb(solo, chat));
+    }
+
+    [Fact]
+    public async Task Keep_for_the_second_account_is_read_from_its_own_keep_store()
+    {
+        EncryptedStoreWithKeep("qwaaa.edb", "uA");
+        EncryptedStoreWithKeep("qwbbb.edb", "uB");
+        var a = Path.Combine(_dataFolder, "qwaaa.edb");
+        var b = Path.Combine(_dataFolder, "qwbbb.edb");
+        // Give B's Keep a different item so the two are told apart.
+        var keepB = Path.Combine(_dataFolder, "keep_qwbbb.edb");
+        File.Delete(keepB);
+        LineFixture.CreateKeep(_dataFolder, "keep_qwbbb.edb");
+        Seed(keepB, kc => LineFixture.Keep(kc, "kB", 1_760_000_000_000, "Personal note", "TEXT"));
+        EncryptInPlace(keepB);
+
+        var line = NewCollector(keyStore: new InMemoryLineKeyStore(Key));
+        await line.StartAsync(default);
+        MakeActive(b, a);
+        await line.TickAsync(default);
+
+        var keep = Batches().Single(r => r.Root.GetProperty("convKey").GetString() == "keep");
+        Assert.Equal("uB", Account(keep));
+        Assert.Equal(new[] { "kB" }, MessageIds(new[] { keep }));
+    }
+}
+
 /// <summary><see cref="LineWal.ReadCommitted"/> on hand-built WAL bytes.</summary>
 public class LineWalReadCommittedTests
 {

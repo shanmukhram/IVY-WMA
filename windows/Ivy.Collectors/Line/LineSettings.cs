@@ -15,7 +15,12 @@ public sealed class LineSettings
     /// <summary>The installed LINE for Windows version, if known; drives map selection and re-verification.</summary>
     public string? Version { get; init; }
 
-    /// <summary>The LINE account these chats belong to (WX1 merge key); one account → "default".</summary>
+    /// <summary>
+    /// The account label put on every LINE record (part of the WX1 merge key). Left at "default", the collector
+    /// labels records with the open store's own account id (the own-profile mid, or the store file's
+    /// <c>qw&lt;hex&gt;</c> name if the mid cannot be read), so two LINE accounts used on this PC stay apart.
+    /// Any other value set here is used as the label as is. Cursors are kept per store either way.
+    /// </summary>
     public string Account { get; init; } = "default";
 
     /// <summary>Messages read per chat per tick.</summary>

@@ -40,12 +40,29 @@ public sealed class LineDesktopCollector : Collector<LineSettings>
     private readonly string _reportDir;
     private readonly string _tempRoot;
 
+    // Per-chat cursors of the store that is open now (_storeKey). Each LINE account has its own store, saved
+    // under "cursors:<storeKey>", so switching accounts never reuses another account's cursors.
     private Dictionary<string, long> _cursors = new(StringComparer.Ordinal);
+    private string? _storeKey;   // the open store's identity: its own mid, else the qw<hex> file name
+    private string? _account;    // the label put on records: Settings.Account if set by the user, else _storeKey
     private volatile bool _resyncRequested;
+
+    private const string DefaultAccount = "default";
+    private const string LegacyCursorsKey = "cursors";        // one blob for every account, before accountKeyV1
+    private const string LegacyAccountHashKey = "accountHash";
+    private const string ResyncEpochKey = "resyncEpoch";
+    private static string CursorsKey(string storeKey) => "cursors:" + storeKey;
+    private static string AccountHashKey(string storeKey) => "accountHash:" + storeKey;
+    private static string EpochKey(string storeKey) => "resyncEpoch:" + storeKey;
+
+    /// <summary>The account label on the records of the store opened last (shown in the LINE row), or null before the first open.</summary>
+    public string? CurrentAccount => _account;
 
     /// <summary>
     /// Ask the collector to re-read all chats, Keep and the account snapshot on its next tick (the one-time
     /// re-sync), so existing messages re-emit with sides and sender names. The Mac merges by platform message id.
+    /// It applies to the account open now on the next tick, and to each other LINE account on this PC the next
+    /// time its store is the open one.
     /// </summary>
     public void RequestResync() => _resyncRequested = true;
     private string? _verifiedVersion;
@@ -131,15 +148,42 @@ public sealed class LineDesktopCollector : Collector<LineSettings>
 
     public override Task StartAsync(CancellationToken ct)
     {
-        _cursors = LoadCursors();
+        // Cursors and the account-snapshot hash are per account; they load when the first tick opens a store
+        // and learns which account it belongs to (SwitchAccount).
+        _cursors = new Dictionary<string, long>(StringComparer.Ordinal);
+        _storeKey = null;
+        _account = null;
+        _lastAccountHash = null;
+        _lastKeepHash = null;
         _verifiedVersion = null;
-        // The last uploaded account snapshot's content hash survives restarts, so an unchanged snapshot is not re-sent.
-        var savedHash = Context.Settings.LoadJson(Name, "accountHash") as JsonValue;
-        _lastAccountHash = savedHash is not null && savedHash.TryGetValue<string>(out var h) && !string.IsNullOrEmpty(h) ? h : null;
         MigratePollSeconds();
         MigrateNamesV2();
+        MigrateAccountKeyV1();
         return Task.CompletedTask;
     }
+
+    /// <summary>
+    /// One-time: records uploaded before accounts were told apart carry account "default", so a second LINE
+    /// account used on this PC would merge into the first on the Mac (WX1 merges by platform + account +
+    /// conversation + message id). Request one re-sync so every chat is re-sent under the account's own id.
+    /// Same pattern as <see cref="MigrateNamesV2"/>: a fresh install (no saved cursors) records the flag at once;
+    /// otherwise the flag is saved only after a tick has applied the re-sync. The Mac then holds those chats
+    /// twice (under "default" and under the account id) until it removes its "default" LINE records.
+    /// </summary>
+    private void MigrateAccountKeyV1()
+    {
+        if (Context.Settings.LoadJson(Name, "accountKeyV1") is not null) return;
+        if (LoadCursors(LegacyCursorsKey).Count == 0)
+        {
+            Context.Settings.SaveJson(Name, "accountKeyV1", JsonValue.Create(true));
+            return;
+        }
+        _accountKeyMigrationPending = true;
+        RequestResync();
+        Activity(CollectorActivity.Config, "re-sending LINE chats once under the LINE account's own id instead of \"default\", so two LINE accounts on this PC stay apart");
+    }
+
+    private bool _accountKeyMigrationPending;
 
     /// <summary>
     /// One-time: LINE 26.x keeps contact names in a JSON column rather than <c>_displayName</c>, so messages
@@ -152,7 +196,7 @@ public sealed class LineDesktopCollector : Collector<LineSettings>
     private void MigrateNamesV2()
     {
         if (Context.Settings.LoadJson(Name, "namesV2") is not null) return;
-        if (_cursors.Count == 0)
+        if (LoadCursors(LegacyCursorsKey).Count == 0)
         {
             Context.Settings.SaveJson(Name, "namesV2", JsonValue.Create(true));
             return;
@@ -224,6 +268,9 @@ public sealed class LineDesktopCollector : Collector<LineSettings>
         }
 
         _verifiedVersion = version;
+        // Which LINE account this store belongs to; load that account's own cursors and snapshot hash.
+        SwitchAccount(store, dbPath);
+        var account = _account!;
         var sink = Sink;
         if (sink is null) return Task.CompletedTask; // not paired yet; verified, nothing to emit
 
@@ -232,16 +279,27 @@ public sealed class LineDesktopCollector : Collector<LineSettings>
             _resyncRequested = false;
             _cursors.Clear();   // re-read every chat from the start
             SaveCursors();
+            // Other accounts' stores are not open now; bumping the epoch makes each of them re-read from the
+            // start too the next time it is opened (SwitchAccount compares its saved epoch).
+            var epoch = LoadLong(ResyncEpochKey) + 1;
+            Context.Settings.SaveJson(Name, ResyncEpochKey, JsonValue.Create(epoch));
+            Context.Settings.SaveJson(Name, EpochKey(_storeKey!), JsonValue.Create(epoch));
             if (_namesMigrationPending)
             {
                 // The names re-sync is now applied (cursors are cleared on disk), so it is never requested again.
                 Context.Settings.SaveJson(Name, "namesV2", JsonValue.Create(true));
                 _namesMigrationPending = false;
             }
+            if (_accountKeyMigrationPending)
+            {
+                // Likewise for the re-send under the account's own id.
+                Context.Settings.SaveJson(Name, "accountKeyV1", JsonValue.Create(true));
+                _accountKeyMigrationPending = false;
+            }
             _lastKeepHash = null;    // re-emit Keep and the account snapshot too
             _lastAccountHash = null;
-            Context.Settings.SaveJson(Name, "accountHash", JsonValue.Create(""));
-            Activity(CollectorActivity.ScanStarted, "re-sync: re-reading all LINE chats, Keep and the account snapshot");
+            Context.Settings.SaveJson(Name, AccountHashKey(_storeKey!), JsonValue.Create(""));
+            Activity(CollectorActivity.ScanStarted, $"re-sync: re-reading all LINE chats, Keep and the account snapshot (account {account})");
         }
 
         var chats = store.Chats();
@@ -255,7 +313,7 @@ public sealed class LineDesktopCollector : Collector<LineSettings>
                 var page = store.ReadMessages(chat, cursor, Settings.BatchSize);
                 if (page.Messages.Count > 0)
                 {
-                    EmitBatch(sink, map, chat, page);
+                    EmitBatch(sink, account, chat, page);
                     newMessages += page.Messages.Count;
                 }
                 if (page.MaxRowId > cursor)
@@ -268,33 +326,88 @@ public sealed class LineDesktopCollector : Collector<LineSettings>
             }
         }
 
-        EmitAccount(sink, store);
-        EmitKeep(sink);
+        EmitAccount(sink, store, account);
+        EmitKeep(sink, account, dbPath);
 
         State = LineState.OkPartial;
         Cursor = $"chats={chats.Count}";
         // We read every chat and message this PC's LINE holds; "partial" only means the phone may hold older
         // history we cannot see from Windows, so it is confirmed complete only once the phone's import runs.
-        Detail = $"Capturing all {chats.Count} chats on this PC ({newMessages} new this tick). Full history confirmed from the phone.";
+        Detail = $"Capturing all {chats.Count} chats on this PC for LINE account {account} ({newMessages} new this tick). Full history confirmed from the phone.";
         return Task.CompletedTask;
     }
+
+    /// <summary>
+    /// Work out which account the opened store belongs to and, when it differs from the last one, load that
+    /// account's own state. The store key is the store's own mid, else its file name (<c>qw&lt;hex&gt;</c>), so
+    /// two stores never share cursors. The record label is the user's explicit <c>account</c> setting if it is
+    /// not "default", else the store key.
+    /// </summary>
+    private void SwitchAccount(LineStore store, string liveDbPath)
+    {
+        var mid = store.AccountId;
+        var storeKey = !string.IsNullOrWhiteSpace(mid) ? mid! : Path.GetFileNameWithoutExtension(liveDbPath);
+        var configured = Settings.Account;
+        _account = !string.IsNullOrWhiteSpace(configured) && configured != DefaultAccount ? configured : storeKey;
+        if (storeKey == _storeKey) return;
+
+        var previous = _storeKey;
+        _storeKey = storeKey;
+        _cursors = LoadCursors(CursorsKey(storeKey));
+
+        // One-time: cursors saved before accounts were told apart are a single blob. They were written by the
+        // account open at the time, so they move to the account open now (once), and the blob is removed.
+        if (Context.Settings.LoadJson(Name, LegacyCursorsKey) is not null)
+        {
+            if (_cursors.Count == 0)
+            {
+                _cursors = LoadCursors(LegacyCursorsKey);
+                SaveCursors();
+            }
+            Context.Settings.SaveJson(Name, LegacyCursorsKey, null);
+            Context.Settings.SaveJson(Name, LegacyAccountHashKey, null);
+        }
+
+        // A re-sync applied while another account was open still applies to this one: re-read it from the start.
+        var epoch = LoadLong(ResyncEpochKey);
+        if (LoadLong(EpochKey(storeKey)) < epoch)
+        {
+            _cursors.Clear();
+            SaveCursors();
+            Context.Settings.SaveJson(Name, AccountHashKey(storeKey), JsonValue.Create(""));
+            Context.Settings.SaveJson(Name, EpochKey(storeKey), JsonValue.Create(epoch));
+        }
+
+        // The last uploaded account snapshot's content hash survives restarts, so an unchanged snapshot is not re-sent.
+        var savedHash = Context.Settings.LoadJson(Name, AccountHashKey(storeKey)) as JsonValue;
+        _lastAccountHash = savedHash is not null && savedHash.TryGetValue<string>(out var h) && !string.IsNullOrEmpty(h) ? h : null;
+        _lastKeepHash = null;   // the Keep store is per account too
+
+        if (previous is not null)
+            Activity(CollectorActivity.Config, $"LINE account changed ({previous} -> {storeKey}); using that account's own cursors");
+    }
+
+    private long LoadLong(string key) =>
+        Context.Settings.LoadJson(Name, key) is JsonValue v && v.TryGetValue<long>(out var n) ? n : 0L;
 
     private string? _lastKeepHash;
 
     // Read LINE Keep (the user's own saved notes/media) from keep_*.edb and emit it as a "LINE Keep" conversation.
-    private void EmitKeep(IRecordSink sink)
+    // The Keep store read is the one named after the open chat store (keep_qw<hex>.edb), i.e. the same account.
+    private void EmitKeep(IRecordSink sink, string account, string chatDbPath)
     {
         if (_keyStore is not { HasKey: true }) return;
         var dataFolder = ResolveDataFolder();
         if (dataFolder is null) return;
-        var keepDb = LineKeep.FindKeepDb(dataFolder);
+        var keepDb = LineKeep.FindKeepDb(dataFolder, chatDbPath);
         if (keepDb is null) return;
 
         string plainPath;
         try
         {
             using var snap = LineSnapshot.TryCreate(keepDb, _tempRoot, out _);
-            var src = snap is null ? keepDb : LineStore.FindDb(snap.Directory, "keep_*.edb") ?? keepDb;
+            // Read the snapshot copy (and its -wal copy below), never the live file.
+            var src = snap?.DbCopy ?? keepDb;
             var passphrase = _keyStore.LoadKey();
             byte[] baseKey;
             try { baseKey = LineWxCipher.DeriveKey(passphrase); }
@@ -343,7 +456,7 @@ public sealed class LineDesktopCollector : Collector<LineSettings>
                 EventTime = messages[messages.Count - 1].SentAt,
                 CaptureTime = IvyTime.Format(Now),
                 Platform = MessagePlatforms.Line,
-                Account = Settings.Account,
+                Account = account,
                 ConvKey = "keep",
                 Peer = "LINE Keep",
                 ConvKind = "group",
@@ -362,7 +475,7 @@ public sealed class LineDesktopCollector : Collector<LineSettings>
         finally { try { File.Delete(plainPath); } catch { } }
     }
 
-    private void EmitAccount(IRecordSink sink, LineStore store)
+    private void EmitAccount(IRecordSink sink, LineStore store, string account)
     {
         LineAccount acct;
         try { acct = store.ReadAccount(); }
@@ -373,7 +486,7 @@ public sealed class LineDesktopCollector : Collector<LineSettings>
             DeviceId = DeviceId(sink),
             EventTime = IvyTime.Format(Now),
             CaptureTime = IvyTime.Format(Now),
-            Account = Settings.Account,
+            Account = account,
             OwnProfile = acct.Profile is null ? null : new LineOwnProfileRecord
             {
                 Mid = acct.Profile.Mid, DisplayName = acct.Profile.DisplayName, UserId = acct.Profile.UserId,
@@ -401,14 +514,14 @@ public sealed class LineDesktopCollector : Collector<LineSettings>
         if (hash == _lastAccountHash) return;
         Emit(sink, record);
         _lastAccountHash = hash;
-        Context.Settings.SaveJson(Name, "accountHash", JsonValue.Create(hash));
+        Context.Settings.SaveJson(Name, AccountHashKey(_storeKey!), JsonValue.Create(hash));
     }
 
     private static string ContentHash(IvyRecord record) =>
         Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
             System.Text.Encoding.UTF8.GetBytes(Ivy.Core.Protocol.IvyJson.Serialize(record))));
 
-    private void EmitBatch(IRecordSink sink, LineStoreMap map, LineChat chat, LineMessagePage page)
+    private void EmitBatch(IRecordSink sink, string account, LineChat chat, LineMessagePage page)
     {
         var last = page.Messages[^1];
         var batch = new MessageBatchRecord
@@ -417,7 +530,7 @@ public sealed class LineDesktopCollector : Collector<LineSettings>
             EventTime = last.SentAt,
             CaptureTime = IvyTime.Format(Now),
             Platform = MessagePlatforms.Line,
-            Account = Settings.Account,
+            Account = account,
             ConvKey = chat.ChatId,
             Peer = chat.ConvKind == "dm" ? chat.Title ?? chat.ChatId : null,
             ConvKind = chat.ConvKind,
@@ -473,9 +586,9 @@ public sealed class LineDesktopCollector : Collector<LineSettings>
 
     // ---------------------------------------------------------------- cursors
 
-    private Dictionary<string, long> LoadCursors()
+    private Dictionary<string, long> LoadCursors(string key)
     {
-        var node = Context.Settings.LoadJson(Name, "cursors") as JsonObject;
+        var node = Context.Settings.LoadJson(Name, key) as JsonObject;
         var map = new Dictionary<string, long>(StringComparer.Ordinal);
         if (node is null) return map;
         foreach (var (k, v) in node)
@@ -487,7 +600,7 @@ public sealed class LineDesktopCollector : Collector<LineSettings>
     {
         var node = new JsonObject();
         foreach (var (k, v) in _cursors) node[k] = JsonValue.Create(v);
-        Context.Settings.SaveJson(Name, "cursors", node);
+        Context.Settings.SaveJson(Name, CursorsKey(_storeKey!), node);
     }
 
     /// <summary>

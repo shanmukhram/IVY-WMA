@@ -308,6 +308,12 @@ public sealed class LineStore : IDisposable
     private string? _ownMid;
     private bool _ownMidLoaded;
 
+    /// <summary>
+    /// The logged-in account's own mid (from the own-profile table), or null when it cannot be read. LINE keeps
+    /// one store per account, so this tells the stores of two accounts on the same PC apart.
+    /// </summary>
+    public string? AccountId => OwnMid();
+
     /// <summary>The account's own mid from the profile table, cached; null if not readable. Marks fromMe.</summary>
     private string? OwnMid()
     {
