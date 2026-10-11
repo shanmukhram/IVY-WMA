@@ -6,12 +6,19 @@
  *      (marker - lookback), and `pair/` while a pairing is open; a full listing of
  *      the bucket runs hourly, on demand and after an absence, and catches
  *      unrecognised keys (about one ListObjectsV2 per bucket per poll);
- *   2. per object: fetch, check the ledger, decrypt with the in-memory key,
- *      validate with the protocol schemas, commit records + ledger row in ONE
- *      SQLite transaction, then delete the object from R2;
+ *   2. per object: check the ledger first; a key already committed or
+ *      quarantined whose listing shows the same object the ledger recorded
+ *      (same size, not rewritten since) is settled as a replay without a GET.
+ *      Otherwise fetch, decrypt with the in-memory key, validate with the
+ *      protocol schemas, commit records + ledger row in ONE SQLite transaction,
+ *      then delete the object from R2 (media originals stay, PLAN decision 6);
  *   3. advance the bucket's marker (highest committed oid).
  * Any per-object failure quarantines that object and moves on (S4). Network
  * failures leave the object in place for the next pass.
+ *
+ * Cadence: passes start every pollIntervalMs, measured from pass start. A pass
+ * that runs longer than the interval is followed straight away by the next one;
+ * passes never overlap.
  *
  * Crash safety: the ledger row is written in the commit transaction, before the
  * R2 delete. A crash between them leaves an object that the next pass finds in
@@ -45,6 +52,10 @@ import { deleteCommandObject, maintainCommands, sendQueued } from "../commands/c
 /** Record prefixes listed incrementally (PROTOCOL §5). */
 const RECORD_PREFIXES = ["file", "fcat", "scr", "usg", "wnotif", "anotif", "call", "msg", "lineacct", "cstat", "status", "blob"];
 const RECORD_PREFIX_PATHS = RECORD_PREFIXES.map((p) => `up/${p}/`);
+// A ledger replay is settled from the listing alone when R2 last wrote the object at least this long
+// before the Mac ingested it. The margin covers LastModified's one-second precision and clock drift
+// between R2 and the Mac; inside it the object is fetched and its hash compared (see unchangedSinceLedger).
+const REWRITE_MARGIN_MS = 60_000;
 const PREFETCH = 64; // objects fetched from R2 concurrently during a pass; commit stays sequential.
 // Fetch latency (the per-object round-trip) is the ingest bottleneck, so a wider window drains a large
 // backlog far faster — the whole up-bucket after the PC first syncs, for instance.
@@ -124,6 +135,11 @@ export class Ingester {
   private readonly ctx: Ctx;
   private running: Promise<PollResult> | null = null;
   private timer: NodeJS.Timeout | undefined;
+  private timerGen = 0;
+  // per bucket: listed key -> "size|LastModified" of the copy this process committed or replayed. Lets a
+  // re-listed object be recognised as the very copy already read, with no GET. Pruned to the current
+  // listing at the end of every bucket pass, so it never outgrows one listing.
+  private readonly seen = new Map<string, Map<string, string>>();
   private lastFull = new Map<string, number>();
   private stopped = false;
   private pausedUntil: number | null = null;
@@ -179,21 +195,34 @@ export class Ingester {
     return this.pausedUntil === null ? null : new Date(this.pausedUntil).toISOString();
   }
 
+  /**
+   * Poll on a fixed cadence measured from each pass's start: a pass that ends early waits out the rest of
+   * the interval; one that overruns is followed by the next pass as soon as it ends (the ticks it ran
+   * through are skipped, never queued, and passes never overlap). The first pass runs after 1 s.
+   */
   start(): void {
     this.stopped = false;
+    if (this.timer) clearTimeout(this.timer);
+    const gen = ++this.timerGen; // a pass still running from an earlier start() must not re-arm its chain
     const every = this.ctx.config.pollIntervalMs;
     if (every <= 0) return;
+    const arm = (delay: number) => {
+      if (this.stopped || gen !== this.timerGen) return;
+      this.timer = setTimeout(tick, Math.max(0, delay));
+      this.timer.unref?.();
+    };
     const tick = async () => {
+      const startedAt = Date.now();
       try { if (this.ctx.keystore.isUnlocked()) await this.poll(); }
       catch (e) { this.ctx.events.emit("ingest.error", { error: (e as Error).message }); }
-      if (!this.stopped) { this.timer = setTimeout(tick, every); this.timer.unref?.(); }
+      arm(startedAt + every - Date.now());
     };
-    this.timer = setTimeout(tick, 1_000);
-    this.timer.unref?.();
+    arm(1_000);
   }
 
   async stop(): Promise<void> {
     this.stopped = true;
+    this.timerGen++;
     if (this.timer) clearTimeout(this.timer);
     await this.running?.catch(() => undefined);
   }
@@ -321,9 +350,14 @@ export class Ingester {
     };
     let maxOid = res.marker ?? "";
     const seeOid = (oid: string) => { if (oid > maxOid) maxOid = oid; };
+    const seen = this.seenFor(src.bucketName);
+    const note = (o: ObjectEntry, out: Outcome) => { if (out === "committed" || out === "replayed") seen.set(o.key, stampOf(o)); };
 
     for (const o of invalid) tally(await this.quarantine(src, o.key, "unknown", "unrecognised object key", await this.fetchQuiet(src, o.key)));
-    for (const o of pairs) tally(await this.guard(src, o.key, "pairing_device", () => this.ingestPairing(src, o)));
+    for (const o of pairs) {
+      const out = await this.guard(src, o.key, "pairing_device", () => this.ingestPairing(src, o));
+      tally(out); note(o, out);
+    }
     // Process the small high-priority records first and in full (heartbeat, control, conversations, account),
     // then the file listings up to a per-pass budget. Fetching a window concurrently is the catch-up
     // bottleneck; commits stay in order so the ledger is sequential. A bounded pass returns promptly, so the
@@ -336,11 +370,14 @@ export class Ingester {
     const bulkSingles = singles.filter((o) => recordPriority(o.kind) >= BULK_PRIORITY).sort(byOid);
 
     const runWindow = async (window: typeof singles): Promise<number> => {
-      const fetched = await Promise.all(window.map((o) => this.prefetch(src, o.key).then((bytes) => ({ o, bytes }))));
+      // a key the ledger already settles (a replay) is not prefetched: it costs no GET
+      const fetched = await Promise.all(window.map((o) => (this.settledByLedger(src, o)
+        ? Promise.resolve({ o, bytes: undefined })
+        : this.prefetch(src, o.key).then((bytes) => ({ o, bytes })))));
       let committed = 0;
       for (const { o, bytes } of fetched) {
-        const out = await this.guard(src, o.key, o.kind, () => this.ingestSingle(src, o.key, o.kind, bytes));
-        tally(out);
+        const out = await this.guard(src, o.key, o.kind, () => this.ingestSingle(src, o.key, o.kind, bytes, false, o));
+        tally(out); note(o, out);
         if (out === "committed" || out === "replayed") seeOid(o.oid);
         if (out === "committed") committed++;
       }
@@ -365,7 +402,8 @@ export class Ingester {
     // chunks can then be fetched avatars-first. A blob whose parts arrived before its manifest waits as before.
     for (const [oid, g] of blobEntries) {
       if (!g.manifest) continue;
-      tally(await this.guard(src, g.manifest.key, "manifest", () => this.ingestManifest(src, oid, g.manifest!.key, g.parts)));
+      const out = await this.guard(src, g.manifest.key, "manifest", () => this.ingestManifest(src, oid, g.manifest!.key, g.parts, undefined, false, g.manifest));
+      tally(out); note(g.manifest, out);
     }
     await this.flushDeletes(src.bucketName);
     // Phase 2: fetch the chunks, avatars before thumbnails before large media, so pictures land first.
@@ -382,10 +420,14 @@ export class Ingester {
       g.parts.sort((a, b) => a.index - b.index);
       for (let i = 0; i < g.parts.length; i += PREFETCH) {
         const window = g.parts.slice(i, i + PREFETCH);
-        const fetched = await Promise.all(window.map((p) => this.prefetch(src, p.key).then((bytes) => ({ p, bytes }))));
+        // only parts ingestPart will actually read are prefetched; waiting, replayed and already-committed
+        // parts cost no GET (ingestPart still fetches on its own if the blob's state changed meanwhile)
+        const fetched = await Promise.all(window.map((p) => (this.partNeedsBytes(src, oid, p)
+          ? this.prefetch(src, p.key).then((bytes) => ({ p, bytes }))
+          : Promise.resolve({ p, bytes: undefined }))));
         for (const { p, bytes } of fetched) {
           const out = await this.guard(src, p.key, "blob_chunk", () => this.ingestPart(src, oid, p.key, p.index, bytes));
-          tally(out);
+          tally(out); note(p, out);
         }
         await this.flushDeletes(src.bucketName);
       }
@@ -399,6 +441,10 @@ export class Ingester {
     }
 
     await this.flushDeletes(src.bucketName); // blob parts and any stragglers committed since the last window flush
+
+    // keep only keys still listed: the rest were deleted or fell out of the listing window
+    const listed = new Set(listing.map((o) => o.key));
+    for (const k of seen.keys()) if (!listed.has(k)) seen.delete(k);
 
     if (maxOid && maxOid !== (res.marker ?? "")) {
       setSetting(this.ctx.db, `marker:${src.bucketName}`, maxOid);
@@ -419,6 +465,44 @@ export class Ingester {
       }
       return this.quarantine(src, key, kind, `processing failed: ${(e as Error).message}`, await this.fetchQuiet(src, key));
     }
+  }
+
+  private seenFor(bucket: string): Map<string, string> {
+    let m = this.seen.get(bucket);
+    if (!m) { m = new Map(); this.seen.set(bucket, m); }
+    return m;
+  }
+
+  /**
+   * True when a listed key is already in the ledger and the listing shows the same object the ledger
+   * recorded, so the replay can be decided without downloading it. The bytes are only needed to tell a
+   * harmless replay from an overwrite (different bytes under a settled key, which is quarantined): that
+   * needs the content hash, so an object that may have been rewritten since it was ingested is fetched.
+   * "Same object" means: same size as recorded, and either this process already read exactly this copy
+   * (same size and LastModified) or R2 last wrote it well before the Mac ingested it.
+   */
+  private unchangedSinceLedger(src: Source, o: ObjectEntry, prior: LedgerRow): boolean {
+    if (prior.status !== "committed" && prior.status !== "quarantined") return false;
+    if (!prior.ct_sha256) return true; // nothing to compare against: handleKnown replays whatever the bytes
+    if (prior.size !== null && o.size !== prior.size) return false;
+    if (!o.lastModified) return false; // no way to tell a re-upload from the copy already read
+    if (this.seen.get(src.bucketName)?.get(o.key) === stampOf(o)) return true;
+    const written = Date.parse(o.lastModified);
+    const ingested = Date.parse(prior.ingested_at);
+    return Number.isFinite(written) && Number.isFinite(ingested) && written + REWRITE_MARGIN_MS < ingested;
+  }
+
+  private settledByLedger(src: Source, o: ObjectEntry): boolean {
+    const prior = this.ledger(src.bucketName, o.key);
+    return !!prior && this.unchangedSinceLedger(src, o, prior);
+  }
+
+  /** Whether ingestPart will read this part's bytes (mirrors its early returns), so the window prefetches it. */
+  private partNeedsBytes(src: Source, oid: string, p: ObjectEntry & { index: number }): boolean {
+    const row = getBlob(this.ctx, src.bucketName, oid);
+    if (!row || row.status === "awaiting_manifest" || row.status === "quarantined" || row.status === "complete") return false;
+    if (committedSet(row).has(p.index)) return false;
+    return !this.settledByLedger(src, p);
   }
 
   private async fetchQuiet(src: Source, key: string): Promise<Uint8Array | null> {
@@ -468,9 +552,9 @@ export class Ingester {
     }
   }
 
-  private ledger(bucket: string, key: string) {
-    return this.ctx.db.prepare("SELECT id, status, ct_sha256, kind FROM sync_objects WHERE bucket = ? AND object_key = ?").get(bucket, key) as
-      { id: string; status: string; ct_sha256: string | null; kind: string } | undefined;
+  private ledger(bucket: string, key: string): LedgerRow | undefined {
+    return this.ctx.db.prepare("SELECT id, status, ct_sha256, kind, size, ingested_at FROM sync_objects WHERE bucket = ? AND object_key = ?").get(bucket, key) as
+      LedgerRow | undefined;
   }
 
   private insertLedger(bucket: string, key: string, kind: string, status: "committed" | "quarantined", bytes: Uint8Array | null, deviceId: string | null, detail: string | null) {
@@ -488,15 +572,19 @@ export class Ingester {
    * bytes under a committed key are an overwrite and are quarantined.
    */
   private async handleKnown(src: Source, key: string, kind: string, bytes: Uint8Array, prior: { status: string; ct_sha256: string | null }, keep = false): Promise<Outcome> {
-    if (!prior.ct_sha256 || prior.ct_sha256 === sha256Hex(bytes)) {
-      // same bytes: a crash before the delete, a failed delete, or a straight re-upload.
-      // `keep` is set for a media original we persist in R2: recognise the replay but do not delete it.
-      if (!keep) await this.remove(src, key);
-      this.ctx.events.emit("ingest.replayed", { bucket: src.bucketName, key, ledgerStatus: prior.status, kept: keep });
-      return "replayed";
-    }
+    if (!prior.ct_sha256 || prior.ct_sha256 === sha256Hex(bytes)) return this.replay(src, key, prior, keep);
     const why = prior.status === "committed" ? "key already committed with different content (overwrite)" : "key was quarantined before and was uploaded again with different content";
     return this.quarantine(src, key, kind, why, bytes, null, true);
+  }
+
+  /**
+   * Same object as the ledger recorded: a crash before the delete, a failed delete, or a straight re-upload.
+   * `keep` is set for a media original we persist in R2: recognise the replay but do not delete it.
+   */
+  private async replay(src: Source, key: string, prior: { status: string }, keep: boolean): Promise<Outcome> {
+    if (!keep) await this.remove(src, key);
+    this.ctx.events.emit("ingest.replayed", { bucket: src.bucketName, key, ledgerStatus: prior.status, kept: keep });
+    return "replayed";
   }
 
   async quarantine(src: Source, key: string, kind: string, reason: string, bytes: Uint8Array | null, deviceId: string | null = null, keepLedger = false): Promise<Outcome> {
@@ -531,6 +619,10 @@ export class Ingester {
   // ------------------------------------------------------------------ pairing
 
   private async ingestPairing(src: Source, o: ObjectEntry, bytesIn?: Uint8Array): Promise<Outcome> {
+    if (!bytesIn) {
+      const known = this.ledger(src.bucketName, o.key);
+      if (known && this.unchangedSinceLedger(src, o, known)) return this.replay(src, o.key, known, false);
+    }
     const got = bytesIn ?? (await this.fetch(src, o.key));
     if (got === null) return "waiting";
     if (got === "too_large") return this.quarantine(src, o.key, "pairing_device", "object too large", null);
@@ -561,7 +653,11 @@ export class Ingester {
 
   // ------------------------------------------------------------------ single records
 
-  private async ingestSingle(src: Source, key: string, kind: Kind, bytesIn?: Uint8Array, force = false): Promise<Outcome> {
+  private async ingestSingle(src: Source, key: string, kind: Kind, bytesIn?: Uint8Array, force = false, listed?: ObjectEntry): Promise<Outcome> {
+    if (!bytesIn && !force && listed) {
+      const known = this.ledger(src.bucketName, key);
+      if (known && this.unchangedSinceLedger(src, listed, known)) return this.replay(src, key, known, false);
+    }
     const got = bytesIn ?? (await this.fetch(src, key));
     if (got === null) return "waiting";
     if (got === "too_large") return this.quarantine(src, key, kind, "object too large for a record", null);
@@ -599,7 +695,14 @@ export class Ingester {
 
   // ------------------------------------------------------------------ blobs
 
-  private async ingestManifest(src: Source, oid: string, key: string, listedParts: ObjectEntry[], bytesIn?: Uint8Array, force = false): Promise<Outcome> {
+  private async ingestManifest(src: Source, oid: string, key: string, listedParts: ObjectEntry[], bytesIn?: Uint8Array, force = false, listed?: ObjectEntry): Promise<Outcome> {
+    if (!bytesIn && !force && listed) {
+      const known = this.ledger(src.bucketName, key);
+      // a media original's manifest stays in R2 while the blob assembles and after it completes
+      if (known && this.unchangedSinceLedger(src, listed, known)) {
+        return this.replay(src, key, known, archivesPayload(this.ctx, getBlob(this.ctx, src.bucketName, oid)?.payload_kind));
+      }
+    }
     const got = bytesIn ?? (await this.fetch(src, key));
     if (got === null) return "waiting";
     if (got === "too_large") return this.quarantine(src, key, "manifest", "manifest too large", null);
@@ -726,6 +829,13 @@ export class Ingester {
     this.ctx.db.prepare("UPDATE quarantine SET resolved_at = ?, resolution = ? WHERE id = ?").run(nowIso(), `retried: ${outcome}`, id);
     return { outcome };
   }
+}
+
+interface LedgerRow { id: string; status: string; ct_sha256: string | null; kind: string; size: number | null; ingested_at: string }
+
+/** What a listing says about one copy of an object; a re-upload changes LastModified. */
+function stampOf(o: ObjectEntry): string {
+  return `${o.size}|${o.lastModified ?? ""}`;
 }
 
 function transferOf(p: ReturnType<typeof blobProgress>) {
