@@ -21,6 +21,8 @@ public sealed class CatalogScanState
     public string? Checkpoint { get; set; }
     public long FilesSeen { get; set; }
     public long FilesEmitted { get; set; }
+    /// <summary>True when this is the first pass ever (nothing catalogued before); later passes are rescans.</summary>
+    public bool Initial { get; init; }
 }
 
 /// <summary>
@@ -166,7 +168,8 @@ public sealed class FileCatalogCollector : Collector<FileCatalogSettings>
         var due = _pendingRescanReason is not null || DueForRescan();
         if (!due) return;
         _pendingRescanReason = null;
-        _scan = new CatalogScanState { Generation = _store.MaxGeneration() + 1, StartedAt = IvyTime.Format(Now) };
+        var first = Context.Settings.LoadJson(Name, LastScanKey) is null;
+        _scan = new CatalogScanState { Generation = _store.MaxGeneration() + 1, StartedAt = IvyTime.Format(Now), Initial = first };
         _walk = null;
         SaveScan();
     }
@@ -279,7 +282,7 @@ public sealed class FileCatalogCollector : Collector<FileCatalogSettings>
             var root = _scan.RootIndex < roots.Count ? roots[_scan.RootIndex] : "finishing";
             Detail = $"cataloguing {root} ({_scan.FilesSeen} files, {_scan.FilesEmitted} new or changed)";
             Cursor = $"gen={_scan.Generation} root={_scan.RootIndex} seen={_scan.FilesSeen}";
-            Import = new ImportProgress(null, _scan.FilesSeen, "cataloguing");
+            Import = new ImportProgress(null, _scan.FilesSeen, _scan.Initial ? ImportPhases.Initial : ImportPhases.Rescan);
         }
         else
         {

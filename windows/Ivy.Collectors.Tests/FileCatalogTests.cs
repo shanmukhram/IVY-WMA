@@ -3,6 +3,7 @@ using Ivy.Collectors.Files;
 using Ivy.Collectors.Host;
 using Ivy.Collectors.Tests.Support;
 using Ivy.Core.Protocol;
+using Ivy.Core.Records;
 
 namespace Ivy.Collectors.Tests;
 
@@ -64,6 +65,27 @@ public class FileCatalogTests : IDisposable
             Assert.False(e.TryGetProperty("quickHash", out _));
             Assert.False(e.TryGetProperty("thumbBlobOid", out _));
         }
+    }
+
+    [Fact]
+    public async Task Import_phase_is_a_protocol_phase_during_initial_and_rescan_passes()
+    {
+        for (var i = 0; i < 5; i++) _dir.Write($"tree/f{i}.txt", "x" + i, T0);
+        var c = NewCollector(batch: 2);
+        await c.StartAsync(default);
+
+        c.ScanTick(); // mid first pass
+        Assert.NotNull(c.CurrentScan);
+        Assert.NotNull(c.Import);
+        Assert.True(ImportPhases.IsValid(c.Import!.Phase));
+        Assert.Equal(ImportPhases.Initial, c.Import.Phase);
+
+        c.RunScanToCompletion();
+        await c.RescanAsync(null, default);
+        c.ScanTick(); // mid later pass
+        Assert.NotNull(c.Import);
+        Assert.True(ImportPhases.IsValid(c.Import!.Phase));
+        Assert.Equal(ImportPhases.Rescan, c.Import.Phase);
     }
 
     [Fact]

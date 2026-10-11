@@ -9,7 +9,7 @@ namespace Ivy.Core.Agent;
 
 public sealed class DeviceReporterOptions
 {
-    public TimeSpan Interval { get; init; } = TimeSpan.FromMinutes(5);
+    public TimeSpan Interval { get; init; } = TimeSpan.FromSeconds(30);
     public string? AppVersion { get; init; }
     public string Role { get; init; } = "windows";
 }
@@ -55,7 +55,7 @@ public sealed class DeviceReporter
                 QueueDepth = depth.TryGetValue(c.Name, out var d) ? d : 0,
                 ImportTotal = c.Import?.Total,
                 ImportDone = c.Import?.Done,
-                Phase = c.Import?.Phase,
+                Phase = SafePhase(c.Name, c.Import?.Phase),
             })
             .ToList();
         return new DeviceReportRecord
@@ -69,6 +69,14 @@ public sealed class DeviceReporter
             Collectors = collectors,
             ReportedAt = now,
         };
+    }
+
+    /// <summary>A collector's bad phase must not sink the whole report: drop it (null) and warn.</summary>
+    private string? SafePhase(string collector, string? phase)
+    {
+        if (phase is null || ImportPhases.IsValid(phase)) return phase;
+        _logger.LogWarning("device report: collector {Collector} has invalid import phase {Phase}; reporting it without a phase", collector, phase);
+        return null;
     }
 
     public EnqueuedRecord ReportNow()
