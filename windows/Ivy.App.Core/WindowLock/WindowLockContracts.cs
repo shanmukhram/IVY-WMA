@@ -34,8 +34,6 @@ public static class UnlockGesture
 public enum LockPrompt
 {
     None,
-    /// <summary>No passphrase stored yet: ask the owner to choose one (entered twice).</summary>
-    SetPassphrase,
     /// <summary>A passphrase is stored: ask for it.</summary>
     EnterPassphrase,
 }

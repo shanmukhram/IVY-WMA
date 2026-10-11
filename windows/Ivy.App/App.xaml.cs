@@ -2,6 +2,7 @@ using Ivy.App.Core;
 using Ivy.App.Core.Diagnostics;
 using Ivy.App.Core.Hosting;
 using Ivy.App.Core.ViewModels;
+using Ivy.App.Core.WindowLock;
 using Ivy.App.Hosting;
 using Ivy.App.Platform;
 using Ivy.Core.Agent;
@@ -84,7 +85,7 @@ public partial class App : Application
             _vm = new MainViewModel(_view, _host, new DispatcherQueueUiDispatcher(_dispatcher), new RegistryStartupRegistration(),
                 picker.PickAsync, AppPaths.ExePath, AppPaths.Version, openFile: OpenInShell, log: _loggers.CreateLogger("Ivy.App.Ui"),
                 folders: new AppFolders(AppPaths.DataDirectory, AppPaths.LogDirectory), // Settings > Advanced (Open uses ShellExecute)
-                lockStore: new DpapiWindowLockStore(AppPaths.KeysDirectory)); // window privacy lock; capture never reads it
+                lockStore: new BuiltInWindowLockStore()); // window privacy lock: built-in check data; capture never reads it
             _window = new MainWindow(_vm);
             _window.AppWindow.Closing += OnWindowClosing;
             _windowEvents = new WindowEventLog(_window, _window.Hwnd, _log);

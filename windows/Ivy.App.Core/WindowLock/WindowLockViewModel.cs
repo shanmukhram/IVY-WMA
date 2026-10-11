@@ -6,7 +6,9 @@ namespace Ivy.App.Core.WindowLock;
 /// <summary>
 /// The window privacy lock (PRD Part 1 "App UI", docs/CONTEXT.md): an app-lock on the owner's own window. The window
 /// starts locked on every launch and shows a neutral cover; pressing the single sidebar entry
-/// <see cref="UnlockGesture.PressCount"/> times opens a passphrase prompt (or, on first use, a prompt to choose one).
+/// <see cref="UnlockGesture.PressCount"/> times opens the "enter passphrase" prompt. The passphrase is chosen by the
+/// owner and provisioned once from the command line (see <see cref="WindowLockSetup"/>); the window never asks to set
+/// one. Until a passphrase has been provisioned the gesture opens nothing and the window stays locked.
 /// The right passphrase reveals the normal window for this session only; nothing about the unlock is remembered.
 /// This class only decides what the window shows. Capture, upload, pairing and sync never read it.
 /// </summary>
@@ -34,7 +36,7 @@ public sealed class WindowLockViewModel : ObservableObject
         private set => Set(ref _isLocked, value);
     }
 
-    /// <summary>The store holds a usable passphrase record. A corrupt record counts as none (first use).</summary>
+    /// <summary>The store holds a usable passphrase record. A corrupt record counts as none (nothing provisioned).</summary>
     public bool HasPassphrase => PassphraseHash.IsValid(_record);
 
     /// <summary>Which prompt the shell should show now.</summary>
@@ -48,8 +50,9 @@ public sealed class WindowLockViewModel : ObservableObject
     public bool ShowHint => _presses >= UnlockGesture.HintFromPress && _presses < UnlockGesture.PressCount;
 
     /// <summary>
-    /// One press of the quiet gesture. The <see cref="UnlockGesture.PressCount"/>-th press opens the prompt and resets
-    /// the count. Ignored while unlocked or while a prompt is already open.
+    /// One press of the quiet gesture. The <see cref="UnlockGesture.PressCount"/>-th press resets the count and, when a
+    /// passphrase has been provisioned, opens the enter-passphrase prompt; with none provisioned it opens nothing.
+    /// Ignored while unlocked or while a prompt is already open.
     /// </summary>
     public void Press()
     {
@@ -58,7 +61,7 @@ public sealed class WindowLockViewModel : ObservableObject
         if (_presses >= UnlockGesture.PressCount)
         {
             _presses = 0;
-            Prompt = HasPassphrase ? LockPrompt.EnterPassphrase : LockPrompt.SetPassphrase;
+            if (HasPassphrase) Prompt = LockPrompt.EnterPassphrase;
         }
         Raise(nameof(ShowHint));
     }
@@ -68,32 +71,6 @@ public sealed class WindowLockViewModel : ObservableObject
     {
         Prompt = LockPrompt.None;
         ResetPresses();
-    }
-
-    /// <summary>
-    /// First use: store a hash of the chosen passphrase and unlock for this session. False (and nothing stored) when
-    /// the two entries differ, are empty or whitespace, a passphrase is already set, or the store write fails.
-    /// </summary>
-    public bool SetPassphrase(string a, string b)
-    {
-        if (HasPassphrase) return false;
-        if (string.IsNullOrWhiteSpace(a) || !string.Equals(a, b, StringComparison.Ordinal)) return false;
-        var record = PassphraseHash.Create(a);
-        try
-        {
-            _store.Save(record);
-        }
-        catch (Exception e)
-        {
-            // Only the exception type is logged, never the record or the passphrase.
-            _log?.LogWarning("window lock: could not save the passphrase record ({ErrorType})", e.GetType().Name);
-            return false;
-        }
-        _record = record;
-        Raise(nameof(HasPassphrase));
-        _log?.LogInformation("window lock: passphrase set");
-        Reveal();
-        return true;
     }
 
     /// <summary>
@@ -137,7 +114,7 @@ public sealed class WindowLockViewModel : ObservableObject
         Raise(nameof(ShowHint));
     }
 
-    /// <summary>An unreadable store is treated like an empty one: the lock behaves as on first use.</summary>
+    /// <summary>An unreadable store is treated like an empty one: no passphrase, so the window stays locked.</summary>
     private byte[]? LoadRecord()
     {
         try { return _store.Load(); }

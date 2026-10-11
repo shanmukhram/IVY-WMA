@@ -247,7 +247,11 @@ public class MainViewModelTests
     public async Task Pairing_flow_shows_fingerprints_then_continue_switches_to_main()
     {
         _agent.OnPair = s => new PairingResult("dev", "pid", "AAAA-BBBB-CCCC-DDDD", "1111-2222-3333-4444");
-        var vm = Create();
+        // The owner provisions the window lock passphrase once, from the command line, before the window is built.
+        var lockStore = new Ivy.App.Core.WindowLock.InMemoryWindowLockStore();
+        Ivy.App.Core.WindowLock.WindowLockSetup.StorePassphrase(lockStore, "test passphrase");
+        var vm = new MainViewModel(_agent, _host, ImmediateDispatcher.Instance, _startup, () => Task.FromResult(_nextPick), Exe, "1.2.3", _time,
+            lockStore: lockStore);
         await vm.StartAsync();
         Assert.False(vm.Pairing.PairCommand.CanExecute(null));
         vm.Pairing.PairingText = "  IVYPAIR1.xyz\r\n";
@@ -269,9 +273,10 @@ public class MainViewModelTests
         // The window opens locked by design (PRD "Window privacy lock").
         Assert.True(vm.ShowLocked);
         Assert.False(vm.ShowMain);
-        // The main panel is still reachable: the gesture, then a first passphrase, reveals it.
+        // The main panel is still reachable: the gesture, then the provisioned passphrase, reveals it.
         for (var i = 0; i < Ivy.App.Core.WindowLock.UnlockGesture.PressCount; i++) vm.Lock.Press();
-        Assert.True(vm.Lock.SetPassphrase("test passphrase", "test passphrase"));
+        Assert.Equal(Ivy.App.Core.WindowLock.LockPrompt.EnterPassphrase, vm.Lock.Prompt);
+        Assert.True(vm.Lock.TryUnlock("test passphrase"));
         Assert.True(vm.ShowMain);
         Assert.False(vm.ShowLocked);
         Assert.False(vm.ShowPairing);

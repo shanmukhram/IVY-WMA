@@ -113,7 +113,6 @@ public sealed partial class MainWindow : Window
     private async Task ShowPromptAsync()
     {
         if (_promptOpen) return;
-        var mode = ViewModel.Lock.Prompt;
         if (Root.XamlRoot is null)
         {
             ViewModel.Lock.CancelPrompt();
@@ -122,7 +121,7 @@ public sealed partial class MainWindow : Window
         _promptOpen = true;
         try
         {
-            var dialog = new PassphraseDialog(ViewModel.Lock, mode)
+            var dialog = new PassphraseDialog(ViewModel.Lock)
             {
                 XamlRoot = Root.XamlRoot,
                 RequestedTheme = Root.RequestedTheme,

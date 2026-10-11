@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- The window-lock passphrase prompt. Set mode: two boxes and a body line. Enter mode: one box. Texts are set in code-behind. -->
+<!-- The window-lock passphrase prompt: one box, Enter submits. Texts are set in code-behind. -->
 <ContentDialog
     x:Class="Ivy.App.Pages.PassphraseDialog"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
@@ -9,12 +9,6 @@
     Closed="Dialog_Closed">
 
     <StackPanel Spacing="12" MinWidth="320">
-        <TextBlock x:Name="BodyText" TextWrapping="Wrap" Style="{StaticResource SecondaryTextStyle}"
-                   Text="This keeps the window private. It is separate from the Mac vault passphrase." />
         <PasswordBox x:Name="FirstBox" Header="Passphrase" KeyDown="FirstBox_KeyDown" />
-        <PasswordBox x:Name="SecondBox" Header="Repeat" KeyDown="SecondBox_KeyDown" />
-        <TextBlock x:Name="ErrorText" Visibility="Collapsed" TextWrapping="Wrap"
-                   Text="The two entries do not match."
-                   Foreground="{ThemeResource SystemFillColorCriticalBrush}" />
     </StackPanel>
 </ContentDialog>

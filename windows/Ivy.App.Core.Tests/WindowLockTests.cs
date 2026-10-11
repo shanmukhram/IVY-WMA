@@ -17,12 +17,15 @@ public class WindowLockTests
         for (var i = 0; i < n; i++) vm.Press();
     }
 
-    /// <summary>Open the set prompt with the gesture and choose <see cref="Passphrase"/>.</summary>
-    private static void SetUp(WindowLockViewModel vm)
+    /// <summary>Provision <see cref="Passphrase"/> the way the shell's command-line switch does.</summary>
+    private void Provision() => WindowLockSetup.StorePassphrase(_store, Passphrase);
+
+    /// <summary>Open the enter prompt with the gesture and enter <see cref="Passphrase"/>.</summary>
+    private static void Unlock(WindowLockViewModel vm)
     {
         PressTimes(vm, UnlockGesture.PressCount);
-        Assert.Equal(LockPrompt.SetPassphrase, vm.Prompt);
-        Assert.True(vm.SetPassphrase(Passphrase, Passphrase));
+        Assert.Equal(LockPrompt.EnterPassphrase, vm.Prompt);
+        Assert.True(vm.TryUnlock(Passphrase));
     }
 
     [Fact]
@@ -38,11 +41,12 @@ public class WindowLockTests
     [Fact]
     public void Nineteen_presses_leave_no_prompt_and_the_twentieth_opens_it()
     {
+        Provision();
         var vm = Create();
         PressTimes(vm, UnlockGesture.PressCount - 1);
         Assert.Equal(LockPrompt.None, vm.Prompt);
         vm.Press();
-        Assert.Equal(LockPrompt.SetPassphrase, vm.Prompt);
+        Assert.Equal(LockPrompt.EnterPassphrase, vm.Prompt);
         Assert.True(vm.IsLocked);
     }
 
@@ -60,25 +64,79 @@ public class WindowLockTests
     }
 
     [Fact]
-    public void First_use_asks_to_set_and_afterwards_the_gesture_asks_to_enter()
+    public void Without_a_provisioned_passphrase_the_gesture_opens_nothing_and_resets_the_count()
     {
         var vm = Create();
-        SetUp(vm);
-        Assert.True(vm.HasPassphrase);
-        Assert.False(vm.IsLocked);
+        PressTimes(vm, UnlockGesture.PressCount);
         Assert.Equal(LockPrompt.None, vm.Prompt);
+        Assert.True(vm.IsLocked);
+        Assert.False(vm.ShowHint);
 
-        vm.Lock();
+        vm.Press(); // 21st press
+        Assert.Equal(LockPrompt.None, vm.Prompt);
+        Assert.True(vm.IsLocked);
+        Assert.False(vm.ShowHint);
+
+        // The count restarted at the 20th press, so press 38 is the 18th of the new round and the hint is back.
+        PressTimes(vm, UnlockGesture.HintFromPress - 1);
+        Assert.True(vm.ShowHint);
+
+        PressTimes(vm, UnlockGesture.PressCount - UnlockGesture.HintFromPress); // 40 presses in all
+        Assert.Equal(LockPrompt.None, vm.Prompt);
+        Assert.True(vm.IsLocked);
+        Assert.False(vm.ShowHint);
+        Assert.False(vm.HasPassphrase);
+    }
+
+    [Fact]
+    public void Provisioned_passphrase_is_seen_by_a_new_view_model_and_the_gesture_asks_to_enter_it()
+    {
+        Assert.False(WindowLockSetup.HasPassphrase(_store));
+        WindowLockSetup.StorePassphrase(_store, Passphrase);
+        Assert.True(WindowLockSetup.HasPassphrase(_store));
+
+        var vm = Create();
+        Assert.True(vm.HasPassphrase);
+        Assert.True(vm.IsLocked);
         PressTimes(vm, UnlockGesture.PressCount);
         Assert.Equal(LockPrompt.EnterPassphrase, vm.Prompt);
+        Assert.True(vm.TryUnlock(Passphrase));
+        Assert.False(vm.IsLocked);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void StorePassphrase_rejects_empty_or_whitespace(string? blank)
+    {
+        Assert.Throws<ArgumentException>(() => WindowLockSetup.StorePassphrase(_store, blank!));
+        Assert.Null(_store.Load());
+        Assert.False(WindowLockSetup.HasPassphrase(_store));
+    }
+
+    [Fact]
+    public void StorePassphrase_replaces_an_existing_record()
+    {
+        const string replacement = "a different passphrase";
+        Provision();
+        WindowLockSetup.StorePassphrase(_store, replacement);
+
+        var vm = Create();
+        PressTimes(vm, UnlockGesture.PressCount);
+        Assert.False(vm.TryUnlock(Passphrase));
+        Assert.True(vm.IsLocked);
+        PressTimes(vm, UnlockGesture.PressCount);
+        Assert.Equal(LockPrompt.EnterPassphrase, vm.Prompt);
+        Assert.True(vm.TryUnlock(replacement));
+        Assert.False(vm.IsLocked);
     }
 
     [Fact]
     public void Correct_passphrase_unlocks_and_wrong_one_does_not()
     {
+        Provision();
         var vm = Create();
-        SetUp(vm);
-        vm.Lock();
 
         PressTimes(vm, UnlockGesture.PressCount);
         Assert.False(vm.TryUnlock("not it"));
@@ -93,33 +151,11 @@ public class WindowLockTests
     }
 
     [Fact]
-    public void Mismatched_entries_are_rejected_and_nothing_is_stored()
-    {
-        var vm = Create();
-        PressTimes(vm, UnlockGesture.PressCount);
-        Assert.False(vm.SetPassphrase(Passphrase, Passphrase + "x"));
-        Assert.Null(_store.Load());
-        Assert.False(vm.HasPassphrase);
-        Assert.True(vm.IsLocked);
-    }
-
-    [Theory]
-    [InlineData("")]
-    [InlineData("   ")]
-    public void Empty_or_whitespace_passphrase_is_rejected(string blank)
-    {
-        var vm = Create();
-        PressTimes(vm, UnlockGesture.PressCount);
-        Assert.False(vm.SetPassphrase(blank, blank));
-        Assert.Null(_store.Load());
-        Assert.True(vm.IsLocked);
-    }
-
-    [Fact]
     public void Lock_relocks_and_resets_the_press_count()
     {
+        Provision();
         var vm = Create();
-        SetUp(vm);
+        Unlock(vm);
         Assert.False(vm.IsLocked);
 
         vm.Lock();
@@ -134,8 +170,10 @@ public class WindowLockTests
     [Fact]
     public void Cancel_closes_the_prompt_and_resets_the_count()
     {
+        Provision();
         var vm = Create();
         PressTimes(vm, UnlockGesture.PressCount);
+        Assert.Equal(LockPrompt.EnterPassphrase, vm.Prompt);
         vm.CancelPrompt();
         Assert.Equal(LockPrompt.None, vm.Prompt);
         vm.Press();
@@ -146,7 +184,8 @@ public class WindowLockTests
     [Fact]
     public void Relaunch_over_the_same_store_starts_locked_with_a_passphrase()
     {
-        SetUp(Create());
+        Provision();
+        Unlock(Create());
         var relaunched = Create();
         Assert.True(relaunched.IsLocked);
         Assert.True(relaunched.HasPassphrase);
@@ -156,21 +195,9 @@ public class WindowLockTests
     }
 
     [Fact]
-    public void Setting_again_once_a_passphrase_exists_is_refused()
-    {
-        var vm = Create();
-        SetUp(vm);
-        var stored = _store.Load();
-        vm.Lock();
-        Assert.False(vm.SetPassphrase("other", "other"));
-        Assert.Equal(stored, _store.Load());
-        Assert.True(vm.IsLocked);
-    }
-
-    [Fact]
     public void Stored_record_holds_only_a_salted_hash()
     {
-        SetUp(Create());
+        Provision();
         var stored = _store.Load();
         Assert.NotNull(stored);
         var text = Encoding.UTF8.GetString(stored!);
@@ -197,30 +224,33 @@ public class WindowLockTests
     [InlineData("{}")]
     [InlineData("{\"v\":1,\"kdf\":\"pbkdf2-sha256\",\"iterations\":600000,\"salt\":\"!!\",\"hash\":\"!!\"}")]
     [InlineData("{\"v\":2,\"kdf\":\"pbkdf2-sha256\",\"iterations\":600000,\"salt\":\"AAAAAAAAAAAAAAAAAAAAAA==\",\"hash\":\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\"}")]
-    public void Corrupt_record_behaves_as_first_use(string corrupt)
+    public void Corrupt_record_counts_as_no_passphrase_until_provisioned_again(string corrupt)
     {
         _store.Save(Encoding.UTF8.GetBytes(corrupt));
         var vm = Create();
         Assert.True(vm.IsLocked);
         Assert.False(vm.HasPassphrase);
+        Assert.False(WindowLockSetup.HasPassphrase(_store));
         Assert.False(vm.TryUnlock(Passphrase));
         Assert.True(vm.IsLocked);
         PressTimes(vm, UnlockGesture.PressCount);
-        Assert.Equal(LockPrompt.SetPassphrase, vm.Prompt);
-        Assert.True(vm.SetPassphrase(Passphrase, Passphrase));
+        Assert.Equal(LockPrompt.None, vm.Prompt);
+
+        Provision();
         Assert.True(Create().HasPassphrase);
     }
 
     [Fact]
-    public void Unreadable_store_behaves_as_first_use()
+    public void Unreadable_store_stays_locked_and_opens_nothing()
     {
-        var vm = new WindowLockViewModel(new ThrowingStore());
+        var store = new ThrowingStore();
+        var vm = new WindowLockViewModel(store);
         Assert.True(vm.IsLocked);
         Assert.False(vm.HasPassphrase);
         PressTimes(vm, UnlockGesture.PressCount);
-        Assert.Equal(LockPrompt.SetPassphrase, vm.Prompt);
-        Assert.False(vm.SetPassphrase(Passphrase, Passphrase)); // the write fails too: stays locked
+        Assert.Equal(LockPrompt.None, vm.Prompt);
         Assert.True(vm.IsLocked);
+        Assert.Throws<IOException>(() => WindowLockSetup.StorePassphrase(store, Passphrase)); // the write fails too
     }
 
     private sealed class ThrowingStore : IWindowLockStore
@@ -242,6 +272,14 @@ public class MainViewModelWindowLockTests
     private MainViewModel Create(IWindowLockStore? store = null) =>
         new(_agent, _host, ImmediateDispatcher.Instance, _startup, () => Task.FromResult<string?>(null), @"C:\IVY\Ivy.App.exe", "1.2.3", _time,
             lockStore: store);
+
+    /// <summary>A store with <see cref="Passphrase"/> already provisioned, as the shell's command-line switch leaves it.</summary>
+    private static InMemoryWindowLockStore ProvisionedStore()
+    {
+        var store = new InMemoryWindowLockStore();
+        WindowLockSetup.StorePassphrase(store, Passphrase);
+        return store;
+    }
 
     /// <summary>Everything the lock must not change: collector rows, run state, host pause, and the fakes' call logs.</summary>
     private string Snapshot(MainViewModel vm)
@@ -265,7 +303,7 @@ public class MainViewModelWindowLockTests
     public async Task Locking_and_unlocking_changes_only_what_the_window_shows()
     {
         _agent.IsPaired = true;
-        var vm = Create();
+        var vm = Create(ProvisionedStore());
         await vm.StartAsync();
         await vm.LastHostWork;
         await vm.Settings.LastWork;
@@ -280,8 +318,8 @@ public class MainViewModelWindowLockTests
         vm.PropertyChanged += (_, e) => raised.Add(e.PropertyName);
 
         for (var i = 0; i < UnlockGesture.PressCount; i++) vm.Lock.Press();
-        Assert.Equal(LockPrompt.SetPassphrase, vm.Lock.Prompt);
-        Assert.True(vm.Lock.SetPassphrase(Passphrase, Passphrase));
+        Assert.Equal(LockPrompt.EnterPassphrase, vm.Lock.Prompt);
+        Assert.True(vm.Lock.TryUnlock(Passphrase));
         Assert.True(vm.ShowMain);
         Assert.False(vm.ShowLocked);
         Assert.False(vm.ShowPairing);
@@ -312,8 +350,7 @@ public class MainViewModelWindowLockTests
     [Fact]
     public async Task Unpaired_window_shows_pairing_whatever_the_lock_state()
     {
-        var store = new InMemoryWindowLockStore();
-        var vm = Create(store);
+        var vm = Create(ProvisionedStore());
         await vm.StartAsync();
         Assert.True(vm.Lock.IsLocked);
         Assert.True(vm.ShowPairing);
@@ -321,7 +358,7 @@ public class MainViewModelWindowLockTests
         Assert.False(vm.ShowMain);
 
         for (var i = 0; i < UnlockGesture.PressCount; i++) vm.Lock.Press();
-        Assert.True(vm.Lock.SetPassphrase(Passphrase, Passphrase));
+        Assert.True(vm.Lock.TryUnlock(Passphrase));
         Assert.True(vm.ShowPairing);
         Assert.False(vm.ShowLocked);
         Assert.False(vm.ShowMain);
