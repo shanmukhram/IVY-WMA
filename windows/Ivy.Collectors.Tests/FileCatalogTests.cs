@@ -34,11 +34,14 @@ public class FileCatalogTests : IDisposable
         return c;
     }
 
-    private static bool IsDeletion(CapturedRecord r) => r.Has("deleted") && r.Root.GetProperty("deleted").GetBoolean();
+    // catalog entries and deletions are carried in file_catalog batch records (entries[] / deletions[])
+    private IEnumerable<System.Text.Json.JsonElement> Entries() =>
+        _env.Sink.Of(Kind.FileCatalog).SelectMany(r => r.Root.GetProperty("entries").EnumerateArray());
     private IReadOnlyList<string> CataloguedNames() =>
-        _env.Sink.Of(Kind.FileMeta).Where(r => !IsDeletion(r)).Select(r => r.Str("name")).OrderBy(n => n, StringComparer.Ordinal).ToList();
+        Entries().Select(e => e.GetProperty("name").GetString()!).OrderBy(n => n, StringComparer.Ordinal).ToList();
     private IReadOnlyList<string> DeletedNames() =>
-        _env.Sink.Of(Kind.FileMeta).Where(IsDeletion).Select(r => r.Str("name")).OrderBy(n => n, StringComparer.Ordinal).ToList();
+        _env.Sink.Of(Kind.FileCatalog).SelectMany(r => r.Root.GetProperty("deletions").EnumerateArray())
+            .Select(p => System.IO.Path.GetFileName(p.GetString()!)).OrderBy(n => n, StringComparer.Ordinal).ToList();
 
     [Fact]
     public async Task First_scan_catalogues_every_admitted_file_metadata_only()
@@ -53,13 +56,13 @@ public class FileCatalogTests : IDisposable
         c.RunScanToCompletion();
 
         Assert.Equal(new[] { "a.txt", "b.md" }, CataloguedNames()); // node_modules and .git excluded by default
-        foreach (var r in _env.Sink.Of(Kind.FileMeta))
+        foreach (var e in Entries())
         {
-            Assert.True(r.Root.GetProperty("catalogOnly").GetBoolean());
-            Assert.True(r.Has("size") && r.Has("mtime") && r.Has("ext"));
-            Assert.False(r.Has("quickHash"));      // metadata only — never hashed
-            Assert.False(r.Has("thumbBlobOid"));   // no thumbnail
-            Assert.False(r.Has("originalBlobOid")); // no original uploaded
+            // each entry is metadata only: path, name, ext, size, mtime — nothing else
+            Assert.True(e.TryGetProperty("path", out _) && e.TryGetProperty("name", out _) && e.TryGetProperty("ext", out _)
+                        && e.TryGetProperty("size", out _) && e.TryGetProperty("mtime", out _));
+            Assert.False(e.TryGetProperty("quickHash", out _));
+            Assert.False(e.TryGetProperty("thumbBlobOid", out _));
         }
     }
 
@@ -75,7 +78,7 @@ public class FileCatalogTests : IDisposable
 
         await c.RescanAsync(null, default); // force a second pass; nothing changed on disk
         c.RunScanToCompletion();
-        Assert.Empty(_env.Sink.Of(Kind.FileMeta));
+        Assert.Empty(_env.Sink.Of(Kind.FileCatalog));
     }
 
     [Fact]
@@ -111,9 +114,8 @@ public class FileCatalogTests : IDisposable
         c.RunScanToCompletion();
 
         Assert.Equal(new[] { "b.txt" }, DeletedNames());
-        var del = _env.Sink.Of(Kind.FileMeta).Single(IsDeletion);
-        Assert.True(del.Root.GetProperty("catalogOnly").GetBoolean());
-        Assert.False(del.Has("size")); // a deletion carries no size/mtime
+        // the deletion is carried as a path in a batch's deletions[], with no re-listed entry
+        Assert.DoesNotContain("b.txt", CataloguedNames());
     }
 
     [Fact]

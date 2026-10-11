@@ -339,6 +339,31 @@ export const PairingDeviceRecord = z.object({
 });
 
 /** Discriminated union of every capture/command record kind. */
+/** One catalogued file: metadata only (name, size, mtime), no content. */
+export const FileCatalogEntry = z.object({
+  path: z.string(),
+  name: z.string(),
+  ext: z.string(),
+  size: z.number().int().nonnegative(),
+  mtime: ts,
+});
+
+/**
+ * A batch of file-catalog entries, so a full-PC listing of hundreds of thousands of files is a few
+ * hundred records instead of one per file. Each entry is browse-only on the Mac until fetched (like a
+ * catalogOnly file_meta). `deletions` carries paths of files that have gone since the last pass.
+ */
+export const FileCatalogRecord = z.object({
+  ...base,
+  kind: z.literal("file_catalog"),
+  root: z.string().optional(),
+  entries: z.array(FileCatalogEntry).default([]),
+  deletions: z.array(z.string()).default([]),
+}).superRefine((r, ctx) => {
+  if (r.entries.length === 0 && r.deletions.length === 0)
+    ctx.addIssue({ code: "custom", path: ["entries"], message: "a file_catalog batch must carry entries or deletions" });
+});
+
 export const AnyRecord = z.discriminatedUnion("kind", [
   FileMetaRecord,
   ScreenshotRecord,
@@ -351,9 +376,12 @@ export const AnyRecord = z.discriminatedUnion("kind", [
   CommandStatusRecord,
   DeviceReportRecord,
   PairingDeviceRecord,
+  FileCatalogRecord,
 ]);
 
 export type FileMetaRecordT = z.infer<typeof FileMetaRecord>;
+export type FileCatalogEntryT = z.infer<typeof FileCatalogEntry>;
+export type FileCatalogRecordT = z.infer<typeof FileCatalogRecord>;
 export type ScreenshotRecordT = z.infer<typeof ScreenshotRecord>;
 export type UsageEventRecordT = z.infer<typeof UsageEventRecord>;
 export type WindowsNotificationRecordT = z.infer<typeof WindowsNotificationRecord>;
@@ -385,6 +413,7 @@ const BY_KIND = {
   device_report: DeviceReportRecord,
   line_account: LineAccountRecord,
   pairing_device: PairingDeviceRecord,
+  file_catalog: FileCatalogRecord,
 } as const;
 
 export type RecordKindName = keyof typeof BY_KIND;

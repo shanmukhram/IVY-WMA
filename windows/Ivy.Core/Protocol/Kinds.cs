@@ -17,6 +17,7 @@ public enum Kind : byte
     DeviceReport = 0x0c,
     PairingDevice = 0x0d,
     LineAccount = 0x0e,
+    FileCatalog = 0x0f,
 }
 
 /// <summary>
@@ -56,6 +57,7 @@ public static class Kinds
         (Kind.DeviceReport, "device_report", "status"),
         (Kind.PairingDevice, "pairing_device", "pair"),
         (Kind.LineAccount, "line_account", "lineacct"),
+        (Kind.FileCatalog, "file_catalog", "fcat"),
     };
 
     public static byte Id(this Kind kind) => (byte)kind;

@@ -105,6 +105,42 @@ public sealed record FileMetaRecord() : IvyRecord(Protocol.Kind.FileMeta)
     }
 }
 
+/// <summary>One catalogued file: metadata only (name, size, mtime); no content is read.</summary>
+public sealed record FileCatalogEntry
+{
+    [JsonPropertyName("path")] public required string Path { get; init; }
+    [JsonPropertyName("name")] public required string Name { get; init; }
+    [JsonPropertyName("ext")] public required string Ext { get; init; }
+    [JsonPropertyName("size")] public required long Size { get; init; }
+    [JsonPropertyName("mtime")] public required string Mtime { get; init; }
+}
+
+/// <summary>
+/// A batch of file-catalog entries, so a full-PC listing of hundreds of thousands of files is a few hundred
+/// records instead of one per file. Entries are browse-only on the Mac until fetched; <c>Deletions</c> names
+/// paths that have gone since the last pass. Every path is metadata only (no content read).
+/// </summary>
+public sealed record FileCatalogRecord() : IvyRecord(Protocol.Kind.FileCatalog)
+{
+    [JsonPropertyName("root")] public string? Root { get; init; }
+    [JsonPropertyName("entries")] public IReadOnlyList<FileCatalogEntry> Entries { get; init; } = Array.Empty<FileCatalogEntry>();
+    [JsonPropertyName("deletions")] public IReadOnlyList<string> Deletions { get; init; } = Array.Empty<string>();
+
+    public override void Validate()
+    {
+        base.Validate();
+        if (Entries.Count == 0 && Deletions.Count == 0)
+            throw new RecordValidationException("a file_catalog batch must carry entries or deletions");
+        foreach (var e in Entries)
+        {
+            Require(e.Path, "entries[].path");
+            Require(e.Name, "entries[].name");
+            Require(e.Mtime, "entries[].mtime");
+            NonNegative(e.Size, "entries[].size");
+        }
+    }
+}
+
 /// <summary><c>screenshot</c> (WC3): <c>blobOid</c> references the chunked blob with the original image.</summary>
 public sealed record ScreenshotRecord() : IvyRecord(Protocol.Kind.Screenshot)
 {

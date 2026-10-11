@@ -84,6 +84,7 @@ const PREFIX_TO_KIND: Record<string, Kind> = {
   call: "call",
   msg: "message_batch",
   lineacct: "line_account",
+  fcat: "file_catalog",
   cstat: "command_status",
   status: "device_report",
 };

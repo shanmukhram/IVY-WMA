@@ -141,9 +141,9 @@ public sealed class RecordSink : IRecordSink
         };
         var envelope = Envelope.Encrypt(_macPublicKey, kind, key, plaintext, _random);
         _activity?.Append(collector, ActivityEvents.Encrypted, $"{kind.WireName()} {key} {envelope.Length} bytes");
-        // a file listing (incl. the full-PC catalogue) can be a huge number of records, so it rides the meta
-        // lane and never delays messages, the LINE account or notifications, which stay in the fast lane.
-        var lane = kind == Kind.FileMeta ? UploadQueue.MetaLane : UploadQueue.FastLane;
+        // a file listing (file_meta, or the batched full-PC file_catalog) can be a huge number of records, so
+        // it rides the meta lane and never delays messages, the LINE account or notifications (the fast lane).
+        var lane = kind is Kind.FileMeta or Kind.FileCatalog ? UploadQueue.MetaLane : UploadQueue.FastLane;
         _queue.EnqueueCiphertext(key, kind, envelope, collector, groupKey, lane);
         _activity?.Append(collector, ActivityEvents.Queued, $"{key}");
         return new EnqueuedRecord(oid, key, envelope.Length);

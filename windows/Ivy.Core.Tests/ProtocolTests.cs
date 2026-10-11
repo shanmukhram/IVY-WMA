@@ -47,6 +47,7 @@ public class OidAndKeyTests
             ("blob_chunk", 9, "blob"), ("command", 0x0a, "cmd"), ("command_status", 0x0b, "cstat"), ("device_report", 0x0c, "status"),
             ("pairing_device", 0x0d, "pair"),
             ("line_account", 0x0e, "lineacct"),
+            ("file_catalog", 0x0f, "fcat"),
         };
         foreach (var (name, id, prefix) in expected)
         {

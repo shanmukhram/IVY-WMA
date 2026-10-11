@@ -210,3 +210,34 @@ describe("catalog deletion and fetch-on-demand", () => {
     dev.close();
   });
 });
+
+describe("file_catalog batch ingest", () => {
+  it("ingests a batch of entries (and deletions) as catalog rows, same as single catalogOnly file_meta", async () => {
+    st = await fullStack();
+    const dev = await pairNew(st.svc, "windows");
+    const entries = [
+      { path: "C:\\Users\\bunny\\Notes\\a.md", name: "a.md", ext: "md", size: 11, mtime: iso() },
+      { path: "C:\\Users\\bunny\\Notes\\b.md", name: "b.md", ext: "md", size: 22, mtime: iso() },
+      { path: "C:\\Users\\bunny\\Notes\\sub\\c.txt", name: "c.txt", ext: "txt", size: 33, mtime: iso() },
+    ];
+    await dev.put("file_catalog", { root: "C:\\Users\\bunny", entries, deletions: [] });
+    await st.svc.ingester.poll();
+
+    // all three are browse-only catalog rows, excluded from the normal files list
+    expect(db().prepare("SELECT COUNT(*) AS n FROM files WHERE catalog = 1").get()).toEqual({ n: 3 });
+    expect((await api(st.svc, "GET", "/api/files")).json.items.length).toBe(0);
+
+    // they browse like any catalogued files
+    const notes = await browse(st, dev, "C:\\Users\\bunny\\Notes");
+    expect(notes.files.map((f) => f.name).sort()).toEqual(["a.md", "b.md"]);
+    expect(notes.folders.map((f) => f.name)).toContain("sub");
+
+    // a later batch deletes one entry
+    await dev.put("file_catalog", { root: "C:\\Users\\bunny", entries: [], deletions: ["C:\\Users\\bunny\\Notes\\b.md"] });
+    await st.svc.ingester.poll();
+    expect(db().prepare("SELECT COUNT(*) AS n FROM files WHERE catalog = 1").get()).toEqual({ n: 2 });
+    const after = await browse(st, dev, "C:\\Users\\bunny\\Notes");
+    expect(after.files.map((f) => f.name)).toEqual(["a.md"]);
+    dev.close();
+  });
+});

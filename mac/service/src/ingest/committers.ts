@@ -10,7 +10,7 @@
  */
 import { randomUUID, createHash } from "node:crypto";
 import type {
-  AndroidNotificationRecordT, CallRecordT, CommandStatusRecordT, DeviceReportRecordT, FileMetaRecordT,
+  AndroidNotificationRecordT, CallRecordT, CommandStatusRecordT, DeviceReportRecordT, FileCatalogRecordT, FileMetaRecordT,
   LineAccountRecordT, MessageBatchRecordT, ScreenshotRecordT, UsageEventRecordT, WindowsNotificationRecordT,
 } from "@ivy/protocol";
 import type { DB } from "../db/index.ts";
@@ -107,6 +107,31 @@ export function commitFileMeta(db: DB, r: FileMetaRecordT): CommitResult {
       .run(id, r.deviceId, r.path, name, ext, r.size, normTs(r.mtime), r.quickHash, thumb, original, ev, normTs(r.captureTime), now, now);
   }
   return { summary: { fileId: id, ...(original ? { originalBlobOid: original } : {}) }, blobs: [thumb, original].filter((x): x is string => !!x) };
+}
+
+/**
+ * A batch of catalog entries (and deletions), so a full-PC file listing is a few hundred records instead of
+ * one per file. Each entry and deletion is applied through the catalog path of commitFileMeta, so it stores
+ * and tombstones exactly as a single catalogOnly file_meta would. The whole batch runs in the ingester's
+ * per-record transaction.
+ */
+export function commitFileCatalog(db: DB, r: FileCatalogRecordT): CommitResult {
+  let entries = 0, deletions = 0;
+  for (const e of r.entries) {
+    commitFileMeta(db, {
+      v: 1, kind: "file_meta", deviceId: r.deviceId, eventTime: e.mtime, captureTime: r.captureTime,
+      path: e.path, name: e.name, ext: e.ext, size: e.size, mtime: e.mtime, catalogOnly: true,
+    } as FileMetaRecordT);
+    entries++;
+  }
+  for (const p of r.deletions) {
+    commitFileMeta(db, {
+      v: 1, kind: "file_meta", deviceId: r.deviceId, eventTime: r.eventTime, captureTime: r.captureTime,
+      path: p, name: baseName(p), ext: extOf(p) ?? "", catalogOnly: true, deleted: true,
+    } as FileMetaRecordT);
+    deletions++;
+  }
+  return { summary: { catalog: true, entries, deletions } };
 }
 
 // ---------------------------------------------------------------- media

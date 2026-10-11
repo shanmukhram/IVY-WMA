@@ -17,8 +17,17 @@ public sealed class FileCatalogSettings
     /// </summary>
     public IReadOnlyList<string> Roots { get; init; } = Array.Empty<string>();
 
-    /// <summary>Glob exclusions. Defaults leave out the OS and program areas, temp, the recycle bin and build/VCS folders.</summary>
-    public IReadOnlyList<string> Exclusions { get; init; } = ExclusionMatcher.Defaults;
+    /// <summary>
+    /// Glob exclusions. Beyond the shared defaults (OS and program areas, temp, recycle bin, build/VCS), the
+    /// catalog also skips the whole <c>AppData</c> tree: it is application caches and config, not files the
+    /// user browses, and it holds most of the profile's file count. IVY's own collectors still read AppData
+    /// directly (Telegram tdata, the LINE store/keys) — leaving it out of the catalog does not affect capture.
+    /// </summary>
+    public IReadOnlyList<string> Exclusions { get; init; } = CatalogExclusions;
+
+    /// <summary>The catalog's default exclusions: the shared defaults plus the AppData tree.</summary>
+    public static IReadOnlyList<string> CatalogExclusions { get; } =
+        ExclusionMatcher.Defaults.Append("**/AppData").ToArray();
 
     public bool IncludeHidden { get; init; }
     public bool IncludeSystem { get; init; }

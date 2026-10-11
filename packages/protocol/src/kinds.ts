@@ -21,6 +21,7 @@ export const KINDS = {
   device_report:       { id: 0x0c, prefix: "status" },
   pairing_device:      { id: 0x0d, prefix: "pair" },
   line_account:        { id: 0x0e, prefix: "lineacct" },
+  file_catalog:        { id: 0x0f, prefix: "fcat" },
 } as const;
 
 export type Kind = keyof typeof KINDS;

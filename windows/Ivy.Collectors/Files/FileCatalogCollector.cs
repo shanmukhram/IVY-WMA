@@ -45,6 +45,13 @@ public sealed class FileCatalogCollector : Collector<FileCatalogSettings>
     private IEnumerator<DirectoryBatch>? _walk;
     private string? _pendingRescanReason;
 
+    // catalog entries are emitted in batches (one record per ~FlushSize files), so a profile of hundreds of
+    // thousands of files is a few hundred records, not one per file
+    private const int FlushSize = 500;
+    private readonly List<FileCatalogEntry> _pending = new();
+    private readonly List<string> _pendingDeletions = new();
+    private string _currentRoot = "";
+
     public FileCatalogCollector(CollectorContext context, IFileSystemSource? fs = null, FileCatalogSettings? settings = null)
         : base(CollectorName, context, settings)
     {
@@ -140,6 +147,7 @@ public sealed class FileCatalogCollector : Collector<FileCatalogSettings>
         while (processed < budget && !ct.IsCancellationRequested)
         {
             if (scan.RootIndex >= roots.Count) { FinishScan(sink, batch, nowStr, deviceId); break; }
+            _currentRoot = roots[scan.RootIndex];
             _walk ??= new ScanWalker(_fs, _exclusions, Settings.IncludeHidden, Settings.IncludeSystem)
                 .Walk(roots[scan.RootIndex], scan.Checkpoint).GetEnumerator();
 
@@ -166,7 +174,8 @@ public sealed class FileCatalogCollector : Collector<FileCatalogSettings>
                 }
                 else
                 {
-                    EmitCatalog(sink, deviceId, f, mtime, nowStr);
+                    _pending.Add(new FileCatalogEntry { Path = f.FullPath, Name = f.Name, Ext = PathUtil.Ext(f.Name), Size = f.Size, Mtime = mtime });
+                    if (_pending.Count >= FlushSize) FlushBatch(sink, deviceId, nowStr);
                     batch.Upsert(f.FullPath, f.Size, mtime, scan.Generation);
                     scan.FilesEmitted++;
                 }
@@ -177,17 +186,20 @@ public sealed class FileCatalogCollector : Collector<FileCatalogSettings>
             batch.Commit();
             SaveScan();
         }
+        FlushBatch(sink, deviceId, nowStr); // emit this tick's remaining entries so nothing lingers across ticks
         batch.Commit();
     }
 
     private void FinishScan(IRecordSink sink, CatalogStore.Batch batch, string nowStr, string deviceId)
     {
-        // any file not seen in this generation has gone: emit a deletion and drop its row
+        // any file not seen in this generation has gone: batch a deletion and drop its row
         foreach (var path in _store.Stale(_scan!.Generation))
         {
-            EmitDeletion(sink, deviceId, path, nowStr);
+            _pendingDeletions.Add(path);
             batch.Remove(path);
+            if (_pendingDeletions.Count >= FlushSize) FlushBatch(sink, deviceId, nowStr);
         }
+        FlushBatch(sink, deviceId, nowStr);
         batch.Commit();
         Context.Settings.SaveJson(Name, LastScanKey, JsonValue.Create(nowStr));
         Context.Settings.Save<CatalogScanState>(Name, ScanKey, null);
@@ -197,32 +209,22 @@ public sealed class FileCatalogCollector : Collector<FileCatalogSettings>
         _walk = null;
     }
 
-    private void EmitCatalog(IRecordSink sink, string deviceId, FsEntry f, string mtime, string nowStr) =>
-        Emit(sink, new FileMetaRecord
-        {
-            DeviceId = deviceId,
-            EventTime = mtime,
-            CaptureTime = nowStr,
-            Path = f.FullPath,
-            Name = f.Name,
-            Size = f.Size,
-            Ext = PathUtil.Ext(f.Name),
-            Mtime = mtime,
-            CatalogOnly = true,
-        });
-
-    private void EmitDeletion(IRecordSink sink, string deviceId, string path, string nowStr) =>
-        Emit(sink, new FileMetaRecord
+    /// <summary>Emit the buffered entries and deletions as one <c>file_catalog</c> batch, then clear the buffers.</summary>
+    private void FlushBatch(IRecordSink sink, string deviceId, string nowStr)
+    {
+        if (_pending.Count == 0 && _pendingDeletions.Count == 0) return;
+        Emit(sink, new FileCatalogRecord
         {
             DeviceId = deviceId,
             EventTime = nowStr,
             CaptureTime = nowStr,
-            Path = path,
-            Name = Path.GetFileName(path),
-            Ext = PathUtil.Ext(Path.GetFileName(path)),
-            CatalogOnly = true,
-            Deleted = true,
+            Root = _currentRoot.Length == 0 ? null : _currentRoot,
+            Entries = _pending.ToArray(),
+            Deletions = _pendingDeletions.ToArray(),
         });
+        _pending.Clear();
+        _pendingDeletions.Clear();
+    }
 
     private void SaveScan() => Context.Settings.Save(Name, ScanKey, _scan);
 
