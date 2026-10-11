@@ -19,7 +19,7 @@ namespace Ivy.App;
 /// <summary>
 /// One visible process hosts everything (no Windows service): the VaultAgent (queue, uploader, command
 /// poller, device reporter), the collector host, the status window and the tray icon. Closing the window
-/// hides it; the workers keep running until Quit from the tray.
+/// hides it; the workers keep running until the process is ended from Task Manager.
 /// </summary>
 public partial class App : Application
 {
@@ -135,16 +135,15 @@ public partial class App : Application
     private UiSample SampleUi() => new(_vm?.Feed.Items.Count ?? 0, _window?.AppWindow.IsVisible == true, _lastTickAt);
 
     /// <summary>
-    /// Runs on the tray thread. The menu is deliberately bare (Open and Quit) so the tray reveals nothing about
-    /// the backup; pause and sync live in the window. The actions run on the UI thread (the tray marshals them
-    /// through the DispatcherQueue).
+    /// Runs on the tray thread. The menu is deliberately just Open, so the tray reveals nothing about the backup.
+    /// The companion is meant to run unattended; ending it is done from Task Manager. Pause and sync live in the
+    /// window. The action runs on the UI thread (the tray marshals it through the DispatcherQueue).
     /// </summary>
     private IReadOnlyList<TrayMenuItem> TrayMenu()
     {
         return new[]
         {
             new TrayMenuItem("Open", ShowWindow),
-            new TrayMenuItem("Quit", () => _ = QuitAsync()),
         };
     }
 
@@ -166,7 +165,7 @@ public partial class App : Application
         _ = _vm?.RefreshAsync();
     }
 
-    /// <summary>Close hides to the tray; only Quit ends the process.</summary>
+    /// <summary>Close hides to the tray; nothing in the window or tray ends the process.</summary>
     private void OnWindowClosing(AppWindow sender, AppWindowClosingEventArgs args)
     {
         if (_quitting) return;
@@ -176,6 +175,7 @@ public partial class App : Application
         sender.Hide();
     }
 
+    // No longer reachable from the tray; kept as the orderly shutdown path.
     private async Task QuitAsync()
     {
         if (_quitting) return;
