@@ -166,6 +166,24 @@ public sealed class VaultDb : IDisposable
             cmd.ExecuteNonQuery();
         }
 
+        // v5 (one-time): avatars emitted by an earlier build sit in the bulk lane behind large media originals,
+        // so profile pictures never arrive. Promote small queued blob groups (every part under 256 KB — avatars
+        // and tiny thumbnails, never a real media original) from the bulk lane to the fast lane so the pictures
+        // land with the conversations. Whole groups only, so a blob's manifest and chunks stay together.
+        cmd.CommandText = "SELECT value FROM agent_settings WHERE key = 'lanes.smallblob.v1'";
+        if (cmd.ExecuteScalar() is not string)
+        {
+            cmd.CommandText = """
+                UPDATE pending_uploads SET lane = 0
+                WHERE lane = 2 AND group_key IN (
+                    SELECT group_key FROM pending_uploads WHERE lane = 2 AND group_key IS NOT NULL
+                    GROUP BY group_key HAVING MAX(size) < 262144)
+                """;
+            cmd.ExecuteNonQuery();
+            cmd.CommandText = "INSERT INTO agent_settings(key, value) VALUES ('lanes.smallblob.v1', '1') ON CONFLICT(key) DO NOTHING";
+            cmd.ExecuteNonQuery();
+        }
+
         cmd.CommandText = "SELECT COUNT(*) FROM schema_info";
         if ((long)cmd.ExecuteScalar()! == 0)
         {
