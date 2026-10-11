@@ -265,9 +265,20 @@ public sealed class LineDesktopCollector : Collector<LineSettings>
             try { baseKey = LineWxCipher.DeriveKey(passphrase); }
             finally { System.Security.Cryptography.CryptographicOperations.ZeroMemory(passphrase); }
             byte[]? plain;
-            try { plain = LineWxCipher.Decrypt(File.ReadAllBytes(src), baseKey); }
+            try
+            {
+                plain = LineWxCipher.Decrypt(File.ReadAllBytes(src), baseKey);
+                // Fold in Keep items LINE has not checkpointed yet, from the snapshot's copy of the WAL.
+                // Without a snapshot copy (src is then the live file) skip it: the live -wal is never read in place.
+                if (plain is not null && snap is not null && src != keepDb)
+                {
+                    var wal = LineWal.TryReadFile(src + "-wal");
+                    if (wal is not null) plain = LineWal.Overlay(plain, wal, baseKey);
+                }
+            }
             finally { System.Security.Cryptography.CryptographicOperations.ZeroMemory(baseKey); }
             if (plain is null) return;
+            LineWal.MakeSelfContained(plain);
             plainPath = Path.Combine(_tempRoot, "keep-" + Guid.NewGuid().ToString("N")[..10] + ".db");
             Directory.CreateDirectory(_tempRoot);
             File.WriteAllBytes(plainPath, plain);
@@ -392,6 +403,7 @@ public sealed class LineDesktopCollector : Collector<LineSettings>
                     byte[] baseKey;
                     try { baseKey = LineWxCipher.DeriveKey(passphrase); }
                     finally { System.Security.Cryptography.CryptographicOperations.ZeroMemory(passphrase); }
+                    // Main file only, on purpose: the probe lists table/column names, which do not need the WAL.
                     try { return LineWxCipher.Decrypt(File.ReadAllBytes(path), baseKey); }
                     finally { System.Security.Cryptography.CryptographicOperations.ZeroMemory(baseKey); }
                 }

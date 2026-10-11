@@ -136,35 +136,78 @@ public static class LineWxCipher
     }
 
     /// <summary>
+    /// Decrypt one page in place. <paramref name="page"/> is exactly one page as stored on disk (or in a WAL
+    /// frame) and <paramref name="pageNumber"/> is its 1-based SQLite page number, which selects the page key
+    /// and IV. Page 1 gets the wxaes128 treatment: bytes 16..23 are stored in the clear, the encrypted copy of
+    /// them sits at 8..15, and bytes 0..15 are discarded and replaced with the SQLite magic. Returns false only
+    /// for page 1 when the decrypted header does not match the clear copy (wrong key or not this scheme); in
+    /// that case the buffer contents are undefined and the caller should zero and discard it.
+    /// </summary>
+    internal static bool DecryptPage(Span<byte> page, int pageNumber, byte[] baseKey)
+    {
+        if (pageNumber == 1)
+        {
+            Span<byte> dbHeader = stackalloc byte[8];
+            page.Slice(16, 8).CopyTo(dbHeader);       // plaintext header backup
+            page.Slice(8, 8).CopyTo(page.Slice(16, 8)); // restore the encrypted bytes 16..23
+            AesCbc(baseKey, 1, false, page.Slice(16, page.Length - 16));
+            if (!page.Slice(16, 8).SequenceEqual(dbHeader)) return false; // wrong key
+            SqliteMagic.CopyTo(page.Slice(0, 16));
+            return true;
+        }
+        AesCbc(baseKey, pageNumber, false, page);
+        return true;
+    }
+
+    /// <summary>
+    /// Encrypt one plaintext page in place, the inverse of <see cref="DecryptPage"/> (page 1 included). Used
+    /// by <see cref="Encrypt"/> and by tests that build an encrypted store or WAL.
+    /// </summary>
+    internal static void EncryptPage(Span<byte> page, int pageNumber, byte[] baseKey)
+    {
+        if (pageNumber == 1)
+        {
+            Span<byte> dbHeader = stackalloc byte[8];
+            page.Slice(16, 8).CopyTo(dbHeader);                     // save plaintext header
+            AesCbc(baseKey, 1, true, page.Slice(0, 16));            // encrypt the magic block (discarded on read)
+            AesCbc(baseKey, 1, true, page.Slice(16, page.Length - 16));
+            page.Slice(16, 8).CopyTo(page.Slice(8, 8));             // move encrypted 16..23 to 8..15
+            dbHeader.CopyTo(page.Slice(16, 8));                     // restore plaintext 16..23
+            return;
+        }
+        AesCbc(baseKey, pageNumber, true, page);
+    }
+
+    /// <summary>Page size from page 1 bytes 16..17 (big-endian, where the stored value 1 means 65536).</summary>
+    internal static int PageSizeOf(ReadOnlySpan<byte> page1Header)
+    {
+        if (page1Header.Length < 18) return 0;
+        var pageSize = (page1Header[16] << 8) | (page1Header[17] << 16);
+        return pageSize < 512 || pageSize > 65536 || (pageSize & (pageSize - 1)) != 0 ? 0 : pageSize;
+    }
+
+    /// <summary>
     /// Decrypt a whole wxSQLite3 AES-128-CBC store with the base key from <see cref="DeriveKey"/>. Returns the
     /// plaintext SQLite bytes, or null if page 1 does not validate (wrong passphrase / not this scheme).
+    /// This covers the main file only; <see cref="LineWal"/> overlays committed WAL frames afterwards.
     /// </summary>
     public static byte[]? Decrypt(ReadOnlySpan<byte> file, byte[] baseKey)
     {
         if (file.Length < 24) return null;
         // Page size lives in plaintext bytes 16..17 of page 1 (wxaes128 keeps 16..23 in the clear).
-        var pageSize = (file[16] << 8) | (file[17] << 16);
-        if (pageSize < 512 || pageSize > 65536 || (pageSize & (pageSize - 1)) != 0) return null;
+        var pageSize = PageSizeOf(file);
+        if (pageSize == 0) return null;
         if (file.Length % pageSize != 0) return null;
 
         var outBuf = file.ToArray();
         var pages = file.Length / pageSize;
         for (var p = 0; p < pages; p++)
         {
-            var page = p + 1; // wxSQLite3 page numbers are 1-based
-            var span = outBuf.AsSpan(p * pageSize, pageSize);
-            if (page == 1)
+            // wxSQLite3 page numbers are 1-based
+            if (!DecryptPage(outBuf.AsSpan(p * pageSize, pageSize), p + 1, baseKey))
             {
-                var dbHeader = new byte[8];
-                span.Slice(16, 8).CopyTo(dbHeader);      // plaintext header backup
-                span.Slice(8, 8).CopyTo(span.Slice(16, 8)); // restore the encrypted bytes 16..23
-                AesCbc(baseKey, page, false, span.Slice(16, pageSize - 16));
-                if (!span.Slice(16, 8).SequenceEqual(dbHeader)) return null; // wrong key
-                SqliteMagic.CopyTo(span.Slice(0, 16));
-            }
-            else
-            {
-                AesCbc(baseKey, page, false, span);
+                CryptographicOperations.ZeroMemory(outBuf);
+                return null;
             }
         }
         return outBuf;
@@ -178,23 +221,7 @@ public static class LineWxCipher
         var outBuf = plaintext.ToArray();
         var pages = plaintext.Length / pageSize;
         for (var p = 0; p < pages; p++)
-        {
-            var page = p + 1;
-            var span = outBuf.AsSpan(p * pageSize, pageSize);
-            if (page == 1)
-            {
-                var dbHeader = new byte[8];
-                span.Slice(16, 8).CopyTo(dbHeader);                 // save plaintext header
-                AesCbc(baseKey, page, true, span.Slice(0, 16));     // encrypt the magic block (discarded on read)
-                AesCbc(baseKey, page, true, span.Slice(16, pageSize - 16));
-                span.Slice(16, 8).CopyTo(span.Slice(8, 8));         // move encrypted 16..23 to 8..15
-                dbHeader.CopyTo(span.Slice(16, 8));                 // restore plaintext 16..23
-            }
-            else
-            {
-                AesCbc(baseKey, page, true, span);
-            }
-        }
+            EncryptPage(outBuf.AsSpan(p * pageSize, pageSize), p + 1, baseKey);
         return outBuf;
     }
 }

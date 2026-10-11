@@ -632,6 +632,178 @@ public class LineCollectorTests : IDisposable
         Assert.Equal(2, keep.Root.GetProperty("messages").GetArrayLength());
     }
 
+    // ---- WAL: rows LINE has committed to the -wal file but not yet checkpointed into the main file ----
+
+    private const long T0 = 1_760_000_000_000;
+
+    private static void MainRows(SqliteConnection c)
+    {
+        LineFixture.Chat(c, "c1");
+        LineFixture.Message(c, "m0", "c1", "uA", T0, "in the main file");
+    }
+
+    private static List<string> MessageIds(IReadOnlyList<CapturedRecord> batches) =>
+        batches.SelectMany(b => b.Root.GetProperty("messages").EnumerateArray())
+            .Select(m => m.GetProperty("msgId").GetString()!).OrderBy(s => s, StringComparer.Ordinal).ToList();
+
+    /// <summary>Write the encrypted main file and the (already encrypted) WAL over the collector's store.</summary>
+    private void PlaceEncrypted(byte[] plainMain, byte[] encryptedWal, int pageSize)
+    {
+        SqliteConnection.ClearAllPools();
+        File.WriteAllBytes(_dbPath, LineWxCipher.Encrypt(plainMain, LineWxCipher.DeriveKey(LineKey), pageSize));
+        File.WriteAllBytes(_dbPath + "-wal", encryptedWal);
+    }
+
+    private async Task<List<string>> RunKeyed(string tag)
+    {
+        var line = new LineDesktopCollector(_env.Context, new LineSettings(),
+            roots: new[] { new LineProbeRoot("test", _dataFolder) },
+            reportDir: _dir.Sub("rep-" + tag), tempRoot: _dir.Sub("tmp-" + tag),
+            keyStore: new InMemoryLineKeyStore(LineKey));
+        await line.StartAsync(default);
+        await line.TickAsync(default);
+        Assert.Equal(LineState.OkPartial, line.State);
+        return MessageIds(Batches());
+    }
+
+    [Fact]
+    public async Task Encrypted_store_reads_committed_rows_that_exist_only_in_the_wal()
+    {
+        using var store = LineWalStore.Create(_dir.Sub("live1"), MainRows);
+        LineFixture.Message(store.Writer, "m1", "c1", "uA", T0 + 1000, "wal one");
+        LineFixture.Chat(store.Writer, "c2");                        // a chat that exists only in the WAL
+        LineFixture.Message(store.Writer, "m2", "c2", "uB", T0 + 2000, "wal two");
+        LineFixture.Message(store.Writer, "m3", "c2", "uB", T0 + 3000, "wal three");
+
+        // The main file on its own holds only the pre-WAL row.
+        Assert.Equal(new[] { "m0" }, store.MainOnlyMessageIds(_dir.Sub("mainonly1")));
+
+        var (main, wal) = store.ReadFiles();
+        Assert.True(LineWalBytes.ValidFrameCount(wal, store.PageSize) > 0);
+        LineWalBytes.EncryptFrames(wal, store.PageSize, LineWxCipher.DeriveKey(LineKey));
+        PlaceEncrypted(main, wal, store.PageSize);
+
+        Assert.Equal(new[] { "m0", "m1", "m2", "m3" }, await RunKeyed("w1"));
+        Assert.Equal(new[] { "c1", "c2" },
+            Batches().Select(b => b.Root.GetProperty("convKey").GetString()).OrderBy(s => s, StringComparer.Ordinal).ToArray());
+    }
+
+    [Fact]
+    public async Task Encrypted_store_ignores_a_trailing_wal_transaction_without_a_commit_frame()
+    {
+        using var store = LineWalStore.Create(_dir.Sub("live2"), MainRows);
+        LineFixture.Message(store.Writer, "m1", "c1", "uA", T0 + 1000, "committed one");
+        LineFixture.Message(store.Writer, "m2", "c1", "uA", T0 + 2000, "committed two");
+        var framesBefore = store.FrameCount;
+        LineFixture.Message(store.Writer, "m3", "c1", "uA", T0 + 3000, "half written");
+        var framesAfter = store.FrameCount;
+        Assert.True(framesAfter > framesBefore);
+
+        var (main, wal) = store.ReadFiles();
+        var ps = store.PageSize;
+        LineWalBytes.EncryptFrames(wal, ps, LineWxCipher.DeriveKey(LineKey));
+        var last = framesAfter - 1;
+        Assert.NotEqual(0u, LineWalBytes.CommitSize(wal, last, ps));
+        // Turn m3's transaction into an unfinished one: its final frame loses its commit marker, but salts and
+        // checksum stay valid, so only the missing commit makes the reader drop it.
+        LineWalBytes.SetCommitSize(wal, last, ps, 0);
+        LineWalBytes.Rechain(wal, ps, last);
+        for (var i = framesBefore; i < framesAfter; i++) Assert.Equal(0u, LineWalBytes.CommitSize(wal, i, ps));
+        Assert.NotEqual(0u, LineWalBytes.CommitSize(wal, framesBefore - 1, ps));
+        PlaceEncrypted(main, wal, ps);
+
+        Assert.Equal(new[] { "m0", "m1", "m2" }, await RunKeyed("w2"));
+    }
+
+    [Fact]
+    public async Task Encrypted_store_stops_reading_the_wal_at_a_frame_with_a_bad_checksum()
+    {
+        using var store = LineWalStore.Create(_dir.Sub("live3"), MainRows);
+        LineFixture.Message(store.Writer, "m1", "c1", "uA", T0 + 1000, "one");
+        LineFixture.Message(store.Writer, "m2", "c1", "uA", T0 + 2000, "two");
+        var firstFrameOfM3 = store.FrameCount;
+        LineFixture.Message(store.Writer, "m3", "c1", "uA", T0 + 3000, "three");
+        LineFixture.Message(store.Writer, "m4", "c1", "uA", T0 + 4000, "four");
+        Assert.True(store.FrameCount > firstFrameOfM3 + 1); // frames exist after the one we break
+
+        var (main, wal) = store.ReadFiles();
+        var ps = store.PageSize;
+        LineWalBytes.EncryptFrames(wal, ps, LineWxCipher.DeriveKey(LineKey));
+        wal[LineWalBytes.FrameOffset(firstFrameOfM3, ps) + LineWalBytes.FrameHeaderSize + 100] ^= 0x01; // checksum not updated
+        PlaceEncrypted(main, wal, ps);
+
+        Assert.Equal(new[] { "m0", "m1", "m2" }, await RunKeyed("w3"));
+    }
+
+    [Fact]
+    public async Task Plain_store_reads_committed_rows_that_exist_only_in_the_wal()
+    {
+        using var store = LineWalStore.Create(_dir.Sub("live4"), MainRows);
+        LineFixture.Message(store.Writer, "m1", "c1", "uA", T0 + 1000, "wal one");
+        LineFixture.Chat(store.Writer, "c2");
+        LineFixture.Message(store.Writer, "m2", "c2", "uB", T0 + 2000, "wal two");
+        Assert.Equal(new[] { "m0" }, store.MainOnlyMessageIds(_dir.Sub("mainonly4")));
+
+        SqliteConnection.ClearAllPools();
+        store.CopyTo(_dbPath); // db, -wal and -shm, unencrypted
+
+        var line = NewCollector();
+        await line.StartAsync(default);
+        await line.TickAsync(default);
+
+        Assert.Equal(LineState.OkPartial, line.State);
+        Assert.Equal(new[] { "m0", "m1", "m2" }, MessageIds(Batches()));
+    }
+
     private static int CountMessages(IReadOnlyList<CapturedRecord> batches) =>
         batches.Sum(b => b.Root.GetProperty("messages").GetArrayLength());
+}
+
+/// <summary><see cref="LineWal.ReadCommitted"/> on hand-built WAL bytes.</summary>
+public class LineWalReadCommittedTests
+{
+    private const int Ps = 1024;
+
+    private static byte[] CommittedWal()
+    {
+        var wal = LineWalBytes.Header(Ps);
+        wal = LineWalBytes.AppendFrame(wal, Ps, pageNumber: 2, commitSize: 0);
+        return LineWalBytes.AppendFrame(wal, Ps, pageNumber: 3, commitSize: 3);
+    }
+
+    [Fact]
+    public void A_valid_hand_built_wal_returns_its_committed_pages()
+    {
+        var r = LineWal.ReadCommitted(CommittedWal(), Ps);
+        Assert.NotNull(r);
+        Assert.Equal(3u, r!.DbSizePages);
+        Assert.Equal(LineWalBytes.FrameOffset(0, Ps) + LineWalBytes.FrameHeaderSize, r.PageOffsets[2]);
+        Assert.Equal(LineWalBytes.FrameOffset(1, Ps) + LineWalBytes.FrameHeaderSize, r.PageOffsets[3]);
+    }
+
+    [Fact]
+    public void Wrong_magic_returns_null()
+    {
+        var wal = CommittedWal();
+        System.Buffers.Binary.BinaryPrimitives.WriteUInt32BigEndian(wal, 0x12345678);
+        Assert.Null(LineWal.ReadCommitted(wal, Ps));
+    }
+
+    [Fact]
+    public void Page_size_other_than_the_store_returns_null()
+    {
+        Assert.Null(LineWal.ReadCommitted(CommittedWal(), Ps * 2));
+        var otherSize = LineWalBytes.AppendFrame(LineWalBytes.Header(Ps * 2), Ps * 2, pageNumber: 2, commitSize: 2);
+        Assert.Null(LineWal.ReadCommitted(otherSize, Ps));
+    }
+
+    [Fact]
+    public void A_wal_with_no_commit_frame_returns_null()
+    {
+        var wal = LineWalBytes.Header(Ps);
+        wal = LineWalBytes.AppendFrame(wal, Ps, pageNumber: 2, commitSize: 0);
+        wal = LineWalBytes.AppendFrame(wal, Ps, pageNumber: 3, commitSize: 0);
+        Assert.Null(LineWal.ReadCommitted(wal, Ps));
+        Assert.Null(LineWal.ReadCommitted(LineWalBytes.Header(Ps), Ps)); // header only, no frames
+    }
 }

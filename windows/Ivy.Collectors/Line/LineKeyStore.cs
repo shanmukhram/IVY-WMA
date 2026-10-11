@@ -84,11 +84,25 @@ public sealed class KeyedLineUnlocker : ILineStoreUnlocker
         finally { CryptographicOperations.ZeroMemory(passphrase); }
 
         byte[]? plain;
-        try { plain = LineWxCipher.Decrypt(File.ReadAllBytes(dbPath), baseKey); }
+        try
+        {
+            plain = LineWxCipher.Decrypt(File.ReadAllBytes(dbPath), baseKey);
+            // Messages LINE has written but not yet checkpointed live only in the WAL, which the snapshot copied
+            // next to the db. Fold its committed pages in; an unusable WAL leaves the main file as it is.
+            if (plain is not null)
+            {
+                var wal = LineWal.TryReadFile(dbPath + "-wal");
+                if (wal is not null) plain = LineWal.Overlay(plain, wal, baseKey);
+            }
+        }
         finally { CryptographicOperations.ZeroMemory(baseKey); }
 
         if (plain is null)
             return LineUnlockResult.Failed("the LINE key does not fit this store (wrong key, or a changed LINE version); re-enter it.");
+
+        // The plaintext copy is a standalone rollback-journal database (the WAL is already folded in), so SQLite
+        // neither looks for nor creates sidecar files next to it.
+        LineWal.MakeSelfContained(plain);
 
         // The plaintext copy lives beside the snapshot and is removed when the caller disposes the snapshot.
         var plainPath = dbPath + ".plain";
