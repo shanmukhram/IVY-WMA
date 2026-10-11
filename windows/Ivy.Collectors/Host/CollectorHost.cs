@@ -38,6 +38,12 @@ public sealed class CollectorHostOptions
     public Func<Telegram.Client.ITelegramSessionProtector?>? TelegramSessionProtector { get; init; }
     /// <summary>False: do not fall back to platform implementations for null services (tests).</summary>
     public bool UsePlatformDefaults { get; init; } = true;
+    /// <summary>
+    /// Standard folders the files collector indexes on its own the first time it starts with no roots. Defaults to
+    /// <see cref="Ivy.Core.Policy.MediaPolicyDefaults.StandardUserFolders"/> on Windows with platform defaults, and
+    /// to none otherwise (tests), so a test host never scopes itself to the real machine's folders.
+    /// </summary>
+    public Func<IReadOnlyList<string>>? StandardIndexFolders { get; init; }
     public TimeProvider? Time { get; init; }
     public ILoggerFactory? Loggers { get; init; }
 }
@@ -84,10 +90,12 @@ public sealed class CollectorHost : IRescanHandler, ICollectorConfigHandler, IAs
         var usn = o.UsnJournal ?? (o.UsePlatformDefaults ? PlatformServices.CreateUsnJournal() : null);
         var probe = o.ForegroundProbe ?? (o.UsePlatformDefaults ? PlatformServices.CreateForegroundProbe() : null);
         var thumbs = o.Thumbnails ?? ThumbnailGenerator.CreateDefault();
+        var standardFolders = o.StandardIndexFolders
+            ?? (o.UsePlatformDefaults && OperatingSystem.IsWindows() ? Ivy.Core.Policy.MediaPolicyDefaults.StandardUserFolders : null);
         var telegram = o.TelegramClientFactory ?? (o.UsePlatformDefaults ? PlatformServices.CreateTelegramClientFactory(o.TelegramSessionProtector) : null);
         return new CollectorHost(context, new CollectorBase[]
         {
-            new FileIndexCollector(context, fs, changes, usn, thumbs),
+            new FileIndexCollector(context, fs, changes, usn, thumbs, standardFolders: standardFolders),
             new FileCatalogCollector(context, fs),
             new ScreenshotCollector(context, fs, changes),
             new UsageCollector(context, probe),

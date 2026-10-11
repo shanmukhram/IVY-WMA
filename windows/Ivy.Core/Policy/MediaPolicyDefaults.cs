@@ -82,4 +82,19 @@ public static class MediaPolicyDefaults
                 roots.Add(c);
         return roots;
     }
+
+    /// <summary>
+    /// The indexed roots after adding the standard folders: <paramref name="existing"/> kept in order, then each of
+    /// <paramref name="standard"/> (default <see cref="StandardUserFolders"/>) not already present, compared
+    /// case-insensitively. Both the Settings "Index my standard folders" button and the files collector's one-time
+    /// self-scope on first start use this, so the two always produce the same list.
+    /// </summary>
+    public static IReadOnlyList<string> WithStandardFolders(IEnumerable<string> existing, IReadOnlyList<string>? standard = null)
+    {
+        var merged = new List<string>(existing);
+        var seen = new HashSet<string>(merged, StringComparer.OrdinalIgnoreCase);
+        foreach (var folder in standard ?? StandardUserFolders())
+            if (!string.IsNullOrWhiteSpace(folder) && seen.Add(folder)) merged.Add(folder);
+        return merged;
+    }
 }

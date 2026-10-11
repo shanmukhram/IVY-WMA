@@ -199,10 +199,8 @@ public sealed class CollectorHostAdapter : ICollectorHostView
 
     public async Task<IReadOnlyList<string>> IndexStandardFoldersAsync()
     {
-        var merged = new List<string>(_host.Get<FileIndexCollector>().Settings.Roots);
-        var seen = new HashSet<string>(merged, StringComparer.OrdinalIgnoreCase);
-        foreach (var folder in Ivy.Core.Policy.MediaPolicyDefaults.StandardUserFolders())
-            if (seen.Add(folder)) merged.Add(folder);
+        // Same helper the files collector uses to scope itself on first start (FileIndexCollector.AutoScopeIfNeeded).
+        var merged = Ivy.Core.Policy.MediaPolicyDefaults.WithStandardFolders(_host.Get<FileIndexCollector>().Settings.Roots);
         await UpdateAsync(Files, new() { ["roots"] = JsonSerializer.SerializeToElement(merged) });
         return merged;
     }

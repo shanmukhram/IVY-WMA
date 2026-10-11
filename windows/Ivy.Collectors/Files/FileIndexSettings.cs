@@ -6,7 +6,12 @@ namespace Ivy.Collectors.Files;
 /// <summary>Settings for the <c>files</c> collector (WC1/WC2, media policy per PLAN decision 8). Keys are camelCase in <c>collector_config.settings</c>.</summary>
 public sealed class FileIndexSettings
 {
-    /// <summary>Folders or drives to index. Empty until Bunny picks folders (the collector then reports "no folders selected").</summary>
+    /// <summary>
+    /// Folders or drives to index. On a fresh install the collector sets these itself on its first paired tick to the
+    /// standard folders (Documents, Pictures, Downloads; <see cref="MediaPolicyDefaults.WithStandardFolders"/>),
+    /// the same list the Settings "Index my standard folders" button sets. If the user clears them afterwards
+    /// they stay empty and the collector reports "no folders selected".
+    /// </summary>
     public IReadOnlyList<string> Roots { get; init; } = Array.Empty<string>();
 
     /// <summary>Glob exclusions (see <see cref="ExclusionMatcher"/>).</summary>

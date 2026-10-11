@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Globalization;
+using System.Text.Json.Nodes;
 using Ivy.Collectors.Abstractions;
 using Ivy.Collectors.Common;
 using Ivy.Collectors.Screenshots;
@@ -107,11 +108,16 @@ public sealed class FileIndexCollector : Collector<FileIndexSettings>
     private HashSet<string> _documentExts = new(StringComparer.Ordinal);
     private (DateTimeOffset At, IReadOnlyList<string> Roots, HashSet<string> Exts)? _screenshotFolders;
     private string? _originalsNote;
+    // one-time self-scope to the standard folders (see AutoScopeIfNeeded); null source = disabled
+    private readonly Func<IReadOnlyList<string>>? _standardFolders;
+    private const string AutoScopedKey = "autoScoped";
 
     public FileIndexCollector(CollectorContext context, IFileSystemSource? fs = null, IFileChangeSourceFactory? changes = null,
-        IUsnJournal? usn = null, IThumbnailGenerator? thumbnails = null, FileIndexSettings? settings = null)
+        IUsnJournal? usn = null, IThumbnailGenerator? thumbnails = null, FileIndexSettings? settings = null,
+        Func<IReadOnlyList<string>>? standardFolders = null)
         : base(CollectorNames.Files, context, settings)
     {
+        _standardFolders = standardFolders;
         _fs = fs ?? PhysicalFileSystemSource.Instance;
         _changes = changes ?? FileSystemWatcherChangeSourceFactory.Instance;
         _usn = usn;
@@ -190,17 +196,56 @@ public sealed class FileIndexCollector : Collector<FileIndexSettings>
     {
         _scan = Context.Settings.Load<FileScanState>(Name, ScanKey);
         foreach (var (k, v) in UsnCursor.Parse(Context.States.Get(Name)?.Cursor)) _usnPositions[k] = v;
-        var roots = ExistingRoots();
-        if (roots.Count > 0)
-        {
-            _watcher = _changes.Create();
-            _watcher.Changed += c => _pending[c.Path] = Now;
-            _watcher.Overflowed += r => RequestScan("watcher_overflow", null, restart: false);
-            _watcher.Watch(roots, includeSubdirectories: true);
-        }
+        AttachWatcher();
         if (_scan is not null) Activity(CollectorActivity.ScanStarted, $"resuming scan {_scan.ScanId} at root {_scan.RootIndex + 1}/{_scan.Roots.Count}, {_scan.FilesSeen} files seen");
         UpdateCursorAndDetail();
         return Task.CompletedTask;
+    }
+
+    /// <summary>(Re)attach the change watcher to the roots that exist now; none when there are no roots.</summary>
+    private void AttachWatcher()
+    {
+        _watcher?.Dispose();
+        _watcher = null;
+        var roots = ExistingRoots();
+        if (roots.Count == 0) return;
+        _watcher = _changes.Create();
+        _watcher.Changed += c => _pending[c.Path] = Now;
+        _watcher.Overflowed += r => RequestScan("watcher_overflow", null, restart: false);
+        _watcher.Watch(roots, includeSubdirectories: true);
+    }
+
+    /// <summary>
+    /// Index the standard folders with no setup. On the first paired tick, if no roots are configured, set them to
+    /// exactly what the Settings "Index my standard folders" button sets
+    /// (<see cref="MediaPolicyDefaults.WithStandardFolders"/>: Documents, Pictures and Downloads where they exist),
+    /// save them, and log one Config activity line. The <c>autoScoped</c> flag is saved on that first paired tick
+    /// whether or not roots were already configured, so this runs at most once per install: a user who later
+    /// clears the roots stays cleared, and a user who had already chosen roots never gets standard folders added.
+    /// Like the catalogue's self-scope it waits for pairing, so an unpaired agent (and the unpaired app tests)
+    /// never picks up folders. Disabled when no folder source was given: the host passes one only on Windows
+    /// with platform defaults, so tests and non-Windows hosts never scope to the real machine unless the test
+    /// supplies its own folders. Returns true when roots were set; the caller then re-attaches the watcher.
+    /// </summary>
+    private bool AutoScopeIfNeeded()
+    {
+        if (_standardFolders is null) return false;
+        if (Context.Settings.LoadJson(Name, AutoScopedKey) is not null) return false;
+        Context.Settings.SaveJson(Name, AutoScopedKey, JsonValue.Create("1"));
+        if (Settings.Roots.Count > 0) return false; // the user already chose folders; leave them as they are
+        var roots = MediaPolicyDefaults.WithStandardFolders(Settings.Roots, _standardFolders());
+        if (roots.Count == 0) return false;
+        var next = GetSettingsJson();
+        next["roots"] = new JsonArray(roots.Select(r => (JsonNode?)r).ToArray());
+        try { ApplySettings(next); }
+        catch (ArgumentException e)
+        {
+            Activity(CollectorActivity.Config, $"could not index the standard folders automatically: {e.Message}");
+            return false;
+        }
+        Context.Settings.SaveSettings(Name, next); // persist so it survives a restart
+        Activity(CollectorActivity.Config, $"indexing standard folders automatically: {string.Join(", ", roots)}");
+        return true;
     }
 
     public override Task StopAsync()
@@ -242,6 +287,9 @@ public sealed class FileIndexCollector : Collector<FileIndexSettings>
     {
         var sink = Sink;
         if (sink is null) return Task.CompletedTask;
+        // First paired tick of a fresh install: take the standard folders, then do what the button's collector
+        // restart does (attach the watcher). The scan below then starts this same tick ("initial").
+        if (AutoScopeIfNeeded()) AttachWatcher();
         if (Settings.Roots.Count == 0)
         {
             Detail = "no folders selected";

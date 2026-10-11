@@ -458,6 +458,125 @@ public class FileIndexTests : IDisposable
         Assert.False(c.IsTombstoned(Path.Combine(_root, "a.txt")));
         Assert.NotNull(new FileCacheStore(_env.Db).Get(Path.Combine(_root, "a.txt")));
     }
+
+    // ---------------------------------------------------------------- self-scope to the standard folders
+
+    /// <summary>Two stand-in "standard folders" (Documents, Pictures) under the temp dir, with one file each.</summary>
+    private IReadOnlyList<string> StandardFolders()
+    {
+        _dir.Write("home/Documents/notes.txt", "notes", T0);
+        _dir.Write("home/Pictures/cat.png", "not really a png", T0);
+        return new[] { _dir.Sub("home", "Documents"), _dir.Sub("home", "Pictures") };
+    }
+
+    /// <summary>A collector as a fresh install has it: default settings (no roots), self-scope source given.</summary>
+    private FileIndexCollector FreshCollector(IReadOnlyList<string> standard, CollectorContext? ctx = null) =>
+        new(ctx ?? _env.Context, null, _changes, standardFolders: () => standard);
+
+    private IReadOnlyList<string> SavedRoots() =>
+        _env.Context.Settings.LoadSettings("files")?["roots"]?.AsArray().Select(n => n!.GetValue<string>()).ToList() ?? new List<string>();
+
+    private int ConfigLines() => _env.Activity.Recent().Count(e => e.Collector == "files" && e.Event == CollectorActivity.Config);
+
+    [Fact]
+    public async Task Fresh_install_scopes_itself_to_the_standard_folders_and_indexes_on_the_first_tick()
+    {
+        var standard = StandardFolders();
+        var c = FreshCollector(standard);
+        Assert.Empty(c.Settings.Roots);
+        await c.StartAsync(default);
+
+        // not paired yet: nothing is picked up (same as the catalogue)
+        _env.Paired = false;
+        await c.TickAsync(default);
+        Assert.Empty(c.Settings.Roots);
+        Assert.Empty(_changes.Watched);
+        Assert.Equal(0, ConfigLines());
+
+        _env.Paired = true;
+        await c.TickAsync(default);                                  // first paired tick: scope, watch, start the initial scan
+        Assert.Equal(standard, c.Settings.Roots);
+        Assert.Equal(standard, SavedRoots());                       // persisted, so a restart keeps them
+        Assert.Equal(standard, _changes.Watched);                   // watcher attached to the new roots, as after the button's restart
+        Assert.Equal(1, ConfigLines());
+        Assert.Contains(_env.Activity.Recent(), e => e.Collector == "files" && e.Event == CollectorActivity.Config
+            && (e.Detail ?? "").Contains("automatically", StringComparison.Ordinal));
+        Assert.Contains(_env.Activity.Recent(), e => e.Collector == "files" && e.Event == CollectorActivity.ScanStarted
+            && (e.Detail ?? "").Contains("(initial)", StringComparison.Ordinal));
+        c.RunScanToCompletion();
+        Assert.Equal(new[] { "cat.png", "notes.txt" }, EmittedNames());
+        Assert.DoesNotContain("no folders selected", c.Detail ?? "");
+    }
+
+    [Fact]
+    public async Task Explicit_existing_roots_are_left_untouched()
+    {
+        var standard = StandardFolders();
+        var c = new FileIndexCollector(_env.Context, null, _changes, standardFolders: () => standard);
+        c.ApplySettings(Host.CollectorHost.Merge(c.GetSettingsJson(), new System.Text.Json.Nodes.JsonObject
+        {
+            ["roots"] = new System.Text.Json.Nodes.JsonArray(_root),
+        }));
+        await c.StartAsync(default);
+        await c.TickAsync(default);
+        Assert.Equal(new[] { _root }, c.Settings.Roots);
+        Assert.Equal(0, ConfigLines());
+        Assert.Empty(SavedRoots()); // nothing written over the user's settings
+
+        // The flag is set on that first tick, so clearing the roots later never brings the standard folders back.
+        await c.StopAsync();
+        var again = FreshCollector(standard, _env.Restart());
+        await again.StartAsync(default);
+        await again.TickAsync(default);
+        Assert.Empty(again.Settings.Roots);
+    }
+
+    [Fact]
+    public async Task Roots_cleared_after_the_self_scope_stay_cleared()
+    {
+        var standard = StandardFolders();
+        var c = FreshCollector(standard);
+        await c.StartAsync(default);
+        await c.TickAsync(default);
+        Assert.Equal(standard, c.Settings.Roots);
+
+        // the user clears the folders (what the host does for a settings update), then the app restarts
+        var cleared = c.GetSettingsJson();
+        cleared["roots"] = new System.Text.Json.Nodes.JsonArray();
+        c.ApplySettings(cleared);
+        _env.Context.Settings.SaveSettings("files", cleared);
+        await c.StopAsync();
+
+        var again = FreshCollector(standard, _env.Restart());
+        again.ApplySettings(Host.CollectorHost.Merge(again.GetSettingsJson(), _env.Context.Settings.LoadSettings("files")!));
+        await again.StartAsync(default);
+        await again.TickAsync(default);
+        Assert.Empty(again.Settings.Roots);
+        Assert.Empty(SavedRoots());
+        Assert.Equal("no folders selected", again.Detail);
+        Assert.Equal(1, ConfigLines()); // only the original self-scope line
+    }
+
+    [Fact]
+    public async Task Button_and_self_scope_produce_the_same_roots()
+    {
+        var standard = StandardFolders();
+        // the button (CollectorHostAdapter.IndexStandardFoldersAsync) on an install with no roots yet
+        var button = Ivy.Core.Policy.MediaPolicyDefaults.WithStandardFolders(Array.Empty<string>(), standard);
+
+        // the self-scope, wired through the host as in the app
+        await using var host = Host.CollectorHost.Create(_env.Context, new Host.CollectorHostOptions
+        {
+            UsePlatformDefaults = false, ChangeSources = _changes, Time = _env.Time, StandardIndexFolders = () => standard,
+        });
+        await host.StartAsync();
+        await host.TickNowAsync("files");
+        Assert.Equal(button, host.Get<FileIndexCollector>().Settings.Roots);
+
+        // and the button's default list is exactly the shared standard-folder helper
+        Assert.Equal(Ivy.Core.Policy.MediaPolicyDefaults.StandardUserFolders(),
+            Ivy.Core.Policy.MediaPolicyDefaults.WithStandardFolders(Array.Empty<string>()));
+    }
 }
 
 public class QuickHashTests : IDisposable
