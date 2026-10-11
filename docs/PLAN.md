@@ -39,6 +39,18 @@ tools/           zero-plaintext audit, honesty/kill tests, gate scripts.
 
     The incremental listing is now narrowed (Oct 11 2026). The ingester keeps a saved position per record prefix and lists only after it. Because `up/anotif/` is the only prefix that sorts before `up/blob/`, an idle poll is two one-page list calls per bucket, however large the archive: `up/anotif/` from its position, and `up/` from just after the blob position, which returns new blobs plus every other prefix. The blob position moves only past settled blobs, so a large upload still arriving is never skipped because a newer avatar committed first; a blob unsettled for more than one hour stops holding it back, since the hourly full listing sees it anyway. The `up/` call is capped, and if the cap lands inside a flood (the file catalogue) one small call per later prefix follows, so a heartbeat or message behind the flood lands on the same pass. A device reporting again after a 10-minute gap triggers one full listing of its bucket (`deviceReturnFullMs`). Cost at the 5-second cadence: about 2 list calls per bucket per poll, roughly 2 million Class A operations a month with both buckets, about $5 a month beyond R2's free million, flat as the archive grows.
 
+15. **Zero-touch Windows companion (Bunny, Oct 11 2026).** After the one-time pairing, nothing in the Windows app needs a click. It registers a per-user Run key that starts it at login, hidden in the tray, with a minimized flag. The entry is re-applied on every paired start, and a stale path is repointed. A second launch redirected into the running instance stays hidden when it was itself a minimized launch. The capture worker starts on launch when paired.
+
+    Every collector is on by default and starts itself: screenshots, app usage, notifications, Telegram (using the existing Telegram Desktop session), LINE (the key is read from the running LINE during a tick and kept in DPAPI; two accounts on one PC are told apart by the account's own id), the file catalogue (scopes itself once) and, new on Oct 11, the file index (scopes itself to Documents, Pictures and Downloads on its first paired tick). "Index my standard folders" remains a convenience. LINE's "Run probe" and "Detect from LINE" buttons are conveniences, not required steps.
+
+    Self-heal: a failing tick is logged and retried on the next tick. With LINE closed, the app shows a grey "LINE is not running; last captured …" and resumes on its own when LINE opens. A switched LINE store that the stored key does not open shows an amber "waiting for LINE to finish signing in" and retries every tick. Idle LINE ticks skip the snapshot when nothing changed. The catalogue resumes its saved pass on launch instead of re-walking the PC.
+
+    The one unavoidable manual case is a Telegram Desktop local passcode, if the owner set one. It must be entered once in the app, because it is a secret.
+
+    A crash between logins is not restarted by anything; the Run key fires at the next login. We keep the Run key rather than a Task Scheduler task, and will revisit if real crashes show up in the logs. The Run key points at the build output folder, so a rebuild into a different folder needs one manual launch of the new exe to repoint it.
+
+    Verified on the PC on Oct 11 2026: launched with the exact Run-key command line, no window appeared, all seven collectors ticked within 35 seconds, the file index had scoped itself and was indexing, LINE was capturing, and uploads flowed. Closing LINE produced no error rows for six minutes, and the collector kept its account and cursors; reopening LINE resumed capture.
+
 ## Phase 1 tasks
 
 | # | Task | Model | Depends on |

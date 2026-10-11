@@ -9,3 +9,7 @@ L50: **Old window, 08:31Z to 09:06Z (35 minutes).** The feed was driven by an in
 L54: Not done: Win+L lock/unlock (it would end this session's control of the PC; no second monitor exists).
 L63: | `d5845e8` | Conversation panel: Run probe, Apply passcode and Include channels go through `BackgroundWork` like the main view model's host calls. Found by the checklist: pressing Run probe on the unfixed build logged `UiThreadGuard: UI thread: VaultDb write VaultDb.SetSetting from CollectorSettingsStore.SaveJson` and `... ActivityLog.Append from CollectorHost.UpdateSettingsAsync`. Smallest interface change: `ConversationViewModel.LastWork` (a `Task`) so the tests can await the queued work; the three tests use `ExecuteAsync`. After the rebuild, Run probe logs nothing, on both windows. |
 L64: | `0f536e6` | LINE probe report. |
+
+## Zero-touch startup, verified Oct 11 2026
+
+On Oct 11 2026 the Windows app was launched with the exact Run-key command line. No window appeared, all seven collectors ticked within 35 seconds, the file index had scoped itself to Documents, Pictures and Downloads and was indexing, LINE was capturing, and uploads flowed. Closing LINE produced no error rows for six minutes, and the collector kept its account and cursors; reopening LINE resumed capture. The Run key points at the build output folder, so a rebuild into a different folder needs one manual launch of the new exe to repoint it.
