@@ -26,7 +26,7 @@ public class CollectorHostAdapterTests : IDisposable
             await host.StartAsync();
 
             var rows = host.Collectors();
-            Assert.Equal(new[] { "files", "line", "notifications", "screenshots", "telegram", "usage" }, rows.Select(r => r.Name).OrderBy(n => n, StringComparer.Ordinal));
+            Assert.Equal(new[] { "catalog", "files", "line", "notifications", "screenshots", "telegram", "usage" }, rows.Select(r => r.Name).OrderBy(n => n, StringComparer.Ordinal));
             Assert.All(rows, r => Assert.True(r.Enabled));
             Assert.All(rows, r => Assert.NotNull(r.ExpectedInterval));
             Assert.Same(agent.CollectorConfigHandler, ((CollectorHostAdapter)host).Host); // registered for collector_config commands

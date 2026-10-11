@@ -4,13 +4,14 @@ namespace Ivy.Collectors.Common;
 public static class CollectorNames
 {
     public const string Files = "files";
+    public const string Catalog = "catalog";
     public const string Screenshots = "screenshots";
     public const string Usage = "usage";
     public const string Notifications = "notifications";
     public const string Line = "line";
     public const string Telegram = "telegram";
 
-    public static readonly IReadOnlyList<string> All = new[] { Files, Screenshots, Usage, Notifications, Line, Telegram };
+    public static readonly IReadOnlyList<string> All = new[] { Files, Catalog, Screenshots, Usage, Notifications, Line, Telegram };
 }
 
 /// <summary>Activity-log event names the collectors add (the sink adds <c>encrypted</c>/<c>queued</c>).</summary>

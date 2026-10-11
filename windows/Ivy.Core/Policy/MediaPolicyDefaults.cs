@@ -26,6 +26,39 @@ public static class MediaPolicyDefaults
     public static long CapBytes(double mb) => (long)Math.Floor(mb * 1024 * 1024);
 
     /// <summary>
+    /// What the file catalog covers by default (Bunny, Oct 11 2026): the whole user profile, plus any other
+    /// fixed, ready local drive that is not the system drive. The catalog records names, sizes and dates only
+    /// (no content) so the Mac can browse everything and fetch a file on demand. The OS and program areas are
+    /// left out by <see cref="ExclusionMatcher.Defaults"/> (Windows, Program Files, ProgramData, AppData, temp,
+    /// $Recycle.Bin, build/VCS). Only existing paths are returned, de-duplicated. On non-Windows (tests) this
+    /// falls back to the user profile alone.
+    /// </summary>
+    public static IReadOnlyList<string> CatalogScope()
+    {
+        var roots = new List<string>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var profile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        if (!string.IsNullOrWhiteSpace(profile) && System.IO.Directory.Exists(profile) && seen.Add(profile)) roots.Add(profile);
+
+        if (OperatingSystem.IsWindows())
+        {
+            var systemDrive = System.IO.Path.GetPathRoot(Environment.GetFolderPath(Environment.SpecialFolder.Windows));
+            try
+            {
+                foreach (var d in System.IO.DriveInfo.GetDrives())
+                {
+                    if (d.DriveType != System.IO.DriveType.Fixed || !d.IsReady) continue;
+                    var name = d.RootDirectory.FullName;
+                    if (systemDrive is not null && string.Equals(name, systemDrive, StringComparison.OrdinalIgnoreCase)) continue; // system drive covered by the profile
+                    if (seen.Add(name)) roots.Add(name);
+                }
+            }
+            catch (IOException) { /* a drive went away mid-enumeration; the roots we have are fine */ }
+        }
+        return roots;
+    }
+
+    /// <summary>
     /// The user's standard folders to offer as indexed roots: Downloads (where chat apps save files),
     /// Documents and Pictures. Only the ones that exist on this machine are returned, de-duplicated. Desktop
     /// is deliberately NOT included: on this machine it holds the IVY project checkout (source and build

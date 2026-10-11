@@ -100,7 +100,7 @@ public static class Schema
     private static readonly Dictionary<string, (string[] Required, string[] Optional)> Fields = new()
     {
         // file_meta: size/mtime/quickHash are required only for a live record; a deletion (deleted:true) may omit them.
-        ["file_meta"] = (new[] { "path", "name", "ext" }, new[] { "size", "mtime", "quickHash", "thumbBlobOid", "originalBlobOid", "deleted" }),
+        ["file_meta"] = (new[] { "path", "name", "ext" }, new[] { "size", "mtime", "quickHash", "thumbBlobOid", "originalBlobOid", "catalogOnly", "deleted" }),
         ["screenshot"] = (new[] { "sourcePath", "sha256", "blobOid" }, new[] { "width", "height", "takenAt", "savedAt" }),
         ["usage_event"] = (new[] { "app", "startedAt", "endedAt" }, new[] { "exe", "title" }),
         ["windows_notification"] = (new[] { "app", "title", "text", "postedAt" }, new[] { "sender" }),
@@ -115,7 +115,7 @@ public static class Schema
 
     private static readonly HashSet<string> Timestamps = new() { "eventTime", "captureTime", "mtime", "takenAt", "savedAt", "startedAt", "endedAt", "postedAt" };
     private static readonly HashSet<string> Integers = new() { "size", "width", "height", "v" };
-    private static readonly HashSet<string> Booleans = new() { "deleted" };
+    private static readonly HashSet<string> Booleans = new() { "deleted", "catalogOnly" };
     /// <summary>Fields that may be JSON null (null carries meaning: see PROTOCOL.md §6).</summary>
     private static readonly HashSet<string> Nullable = new() { "title" };
 
@@ -128,10 +128,15 @@ public static class Schema
         var (req, opt) = Fields[kind];
         var names = root.EnumerateObject().Select(p => p.Name).ToHashSet();
         foreach (var f in Base.Concat(req)) Assert.True(names.Contains(f), $"{kind}: missing required field '{f}' in {json}");
-        // A live file_meta still carries size/mtime/quickHash; only a deletion may omit them.
+        // A live file_meta still carries size/mtime/quickHash; a deletion may omit them, and a catalog entry
+        // (metadata only, never hashed) carries size/mtime but no quickHash.
         if (kind == "file_meta" && !(names.Contains("deleted") && root.GetProperty("deleted").GetBoolean()))
-            foreach (var f in new[] { "size", "mtime", "quickHash" })
+        {
+            var catalogOnly = names.Contains("catalogOnly") && root.GetProperty("catalogOnly").GetBoolean();
+            var required = catalogOnly ? new[] { "size", "mtime" } : new[] { "size", "mtime", "quickHash" };
+            foreach (var f in required)
                 Assert.True(names.Contains(f), $"file_meta: missing '{f}' on a non-deletion in {json}");
+        }
         var allowed = Base.Concat(req).Concat(opt).ToHashSet();
         foreach (var n in names) Assert.True(allowed.Contains(n), $"{kind}: unknown field '{n}' in {json}");
         Assert.Equal(1, root.GetProperty("v").GetInt32());

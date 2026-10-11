@@ -88,6 +88,7 @@ public sealed class CollectorHost : IRescanHandler, ICollectorConfigHandler, IAs
         return new CollectorHost(context, new CollectorBase[]
         {
             new FileIndexCollector(context, fs, changes, usn, thumbs),
+            new FileCatalogCollector(context, fs),
             new ScreenshotCollector(context, fs, changes),
             new UsageCollector(context, probe),
             new NotificationCollector(context, o.NotificationReader),

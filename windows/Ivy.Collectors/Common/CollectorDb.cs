@@ -66,6 +66,15 @@ internal static class CollectorDb
                 mtime  TEXT NOT NULL,
                 sha256 TEXT NOT NULL
             );
+            -- File catalog (browse-and-fetch-on-demand): one row per catalogued file, metadata only. A file
+            -- is re-emitted only when size/mtime change; scan_gen records the latest scan that saw it, so a
+            -- row left at an older generation after a full scan is a deletion. No content is ever read.
+            CREATE TABLE IF NOT EXISTS catalog_entry (
+                path     TEXT PRIMARY KEY,
+                size     INTEGER NOT NULL,
+                mtime    TEXT NOT NULL,
+                scan_gen INTEGER NOT NULL
+            );
             """;
         cmd.ExecuteNonQuery();
     }
