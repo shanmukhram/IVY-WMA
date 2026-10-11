@@ -684,6 +684,95 @@ CREATE TABLE media_archive (
 );
 `;
 
+// v9: catalog entries (browse-and-fetch-on-demand, PROTOCOL file_meta.catalogOnly). A catalogOnly
+// file_meta records a file's metadata only (path, name, size, ext, mtime) with no quick hash, no
+// thumbnail and no uploaded original, so the Mac can browse everything on the Windows PC and fetch
+// any file's bytes on demand (a fetch issues a file_request; the original then caches locally and
+// persists in R2). The files table gains a `catalog` flag (1 for these) and its status CHECK gains
+// 'catalog' (a browse-only entry, not yet fetched). A catalog entry is kept out of the normal files
+// list, search, timeline and media gallery until it is fetched; once its original arrives and caches
+// it is an ordinary 'cached' file (local_path set) and appears normally. The status CHECK cannot be
+// altered in place, so the files table is rebuilt (as commands was in v2); rids are preserved so the
+// files_fts external-content index stays valid after its triggers are recreated and rebuilt.
+const v9 = `
+DROP VIEW items;
+CREATE TABLE files_v9 (
+  rid INTEGER PRIMARY KEY,
+  id TEXT NOT NULL UNIQUE,
+  device_id TEXT NOT NULL,
+  path TEXT NOT NULL,
+  name TEXT NOT NULL,
+  ext TEXT,
+  size INTEGER,
+  mtime TEXT,
+  quick_hash TEXT,
+  status TEXT NOT NULL DEFAULT 'reference' CHECK (status IN ('reference','cached','catalog')),
+  source_status TEXT NOT NULL DEFAULT 'live' CHECK (source_status IN ('live','deleted_at_source')),
+  source_deleted_at TEXT,
+  thumb_blob_oid TEXT,
+  thumb_path TEXT,
+  local_path TEXT,
+  event_time TEXT NOT NULL,
+  captured_at TEXT NOT NULL,
+  first_seen_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  deleted_at TEXT,
+  deleted_batch TEXT,
+  original_blob_oid TEXT,
+  content_text TEXT,
+  extract_status TEXT CHECK (extract_status IN ('pending','done','failed','unsupported')),
+  catalog INTEGER NOT NULL DEFAULT 0,
+  UNIQUE (device_id, path)
+);
+INSERT INTO files_v9 (rid, id, device_id, path, name, ext, size, mtime, quick_hash, status, source_status, source_deleted_at,
+  thumb_blob_oid, thumb_path, local_path, event_time, captured_at, first_seen_at, updated_at, deleted_at, deleted_batch,
+  original_blob_oid, content_text, extract_status)
+  SELECT rid, id, device_id, path, name, ext, size, mtime, quick_hash, status, source_status, source_deleted_at,
+    thumb_blob_oid, thumb_path, local_path, event_time, captured_at, first_seen_at, updated_at, deleted_at, deleted_batch,
+    original_blob_oid, content_text, extract_status FROM files;
+DROP TRIGGER files_fts_ai;
+DROP TRIGGER files_fts_ad;
+DROP TRIGGER files_fts_au;
+DROP TABLE files;
+ALTER TABLE files_v9 RENAME TO files;
+CREATE INDEX files_mtime ON files(mtime);
+CREATE INDEX files_thumb ON files(thumb_blob_oid);
+CREATE INDEX files_original ON files(original_blob_oid);
+CREATE INDEX files_catalog ON files(device_id, catalog);
+${ftsTriggers("files", "files_fts", ["name", "path", "content_text"])}
+INSERT INTO files_fts(files_fts) VALUES ('rebuild');
+-- recreate the items view (dropped above so the files table could be rebuilt); unchanged from v1
+CREATE VIEW items AS
+  SELECT 'message' AS type, m.rid, m.id, COALESCE(m.device_id, c.device_id) AS device_id, c.platform AS app,
+         m.sent_at AS event_time, 'sent_at' AS time_field, m.captured_at,
+         COALESCE(c.peer, c.conv_key) AS title, m.text AS body, m.sender AS person,
+         m.conversation_id AS conversation_id, c.account AS account, m.source_status AS source_status, m.deleted_at
+    FROM messages m JOIN conversations c ON c.id = m.conversation_id
+  UNION ALL
+  SELECT 'notification', n.rid, n.id, n.device_id, n.app, n.posted_at, 'posted_at', n.captured_at,
+         n.title, n.preview, n.sender, NULL, NULL, 'live', n.deleted_at
+    FROM notifications n
+  UNION ALL
+  SELECT md.kind, md.rid, md.id, md.device_id, NULL,
+         COALESCE(md.taken_at, md.saved_at, md.captured_at),
+         CASE WHEN md.taken_at IS NOT NULL THEN 'taken_at' WHEN md.saved_at IS NOT NULL THEN 'saved_at' ELSE 'captured_at' END,
+         md.captured_at, md.source_path, md.ocr_text, NULL, NULL, NULL, 'live', md.deleted_at
+    FROM media md
+  UNION ALL
+  SELECT 'file', f.rid, f.id, f.device_id, NULL, COALESCE(f.mtime, f.event_time),
+         CASE WHEN f.mtime IS NOT NULL THEN 'mtime' ELSE 'event_time' END,
+         f.captured_at, f.name, f.path, NULL, NULL, NULL, f.source_status, f.deleted_at
+    FROM files f
+  UNION ALL
+  SELECT 'usage', u.rid, u.id, u.device_id, u.app, u.started_at, 'started_at', u.captured_at,
+         u.app, u.title, NULL, NULL, NULL, 'live', u.deleted_at
+    FROM usage_events u
+  UNION ALL
+  SELECT 'call', cl.rid, cl.id, cl.device_id, NULL, cl.started_at, 'started_at', cl.captured_at,
+         cl.contact, cl.number, cl.contact, NULL, NULL, 'live', cl.deleted_at
+    FROM calls cl;
+`;
+
 export const MIGRATIONS: Migration[] = [
   { version: 1, name: "initial vault schema", sql: v1 },
   { version: 2, name: "import progress, manifest commandId, transferring commands", sql: v2 },
@@ -693,4 +782,5 @@ export const MIGRATIONS: Migration[] = [
   { version: 6, name: "sender identity (from_me, sender_name) and conversation avatars", sql: v6 },
   { version: 7, name: "LINE account state: profile, contacts, chat options and settings", sql: v7 },
   { version: 8, name: "media originals kept in R2: the media_archive record", sql: v8 },
+  { version: 9, name: "catalog entries: browse-and-fetch-on-demand (files.catalog, status 'catalog')", sql: v9 },
 ];

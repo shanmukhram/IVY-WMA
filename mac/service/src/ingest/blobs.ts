@@ -63,9 +63,11 @@ export function committedSet(row: BlobRow): Set<number> {
 /**
  * Payload kinds whose reassembled original is kept in its up-bucket after commit, so the Mac can
  * fetch it again at full quality on demand. Thumbnails and avatars stay cached small and are
- * deleted from R2 as before; screenshots and file_request results are also deleted as before.
+ * deleted from R2 as before; screenshots are also deleted as before. `file_original` (the result of
+ * a file_request, including a catalog file fetched on demand) is archived too, keyed the same way, so
+ * a fetched original is re-downloadable from R2 without the device online.
  */
-export const ARCHIVE_PAYLOAD_KINDS = new Set<string>(["photo", "document", "attachment", "media"]);
+export const ARCHIVE_PAYLOAD_KINDS = new Set<string>(["photo", "document", "attachment", "media", "file_original"]);
 
 export interface MediaArchiveRow {
   oid: string; bucket: string; manifest_key: string; part_keys: string; payload_kind: string;
@@ -447,7 +449,9 @@ export function placeAndLink(ctx: Ctx, oid: string): string | null {
           if (u.changes) ctx.events.emit("file.cached", { fileId: r.id, blobOid: oid, payloadKind: row.payload_kind });
         } else if (r.kind === "file_original") {
           const c = ctx.db.prepare("SELECT id, file_id, status FROM commands WHERE id = ?").get(r.id) as { id: string; file_id: string | null; status: string };
-          if (c.file_id) ctx.db.prepare("UPDATE files SET local_path = ?, status = 'cached' WHERE id = ?").run(path, c.file_id);
+          // link the file to the blob that answered its request so it is recognised as archived in R2
+          // (inR2 in the device browse) and a later request re-fetches from R2 without the device
+          if (c.file_id) ctx.db.prepare("UPDATE files SET local_path = ?, status = 'cached', original_blob_oid = COALESCE(original_blob_oid, ?) WHERE id = ?").run(path, oid, c.file_id);
           if (c.status !== "done") {
             ctx.db.prepare("UPDATE commands SET status = 'done', completed_at = ? WHERE id = ?").run(now, c.id);
             ctx.events.emit("command.completed", { commandId: c.id, fileId: c.file_id, resultOid: oid });

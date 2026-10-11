@@ -9,6 +9,7 @@ import { SourceTile } from "../components/AppIcon.tsx";
 import { Link } from "../components/Controls.tsx";
 import { Badge, Dot, Empty, ErrorLine, Pager, Progress, Time } from "../components/Feedback.tsx";
 import { FilesView } from "./Files.tsx";
+import { BrowseView } from "./Browse.tsx";
 import { MediaView } from "./Media.tsx";
 import { NotificationsView } from "./Notifications.tsx";
 import { ConversationsView } from "./Conversations.tsx";
@@ -70,6 +71,7 @@ function SourceContent({ role, s }: { role: Role; s: DeviceSource }) {
   const v = s.view;
   const none = `Nothing from ${roleLabel(role)} here yet.`;
   if (v.kind === "files") return <FilesView device={role} embedded />;
+  if (v.kind === "browse") return <BrowseView role={role} />;
   if (v.kind === "media") return <MediaView device={role} kind={v.mediaKind} embedded emptyText={none} />;
   if (v.kind === "records") return <RecordsList type={v.type} device={role} empty={v.empty} />;
   if (v.kind === "notifications") return <NotificationsView device={role} embedded />;

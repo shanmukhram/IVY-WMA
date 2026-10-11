@@ -53,7 +53,9 @@ export const TYPE_DEFS: Record<ItemType, TypeDef> = {
     text: ["x.ocr_text", "x.source_path"],
   },
   file: {
-    type: "file", table: "files", fts: "files_fts", from: "files x",
+    // catalog entries (browse-only, not yet fetched) are excluded from search/timeline/record views;
+    // a fetched one has local_path set and appears normally (see migration v9)
+    type: "file", table: "files", fts: "files_fts", from: "files x", where: "(x.catalog = 0 OR x.local_path IS NOT NULL)",
     device: "x.device_id", app: null, time: "COALESCE(x.mtime, x.event_time)",
     timeField: "CASE WHEN x.mtime IS NOT NULL THEN 'mtime' ELSE 'event_time' END",
     title: "x.name", body: "x.path", person: null, conversation: null, account: null,

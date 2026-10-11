@@ -13,6 +13,7 @@ export interface DeviceSource {
     | { kind: "media"; mediaKind?: "screenshot" | "photo" }
     | { kind: "records"; type: string; empty: string }
     | { kind: "notifications" }
+    | { kind: "browse" }
     | { kind: "chats"; platform: string; source?: string };
   /** what the collector captures (D4), shown in the per-device view */
   captures: string;
@@ -21,6 +22,7 @@ export interface DeviceSource {
 export const DEVICE_SOURCES: Record<Role, DeviceSource[]> = {
   windows: [
     { key: "files", label: "Files", icon: "doc", view: { kind: "files" }, captures: "File index with thumbnails; originals on request (images and documents under the size caps upload automatically)." },
+    { key: "browse", label: "Browse PC", icon: "folder", view: { kind: "browse" }, captures: "The whole drive as a file tree from the device catalogue; fetch any file or folder on demand at full quality." },
     { key: "screenshots", label: "Screenshots", icon: "screenshot", view: { kind: "media", mediaKind: "screenshot" }, captures: "Screenshot originals, OCR'd on the Mac." },
     { key: "usage", label: "Usage", icon: "usage", view: { kind: "records", type: "usage", empty: "No app usage from Windows yet." }, captures: "Foreground app spans with window titles when title capture is on." },
     { key: "notifications", label: "Notifications", icon: "bell", view: { kind: "notifications" }, captures: "Notifications as shown: partial records, not conversations." },

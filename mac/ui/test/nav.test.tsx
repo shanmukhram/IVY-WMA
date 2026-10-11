@@ -40,7 +40,7 @@ describe("sidebar navigation", () => {
     expect(win).toHaveAttribute("aria-expanded", "true");
     const group = within(nav).getByRole("group", { name: "Windows" });
     expect(within(group).getAllByRole("link").map((l) => l.getAttribute("aria-label"))).toEqual(
-      ["Windows overview", "Windows Files", "Windows Screenshots", "Windows Usage", "Windows Notifications", "Windows Telegram", "Windows LINE"]);
+      ["Windows overview", "Windows Files", "Windows Browse PC", "Windows Screenshots", "Windows Usage", "Windows Notifications", "Windows Telegram", "Windows LINE"]);
     await u.click(within(nav).getByRole("button", { name: "Android" }));
     const android = within(nav).getByRole("group", { name: "Android" });
     expect(within(android).getAllByRole("link").map((l) => l.getAttribute("aria-label"))).toEqual(

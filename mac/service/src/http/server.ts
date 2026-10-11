@@ -33,6 +33,7 @@ import { ITEM_TYPES, TYPE_DEFS, selectList, type ItemType } from "../query/types
 import { parseBound } from "../util/time.ts";
 import { setSetting } from "../db/index.ts";
 import { archiveStats, blobProgress, evictCachedOriginal, getArchive, keepMediaInR2, refetchArchived, type BlobRow } from "../ingest/blobs.ts";
+import { browse, browseSearch, catalogStats } from "../query/browse.ts";
 import { registerUiRoutes } from "./ui-routes.ts"; // dashboard UI listings (@ivy/mac-ui)
 import { registerAiRoutes } from "./ai-routes.ts"; // AI layer (A1-A4) and Activity Vault import (S7)
 import { registerViewRoutes } from "./view-routes.ts"; // read-only views for the redesigned dashboard (PLAN decision 5)
@@ -260,6 +261,20 @@ export async function buildServer(svc: Service): Promise<FastifyInstance> {
     return deviceView(d);
   });
   app.delete("/api/devices/:id", async (req) => revokeDevice(ctx, (req.params as { id: string }).id));
+  // Read-only device file browser (catalog + indexed files). Immediate children of a directory, or
+  // the top-level roots/drives with no path. See query/browse.ts for the derived-folder logic.
+  app.get("/api/devices/:id/browse", async (req) => {
+    const deviceId = (req.params as { id: string }).id;
+    if (!getDevice(ctx, deviceId)) throw new HttpError(404, "not_found", "no such device");
+    const q = req.query as { path?: string; limit?: string; cursor?: string };
+    return browse(ctx, deviceId, q.path, { limit: num(q.limit), cursor: q.cursor });
+  });
+  app.get("/api/devices/:id/browse/search", async (req) => {
+    const deviceId = (req.params as { id: string }).id;
+    if (!getDevice(ctx, deviceId)) throw new HttpError(404, "not_found", "no such device");
+    const q = req.query as { q?: string; limit?: string };
+    return browseSearch(ctx, deviceId, q.q ?? "", { limit: num(q.limit) });
+  });
   app.get("/api/fingerprints", async () => ({
     mac: ctx.keystore.macFingerprint(),
     devices: listDevices(ctx).map((d) => ({ deviceId: d.id, role: d.role, fingerprint: d.fingerprint, pairedAt: d.paired_at })),
@@ -285,7 +300,7 @@ export async function buildServer(svc: Service): Promise<FastifyInstance> {
   app.get("/api/ingest/status", async () => {
     const blobs = ctx.db.prepare("SELECT * FROM blobs WHERE status IN ('awaiting_manifest','assembling') ORDER BY updated_at DESC LIMIT 100").all() as BlobRow[];
     const ledger = ctx.db.prepare("SELECT status, COUNT(*) AS n FROM sync_objects GROUP BY status").all();
-    return { running: svc.ingester.isRunning(), pausedUntil: svc.ingester.pausedTill(), last: svc.ingester.last, intervalMs: ctx.config.pollIntervalMs, ledger, pendingBlobs: blobs.map(blobProgress), mediaArchive: archiveStats(ctx) };
+    return { running: svc.ingester.isRunning(), pausedUntil: svc.ingester.pausedTill(), last: svc.ingester.last, intervalMs: ctx.config.pollIntervalMs, ledger, pendingBlobs: blobs.map(blobProgress), mediaArchive: archiveStats(ctx), catalog: catalogStats(ctx) };
   });
   // keepMediaInR2 (default true): keep media originals in R2 for on-demand full-quality fetch.
   // When false, originals are deleted after commit as before (then available only via a device request).
@@ -361,9 +376,11 @@ export async function buildServer(svc: Service): Promise<FastifyInstance> {
   app.get("/api/coverage", async () => coverage(ctx));
   app.get("/api/stats", async () => {
     const c = (t: string) => (ctx.db.prepare(`SELECT COUNT(*) AS n FROM ${t} WHERE deleted_at IS NULL`).get() as { n: number }).n;
+    // the files count is collected content only: browse-only catalog entries (not yet fetched) are excluded
+    const files = (ctx.db.prepare("SELECT COUNT(*) AS n FROM files WHERE deleted_at IS NULL AND (catalog = 0 OR local_path IS NOT NULL)").get() as { n: number }).n;
     const polls = ctx.db.prepare("SELECT key, value FROM settings WHERE key LIKE 'poll:%'").all() as Array<{ key: string; value: string }>;
     return {
-      counts: { messages: c("messages"), notifications: c("notifications"), media: c("media"), files: c("files"), usage: c("usage_events"), calls: c("calls") },
+      counts: { messages: c("messages"), notifications: c("notifications"), media: c("media"), files, usage: c("usage_events"), calls: c("calls") },
       lastSync: polls.map((p) => ({ bucket: p.key.slice(5), ...(JSON.parse(p.value) as object) })),
     };
   });
@@ -398,7 +415,9 @@ export async function buildServer(svc: Service): Promise<FastifyInstance> {
   app.get("/api/files", async (req) => {
     const q = req.query as { device?: string; status?: string; page?: string; pageSize?: string };
     const pageSize = Math.min(num(q.pageSize) ?? 50, 500), page = Math.max(num(q.page) ?? 1, 1);
-    const where = ["deleted_at IS NULL"]; const args: unknown[] = [];
+    // catalog entries (browse-only, not yet fetched) are not part of the main files list (see the
+    // device browse routes); a fetched catalog file has local_path set and is listed normally
+    const where = ["deleted_at IS NULL", "(catalog = 0 OR local_path IS NOT NULL)"]; const args: unknown[] = [];
     if (q.device) { where.push("device_id = ?"); args.push(q.device); }
     if (q.status) { where.push("status = ?"); args.push(q.status); }
     const total = (ctx.db.prepare(`SELECT COUNT(*) AS n FROM files WHERE ${where.join(" AND ")}`).get(...args) as { n: number }).n;

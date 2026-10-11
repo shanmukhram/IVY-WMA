@@ -74,7 +74,7 @@ function importProgress(ctx: Ctx, deviceId: string, c: CollectorRow) {
   const vaultKind = c.name === "files" || c.name === "messages" || c.name === "photos";
   if (!reported && !vaultKind) return null;
   let indexed: number | null = null;
-  if (c.name === "files") indexed = (ctx.db.prepare("SELECT COUNT(*) AS n FROM files WHERE device_id = ? AND source_status = 'live' AND deleted_at IS NULL").get(deviceId) as { n: number }).n;
+  if (c.name === "files") indexed = (ctx.db.prepare("SELECT COUNT(*) AS n FROM files WHERE device_id = ? AND source_status = 'live' AND deleted_at IS NULL AND (catalog = 0 OR local_path IS NOT NULL)").get(deviceId) as { n: number }).n;
   if (c.name === "messages") indexed = (ctx.db.prepare("SELECT COUNT(*) AS n FROM messages WHERE device_id = ?").get(deviceId) as { n: number }).n;
   if (c.name === "photos") indexed = (ctx.db.prepare("SELECT COUNT(*) AS n FROM media WHERE device_id = ? AND kind = 'photo'").get(deviceId) as { n: number }).n;
   const fullScan = c.cursor?.startsWith("scan:") ? c.cursor.slice(5) : null;
@@ -168,7 +168,8 @@ export function coverage(ctx: Ctx, now = Date.now()) {
     for (const c of failedCommands) problems.push({ severity: "amber", source: { deviceId: d.id, role }, message: `${c.type} command ${c.status}${c.detail ? `: ${c.detail}` : ""}` });
     const queuedCommands = (ctx.db.prepare("SELECT COUNT(*) AS n FROM commands WHERE device_id = ? AND status IN ('queued','sent','transferring','uploaded')").get(d.id) as { n: number }).n;
     const counts = {
-      files: (ctx.db.prepare("SELECT COUNT(*) AS n FROM files WHERE device_id = ? AND deleted_at IS NULL").get(d.id) as { n: number }).n,
+      files: (ctx.db.prepare("SELECT COUNT(*) AS n FROM files WHERE device_id = ? AND deleted_at IS NULL AND (catalog = 0 OR local_path IS NOT NULL)").get(d.id) as { n: number }).n,
+      catalog: (ctx.db.prepare("SELECT COUNT(*) AS n FROM files WHERE device_id = ? AND deleted_at IS NULL AND catalog = 1 AND local_path IS NULL").get(d.id) as { n: number }).n,
       media: (ctx.db.prepare("SELECT COUNT(*) AS n FROM media WHERE device_id = ? AND deleted_at IS NULL").get(d.id) as { n: number }).n,
       notifications: (ctx.db.prepare("SELECT COUNT(*) AS n FROM notifications WHERE device_id = ? AND deleted_at IS NULL").get(d.id) as { n: number }).n,
       usage: (ctx.db.prepare("SELECT COUNT(*) AS n FROM usage_events WHERE device_id = ? AND deleted_at IS NULL").get(d.id) as { n: number }).n,

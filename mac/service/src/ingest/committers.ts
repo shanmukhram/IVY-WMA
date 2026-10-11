@@ -34,23 +34,54 @@ const sha = (s: string) => createHash("sha256").update(s).digest("hex");
 export function commitFileMeta(db: DB, r: FileMetaRecordT): CommitResult {
   const now = nowIso();
   const ev = normTs(r.eventTime)!;
-  const existing = db.prepare("SELECT id, event_time FROM files WHERE device_id = ? AND path = ?").get(r.deviceId, r.path) as { id: string; event_time: string } | undefined;
+  const existing = db.prepare("SELECT id, event_time, status, catalog, local_path FROM files WHERE device_id = ? AND path = ?").get(r.deviceId, r.path) as
+    { id: string; event_time: string; status: string; catalog: number; local_path: string | null } | undefined;
   // out-of-order protection: an older observation never overwrites a newer one
   if (existing && existing.event_time > ev) return { summary: { fileId: existing.id, applied: false, reason: "older than stored state" } };
   const name = r.name || baseName(r.path);
   const ext = r.ext ? r.ext.replace(/^\./, "").toLowerCase() : extOf(r.path) ?? null;
   if (r.deleted) {
     if (existing) {
+      // a browse-only catalog entry (never fetched) has no collected content to keep: a deletion
+      // removes the row outright, and the files_fts trigger drops its index entries. A fetched file
+      // (status 'cached') or an indexed file is marked deleted at source, keeping its local copy.
+      if ((r.catalogOnly || existing.catalog) && existing.status === "catalog") {
+        db.prepare("DELETE FROM files WHERE id = ?").run(existing.id);
+        return { summary: { fileId: existing.id, catalogDeleted: true } };
+      }
       db.prepare(`UPDATE files SET source_status = 'deleted_at_source', source_deleted_at = ?, event_time = ?, captured_at = ?, updated_at = ? WHERE id = ?`)
         .run(ev, ev, normTs(r.captureTime), now, existing.id);
       return { summary: { fileId: existing.id, deletedAtSource: true } };
     }
-    // a deletion of a file we never saw is still kept as a record of it (never dropped)
+    // a catalog deletion of a file we never saw has nothing to record (browse-only metadata); other
+    // deletions are kept as a record of the file (never dropped)
+    if (r.catalogOnly) return { summary: { applied: false, reason: "catalog deletion of unknown file" } };
     const id = randomUUID();
     db.prepare(`INSERT INTO files(id, device_id, path, name, ext, size, mtime, quick_hash, source_status, source_deleted_at, event_time, captured_at, first_seen_at, updated_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'deleted_at_source', ?, ?, ?, ?, ?)`)
       .run(id, r.deviceId, r.path, name, ext, r.size ?? null, normTs(r.mtime), r.quickHash ?? null, ev, ev, normTs(r.captureTime), now, now);
     return { summary: { fileId: id, deletedAtSource: true } };
+  }
+  // a catalog entry is metadata only: no quick hash, no thumbnail, no original. It is stored with
+  // status 'catalog' (browse-only) and catalog = 1, kept out of the normal views until it is fetched.
+  // A fetched copy (status 'cached') is never downgraded back to a catalog entry.
+  if (r.catalogOnly) {
+    let id: string;
+    if (existing) {
+      id = existing.id;
+      db.prepare(`UPDATE files SET name = ?, ext = ?, size = ?, mtime = ?, source_status = 'live', source_deleted_at = NULL,
+                    event_time = ?, captured_at = ?, updated_at = ?,
+                    status = CASE WHEN status = 'cached' THEN 'cached' ELSE 'catalog' END,
+                    catalog = CASE WHEN status = 'cached' THEN catalog ELSE 1 END
+                  WHERE id = ?`)
+        .run(name, ext, r.size ?? null, normTs(r.mtime), ev, normTs(r.captureTime), now, id);
+    } else {
+      id = randomUUID();
+      db.prepare(`INSERT INTO files(id, device_id, path, name, ext, size, mtime, status, catalog, event_time, captured_at, first_seen_at, updated_at)
+                  VALUES (?, ?, ?, ?, ?, ?, ?, 'catalog', 1, ?, ?, ?, ?)`)
+        .run(id, r.deviceId, r.path, name, ext, r.size ?? null, normTs(r.mtime), ev, normTs(r.captureTime), now, now);
+    }
+    return { summary: { fileId: id, catalog: true } };
   }
   const thumb = r.thumbBlobOid ?? null;
   // PLAN decision 8: an original the device uploaded on its own (payloadKind photo / document). The blob may
@@ -59,7 +90,7 @@ export function commitFileMeta(db: DB, r: FileMetaRecordT): CommitResult {
   let id: string;
   if (existing) {
     id = existing.id;
-    db.prepare(`UPDATE files SET name = ?, ext = ?, size = ?, mtime = ?, quick_hash = ?, source_status = 'live', source_deleted_at = NULL,
+    db.prepare(`UPDATE files SET name = ?, ext = ?, size = ?, mtime = ?, quick_hash = ?, source_status = 'live', source_deleted_at = NULL, catalog = 0,
                   thumb_blob_oid = COALESCE(?, thumb_blob_oid), event_time = ?, captured_at = ?, updated_at = ?,
                   original_blob_oid = CASE WHEN quick_hash IS NOT ? THEN ? ELSE COALESCE(?, original_blob_oid) END,
                   extract_status = CASE WHEN ? IS NOT NULL AND original_blob_oid IS NOT ? THEN NULL ELSE extract_status END,

@@ -717,6 +717,27 @@ button.nav-heading:hover { color: var(--label-2); }
 .req-done { color: var(--green); }
 .req-failed { color: var(--red); }
 
+/* ================================================================== browse PC (file tree) */
+.panes.browse .pane-list { width: 340px; }
+.browse-node { display: flex; align-items: center; gap: var(--sp-1); width: 100%; min-height: 32px; padding: 2px 4px; border-radius: var(--r-md); }
+.browse-node.sel { background: var(--sidebar-selection); }
+.browse-node:hover:not(.sel) { background: var(--bg-hover); }
+.browse-root { border: 0; background: transparent; color: var(--label); font: inherit; cursor: pointer; gap: var(--sp-2); padding-left: 6px; }
+.browse-twist { border: 0; background: transparent; color: var(--label-3); cursor: pointer; padding: 2px; display: flex; flex: none; border-radius: var(--r-sm); }
+.browse-twist:hover { color: var(--label); }
+.browse-twist .twist-open { transform: rotate(90deg); }
+.browse-folder { flex: 1; min-width: 0; display: flex; align-items: center; gap: var(--sp-2); border: 0; background: transparent; color: var(--label); font: inherit; text-align: left; cursor: pointer; padding: 0; }
+.browse-folder > svg { flex: none; color: var(--label-2); }
+.browse-count { flex: none; }
+.browse-node .btn { flex: none; opacity: 0; }
+.browse-node:hover .btn, .browse-node.sel .btn { opacity: 1; }
+.browse-crumbs { display: flex; flex-wrap: wrap; align-items: center; gap: 2px; padding: var(--sp-2) var(--sp-4); border-bottom: 0.5px solid var(--separator); font-size: var(--text-sm); }
+.browse-crumbs .crumb { border: 0; background: transparent; color: var(--link); font: inherit; cursor: pointer; padding: 2px 4px; border-radius: var(--r-sm); }
+.browse-crumbs .crumb:hover { background: var(--accent-soft); }
+.browse-crumbs .crumb-sep { color: var(--label-3); padding: 0 2px; }
+.browse-folder-msg { padding: var(--sp-2) var(--sp-4); }
+.browse-hint { padding: var(--sp-1) var(--sp-2); }
+
 /* ================================================================== notifications */
 .app-item { display: flex; align-items: center; gap: var(--sp-3); width: 100%; min-height: 44px; padding: var(--sp-2) var(--sp-3); font: inherit; text-align: left; color: var(--label); background: transparent; border: 0; border-radius: var(--r-md); cursor: pointer; transition: background var(--t-fast) var(--ease); }
 .app-item + .app-item { margin-top: 2px; }
