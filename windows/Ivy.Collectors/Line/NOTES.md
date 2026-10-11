@@ -65,6 +65,23 @@ shape the shipped map encodes with `verified: false`.
   (int), `_contentMetadata` (JSON string).
 - `_chat`: `_id` (chat id), `_lastUpdatedTime`, `_unreadCount`.
 - `_contact`: `_mid`, `_displayName`, `_displayNameOverridden`, `_type`.
+  **Verified on the real 26.x store (Oct 11 2026, structure only):** `_contact`
+  is thin. Only `_mid`, `_userType` and five JSON text columns are populated;
+  `_displayName` and `_displayNameOverridden` are NULL on every row. Names live in
+  `_targetProfileDetail`, a JSON object on every row with top-level keys
+  `profileName`, `profileId`, `picturePath`, `pictureStatus`, `hiddenFromList`,
+  `snapshotTimeMillis` and sometimes `statusMessage`. The other JSON columns are
+  `_friendDetail` {bot,user}, `_blockDetail` {bot,notBlocked,user},
+  `_recommendationOrNot` {notRecommended} and `_notificationSettingEntry`
+  {notificationSetting}. `_profile` (own account) still has a plain
+  `_displayName` and `_picturePath`. `_groupChat`, `_room` and `_square*` were
+  empty on that install. Contact name resolution order in `LineStore`:
+  `_displayNameOverridden` (the user's own rename, when set) → `_displayName` →
+  `_targetProfileDetail.profileName`; a malformed or non-object JSON value gives
+  no name. `_blockDetail.notBlocked` is used for `blocked` only when it is a plain
+  JSON true/false. `picturePath` values are LINE object-storage paths (server
+  side), so profile pictures are not available from the PC's files; only the
+  encrypted `.eimg` thumbnail cache exists locally.
 - `_groupChat`: `_chatMid`, `_chatName`; `_squareChat`: `_squareChatMid`,
   `_name`; `_squareMember`: `_squareMemberMid`, `_displayName`; `_room`: `_mid`.
 - `_contentType` map: 0 text, 1 image, 2 video, 3 audio, 6 location, 7 sticker,

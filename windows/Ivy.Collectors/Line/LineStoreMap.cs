@@ -70,6 +70,15 @@ public sealed record LineNameTables
     public string? ContactTable { get; init; }
     public string? ContactMid { get; init; }
     public string? ContactDisplayName { get; init; }
+    /// <summary>Optional: the user's own rename of a contact. When non-empty it wins over every other name source.</summary>
+    public string? ContactDisplayNameOverride { get; init; }
+    /// <summary>
+    /// Optional: a JSON text column holding the contact's profile as LINE last fetched it. In LINE for Windows
+    /// 26.x <see cref="ContactDisplayName"/> is NULL on every row and the name lives here instead.
+    /// </summary>
+    public string? ContactProfileJson { get; init; }
+    /// <summary>The top-level key in <see cref="ContactProfileJson"/> that holds the contact's profile name.</summary>
+    public string? ContactProfileNameKey { get; init; }
     /// <summary>The own-profile table and its mid column, used to mark the account's own messages (fromMe).</summary>
     public string? OwnProfileTable { get; init; }
     public string? OwnProfileMid { get; init; }
@@ -155,6 +164,10 @@ public sealed record LineStoreMap
             ContactTable = "_contact",
             ContactMid = "_mid",
             ContactDisplayName = "_displayName",
+            // 26.x: _displayName is NULL everywhere; the name is profileName inside _targetProfileDetail (NOTES.md).
+            ContactDisplayNameOverride = "_displayNameOverridden",
+            ContactProfileJson = "_targetProfileDetail",
+            ContactProfileNameKey = "profileName",
             OwnProfileTable = "_profile",
             OwnProfileMid = "_mid",
         },

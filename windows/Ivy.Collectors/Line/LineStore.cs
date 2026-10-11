@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text;
+using System.Text.Json;
 using Ivy.Core.Protocol;
 using Ivy.Core.Records;
 using Microsoft.Data.Sqlite;
@@ -239,7 +240,11 @@ public sealed class LineStore : IDisposable
         if (n?.ContactTable is { } ct && tables.Contains(ct))
         {
             var cols = Columns(ct);
-            var pick = new[] { "_mid", "_displayName", "_status", "_type", "_settings", "_statusMessage", "_picturePath", "_thumbnailUrl" }.Where(cols.Contains).ToArray();
+            // In 26.x most plain columns are NULL and the profile lives in a JSON column; read both, plain first.
+            const string BlockJson = "_blockDetail";
+            var pick = new[] { "_mid", "_displayName", "_status", "_type", "_settings", "_statusMessage", "_picturePath", "_thumbnailUrl",
+                    n.ContactDisplayNameOverride, n.ContactProfileJson, BlockJson }
+                .OfType<string>().Distinct().Where(cols.Contains).ToArray();
             if (pick.Contains("_mid"))
             {
                 using var cmd = _c.CreateCommand();
@@ -247,10 +252,19 @@ public sealed class LineStore : IDisposable
                 using var r = cmd.ExecuteReader();
                 while (r.Read())
                 {
-                    string? G(string c) { var i = Array.IndexOf(pick, c); return i < 0 || r.IsDBNull(i) ? null : Convert.ToString(r.GetValue(i), CultureInfo.InvariantCulture); }
+                    string? G(string? c) { var i = c is null ? -1 : Array.IndexOf(pick, c); return i < 0 || r.IsDBNull(i) ? null : Convert.ToString(r.GetValue(i), CultureInfo.InvariantCulture); }
                     int? GI(string c) { var i = Array.IndexOf(pick, c); return i < 0 || r.IsDBNull(i) ? (int?)null : Convert.ToInt32(r.GetValue(i)); }
-                    contacts.Add(new LineContactRow(G("_mid") ?? "", G("_displayName"), G("_status"), G("_type"), GI("_settings"),
-                        G("_statusMessage"), G("_picturePath"), G("_thumbnailUrl")));
+                    string? Plain(string c) => string.IsNullOrWhiteSpace(G(c)) ? null : G(c);
+                    var profileJson = ParseObject(G(n.ContactProfileJson));
+                    // notBlocked is used only when it is a plain JSON true/false; any other shape leaves blocked unknown.
+                    var notBlocked = JsonBool(ParseObject(G(BlockJson)), "notBlocked");
+                    contacts.Add(new LineContactRow(G("_mid") ?? "",
+                        PickContactName(G(n.ContactDisplayNameOverride), G("_displayName"), JsonString(profileJson, n.ContactProfileNameKey)),
+                        G("_status"), G("_type"), GI("_settings"),
+                        Plain("_statusMessage") ?? JsonString(profileJson, "statusMessage"),
+                        Plain("_picturePath") ?? JsonString(profileJson, "picturePath"),
+                        G("_thumbnailUrl"),
+                        notBlocked is { } nb ? !nb : null));
                 }
             }
         }
@@ -324,7 +338,74 @@ public sealed class LineStore : IDisposable
         AddNames(n.GroupTable, n.GroupChatId, n.GroupName, "group", tables);
         AddNames(n.SquareTable, n.SquareChatId, n.SquareName, "square", tables);
         AddNames(n.RoomTable, n.RoomChatId, null, "room", tables);
-        AddNames(n.ContactTable, n.ContactMid, n.ContactDisplayName, "private", tables);
+        AddContactNames(n, tables);
+    }
+
+    /// <summary>
+    /// Contact names, in order: the user's own rename (<see cref="LineNameTables.ContactDisplayNameOverride"/>),
+    /// then the plain <see cref="LineNameTables.ContactDisplayName"/>, then the profile name inside the
+    /// <see cref="LineNameTables.ContactProfileJson"/> column (where LINE 26.x keeps it). Only columns that
+    /// exist are read. A contact with no name still registers as a private chat with a null title.
+    /// </summary>
+    private void AddContactNames(LineNameTables n, HashSet<string> tables)
+    {
+        if (n.ContactTable is not { } table || n.ContactMid is not { } idCol || !tables.Contains(table)) return;
+        var cols = Columns(table);
+        if (!cols.Contains(idCol)) return;
+        var overrideCol = n.ContactDisplayNameOverride is { } o && cols.Contains(o) ? o : null;
+        var plainCol = n.ContactDisplayName is { } d && cols.Contains(d) ? d : null;
+        var jsonCol = n.ContactProfileJson is { } j && n.ContactProfileNameKey is not null && cols.Contains(j) ? j : null;
+        var pick = new[] { idCol, overrideCol, plainCol, jsonCol }.OfType<string>().Distinct().ToArray();
+        try
+        {
+            using var cmd = _c.CreateCommand();
+            cmd.CommandText = $"SELECT {string.Join(", ", pick.Select(Q))} FROM {Q(table)}";
+            using var r = cmd.ExecuteReader();
+            while (r.Read())
+            {
+                if (r.IsDBNull(0)) continue;
+                var id = Convert.ToString(r.GetValue(0), CultureInfo.InvariantCulture) ?? "";
+                if (id.Length == 0) continue;
+                string? G(string? c) { if (c is null) return null; var i = Array.IndexOf(pick, c); return i < 0 || r.IsDBNull(i) ? null : Convert.ToString(r.GetValue(i), CultureInfo.InvariantCulture); }
+                var title = PickContactName(G(overrideCol), G(plainCol), JsonString(ParseObject(G(jsonCol)), n.ContactProfileNameKey));
+                _names![id] = (title, "private"); // added last, so a contact row overrides a chat-table row with the same id
+            }
+        }
+        catch (SqliteException) { /* name resolution is best-effort; missing names are not fatal */ }
+    }
+
+    /// <summary>First non-empty of: the user's rename, the plain display name, the profile name from JSON.</summary>
+    internal static string? PickContactName(string? overridden, string? plain, string? profileName) =>
+        !string.IsNullOrWhiteSpace(overridden) ? overridden
+        : !string.IsNullOrWhiteSpace(plain) ? plain
+        : !string.IsNullOrWhiteSpace(profileName) ? profileName
+        : null;
+
+    /// <summary>Parse a JSON text value as an object; null for empty, malformed or non-object values.</summary>
+    internal static JsonElement? ParseObject(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return null;
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            return doc.RootElement.ValueKind == JsonValueKind.Object ? doc.RootElement.Clone() : null;
+        }
+        catch (JsonException) { return null; }
+    }
+
+    /// <summary>A non-empty string value at a top-level key of a JSON object; null otherwise.</summary>
+    internal static string? JsonString(JsonElement? obj, string? key)
+    {
+        if (obj is not { } o || key is null || !o.TryGetProperty(key, out var v) || v.ValueKind != JsonValueKind.String) return null;
+        var s = v.GetString();
+        return string.IsNullOrWhiteSpace(s) ? null : s;
+    }
+
+    /// <summary>A boolean value at a top-level key of a JSON object; null when absent or not a JSON true/false.</summary>
+    internal static bool? JsonBool(JsonElement? obj, string key)
+    {
+        if (obj is not { } o || !o.TryGetProperty(key, out var v)) return null;
+        return v.ValueKind switch { JsonValueKind.True => true, JsonValueKind.False => false, _ => null };
     }
 
     private void AddNames(string? table, string? idCol, string? nameCol, string chatType, HashSet<string> tables)
@@ -346,7 +427,7 @@ public sealed class LineStore : IDisposable
                 var id = Convert.ToString(r.GetValue(0), CultureInfo.InvariantCulture) ?? "";
                 if (id.Length == 0) continue;
                 var title = hasName && !r.IsDBNull(1) ? Convert.ToString(r.GetValue(1), CultureInfo.InvariantCulture) : null;
-                _names![id] = (title, chatType); // chat tables win over contact because contact is added last
+                _names![id] = (title, chatType); // a later table overwrites an earlier one for the same id
             }
         }
         catch (SqliteException) { /* name resolution is best-effort; missing names are not fatal */ }

@@ -25,7 +25,8 @@ internal static class LineFixture
             CREATE TABLE _message (_id TEXT PRIMARY KEY, _chatId TEXT, _from TEXT, _createdTime INTEGER,
                                    _text TEXT, _contentType INTEGER, _contentMetadata TEXT);
             CREATE TABLE _contact (_mid TEXT PRIMARY KEY, _displayName TEXT, _displayNameOverridden TEXT, _type TEXT,
-                                   _status TEXT, _settings INTEGER, _statusMessage TEXT, _picturePath TEXT, _thumbnailUrl TEXT);
+                                   _status TEXT, _settings INTEGER, _statusMessage TEXT, _picturePath TEXT, _thumbnailUrl TEXT,
+                                   _targetProfileDetail TEXT, _blockDetail TEXT);
             CREATE TABLE _chatOption (_id TEXT PRIMARY KEY, _hidden INTEGER, _notification INTEGER, _pinnedTime INTEGER);
             CREATE TABLE _setting (_key TEXT PRIMARY KEY, _value TEXT);
             CREATE TABLE _groupChat (_chatMid TEXT PRIMARY KEY, _chatName TEXT);
@@ -66,6 +67,13 @@ internal static class LineFixture
 
     public static void Contact(SqliteConnection c, string mid, string display) =>
         Run(c, "INSERT INTO _contact(_mid,_displayName) VALUES($m,$d)", ("$m", mid), ("$d", display));
+
+    /// <summary>A LINE 26.x-shaped contact: plain columns NULL unless given, the profile in _targetProfileDetail JSON.</summary>
+    public static void Contact26(SqliteConnection c, string mid, string? profileJson, string? display = null,
+        string? overridden = null, string? blockJson = null) =>
+        Run(c, "INSERT INTO _contact(_mid,_displayName,_displayNameOverridden,_targetProfileDetail,_blockDetail) VALUES($m,$d,$o,$p,$b)",
+            ("$m", mid), ("$d", (object?)display ?? DBNull.Value), ("$o", (object?)overridden ?? DBNull.Value),
+            ("$p", (object?)profileJson ?? DBNull.Value), ("$b", (object?)blockJson ?? DBNull.Value));
 
     public static void OwnProfile(SqliteConnection c, string mid, string display) =>
         Run(c, "INSERT INTO _profile(_mid,_displayName) VALUES($m,$d)", ("$m", mid), ("$d", display));
@@ -723,6 +731,198 @@ public class LineCollectorTests : IDisposable
         restarted.RequestResync();
         await restarted.TickAsync(default);
         Assert.Equal(2, _env.Sink.Of(Kind.LineAccount).Count);
+    }
+
+    // ---------------------------------------------------------------- LINE 26.x names (_targetProfileDetail)
+
+    private static IEnumerable<JsonElement> Items(JsonElement array) =>
+        System.Linq.Enumerable.Range(0, array.GetArrayLength()).Select(i => array[i]);
+
+    [Fact]
+    public async Task Null_displayName_resolves_from_profile_json_as_dm_title_and_sender_name()
+    {
+        Seed(c =>
+        {
+            LineFixture.OwnProfile(c, "uME", "Me");
+            LineFixture.Contact26(c, "uBOB", """{"profileName":"Bob Lee","profileId":"x","picturePath":"/os/p/uBOB","pictureStatus":"0","hiddenFromList":false,"snapshotTimeMillis":1}""");
+            LineFixture.Contact26(c, "uALICE", """{"profileName":"Alice","hiddenFromList":false}""");
+            LineFixture.Group(c, "cTEAM", "Team");
+            LineFixture.Chat(c, "uBOB");
+            LineFixture.Chat(c, "cTEAM");
+            LineFixture.Message(c, "m1", "uBOB", "uBOB", 1_760_000_000_000, "hi from Bob");
+            LineFixture.Message(c, "m2", "uBOB", "uME", 1_760_000_100_000, "hi from me");
+            LineFixture.Message(c, "m3", "cTEAM", "uALICE", 1_760_000_200_000, "hi team");
+        });
+
+        var line = NewCollector();
+        await line.StartAsync(default);
+        await line.TickAsync(default);
+
+        var dm = Batches().Single(b => b.Root.GetProperty("convKey").GetString() == "uBOB");
+        Assert.Equal("dm", dm.Str("convKind"));
+        Assert.Equal("Bob Lee", dm.Str("peer"));
+        Assert.Equal("Bob Lee", dm.Root.GetProperty("chatMeta").GetProperty("title").GetString());
+        var msgs = dm.Root.GetProperty("messages");
+        Assert.Equal("uBOB", msgs[0].GetProperty("sender").GetString());      // the mid stays the merge key
+        Assert.False(msgs[0].GetProperty("fromMe").GetBoolean());
+        Assert.Equal("Bob Lee", msgs[0].GetProperty("senderName").GetString());
+        Assert.True(msgs[1].GetProperty("fromMe").GetBoolean());
+        Assert.Equal("You", msgs[1].GetProperty("senderName").GetString());
+
+        var team = Batches().Single(b => b.Root.GetProperty("convKey").GetString() == "cTEAM");
+        Assert.Equal("Team", team.Root.GetProperty("chatMeta").GetProperty("title").GetString());
+        Assert.Equal("Alice", team.Root.GetProperty("messages")[0].GetProperty("senderName").GetString());
+    }
+
+    [Fact]
+    public async Task DisplayNameOverridden_wins_over_displayName_and_profile_json()
+    {
+        Seed(c =>
+        {
+            LineFixture.Contact26(c, "uBOB", """{"profileName":"Bob Lee"}""", display: "Bob Plain", overridden: "Bobby (work)");
+            LineFixture.Contact26(c, "uCARL", """{"profileName":"Carl JSON"}""", display: "Carl Plain");
+            LineFixture.Chat(c, "uBOB");
+            LineFixture.Chat(c, "uCARL");
+            LineFixture.Message(c, "m1", "uBOB", "uBOB", 1_760_000_000_000, "hi");
+            LineFixture.Message(c, "m2", "uCARL", "uCARL", 1_760_000_000_000, "yo");
+        });
+
+        var line = NewCollector();
+        await line.StartAsync(default);
+        await line.TickAsync(default);
+
+        var bob = Batches().Single(b => b.Root.GetProperty("convKey").GetString() == "uBOB");
+        Assert.Equal("Bobby (work)", bob.Str("peer"));
+        Assert.Equal("Bobby (work)", bob.Root.GetProperty("messages")[0].GetProperty("senderName").GetString());
+        var carl = Batches().Single(b => b.Root.GetProperty("convKey").GetString() == "uCARL");
+        Assert.Equal("Carl Plain", carl.Str("peer"));                          // plain column beats the JSON
+    }
+
+    [Theory]
+    [InlineData("{not json")]
+    [InlineData("[\"profileName\",\"Bob\"]")]
+    [InlineData("\"Bob\"")]
+    [InlineData("{\"profileName\":42}")]
+    [InlineData("{\"profileName\":\"\"}")]
+    public async Task Malformed_or_unusable_profile_json_yields_no_name_and_no_exception(string json)
+    {
+        Seed(c =>
+        {
+            LineFixture.Contact26(c, "uBOB", json);
+            LineFixture.Chat(c, "uBOB");
+            LineFixture.Message(c, "m1", "uBOB", "uBOB", 1_760_000_000_000, "hi");
+        });
+
+        var line = NewCollector();
+        await line.StartAsync(default);
+        await line.TickAsync(default);
+
+        Assert.Equal(LineState.OkPartial, line.State);
+        Assert.Null(line.LastError);
+        var dm = Batches().Single();
+        Assert.Equal("uBOB", dm.Str("peer"));                                  // falls back to the mid, as before
+        Assert.False(dm.Root.GetProperty("messages")[0].TryGetProperty("senderName", out var sn) && sn.ValueKind == JsonValueKind.String);
+        var acct = _env.Sink.Of(Kind.LineAccount).Single();
+        var bob = Items(acct.Root.GetProperty("contacts")).Single();
+        Assert.False(bob.TryGetProperty("displayName", out var dn) && dn.ValueKind == JsonValueKind.String);
+    }
+
+    [Fact]
+    public async Task Account_snapshot_fills_contact_name_picture_status_and_blocked_from_json()
+    {
+        Seed(c =>
+        {
+            LineFixture.OwnProfile(c, "uME", "Me");
+            LineFixture.Contact26(c, "uBOB",
+                """{"profileName":"Bob Lee","picturePath":"/os/p/uBOB","statusMessage":"at work","hiddenFromList":false}""",
+                blockJson: """{"bot":null,"notBlocked":true,"user":null}""");
+            LineFixture.Contact26(c, "uTROLL", """{"profileName":"Troll","picturePath":"/os/p/uTROLL"}""",
+                blockJson: """{"notBlocked":false}""");
+            LineFixture.Contact26(c, "uODD", """{"profileName":"Odd"}""",
+                blockJson: """{"bot":{},"notBlocked":{},"user":{}}""");        // not a plain boolean: unknown
+            LineFixture.Chat(c, "uBOB");
+        });
+
+        var line = NewCollector();
+        await line.StartAsync(default);
+        await line.TickAsync(default);
+
+        var contacts = Items(_env.Sink.Of(Kind.LineAccount).Single().Root.GetProperty("contacts")).ToList();
+        var bob = contacts.Single(x => x.GetProperty("mid").GetString() == "uBOB");
+        Assert.Equal("Bob Lee", bob.GetProperty("displayName").GetString());
+        Assert.Equal("/os/p/uBOB", bob.GetProperty("picturePath").GetString());
+        Assert.Equal("at work", bob.GetProperty("statusMessage").GetString());
+        Assert.False(bob.GetProperty("blocked").GetBoolean());
+        var troll = contacts.Single(x => x.GetProperty("mid").GetString() == "uTROLL");
+        Assert.True(troll.GetProperty("blocked").GetBoolean());
+        var odd = contacts.Single(x => x.GetProperty("mid").GetString() == "uODD");
+        Assert.False(odd.TryGetProperty("blocked", out var ob) && ob.ValueKind is JsonValueKind.True or JsonValueKind.False);
+    }
+
+    [Fact]
+    public async Task NamesV2_migration_resends_all_chats_exactly_once()
+    {
+        Seed(c =>
+        {
+            LineFixture.Contact26(c, "uBOB", """{"profileName":"Bob Lee"}""");
+            LineFixture.Chat(c, "uBOB");
+            LineFixture.Message(c, "m1", "uBOB", "uBOB", 1_760_000_000_000, "one");
+            LineFixture.Message(c, "m2", "uBOB", "uBOB", 1_760_000_100_000, "two");
+        });
+        // An install from before the fix: its cursors already cover every message, and the flag is unset.
+        _env.Context.Settings.SaveJson(CollectorNames.Line, "cursors", new System.Text.Json.Nodes.JsonObject { ["uBOB"] = 1_000_000 });
+
+        var line = NewCollector();
+        await line.StartAsync(default);
+        Assert.Null(_env.Context.Settings.LoadJson(CollectorNames.Line, "namesV2"));   // not yet applied
+        await line.TickAsync(default);
+        Assert.NotNull(_env.Context.Settings.LoadJson(CollectorNames.Line, "namesV2")); // applied by the tick
+        var resent = Batches().Single();
+        Assert.Equal(2, CountMessages(Batches()));                               // cursors were cleared
+        Assert.Equal("Bob Lee", resent.Root.GetProperty("messages")[0].GetProperty("senderName").GetString());
+        Assert.Contains(_env.Activity.Recent(), e => e.Event == CollectorActivity.Config && e.Collector == CollectorNames.Line);
+
+        _env.Sink.Clear();
+        var restarted = NewCollector(ctx: _env.Restart());
+        await restarted.StartAsync(default);
+        await restarted.TickAsync(default);
+        Assert.Empty(Batches());                                                 // not re-sent on the next start
+    }
+
+    [Fact]
+    public async Task NamesV2_resync_is_requested_again_if_the_app_quits_before_the_first_tick()
+    {
+        Seed(c =>
+        {
+            LineFixture.Contact26(c, "uBOB", """{"profileName":"Bob Lee"}""");
+            LineFixture.Chat(c, "uBOB");
+            LineFixture.Message(c, "m1", "uBOB", "uBOB", 1_760_000_000_000, "one");
+            LineFixture.Message(c, "m2", "uBOB", "uBOB", 1_760_000_100_000, "two");
+        });
+        _env.Context.Settings.SaveJson(CollectorNames.Line, "cursors", new System.Text.Json.Nodes.JsonObject { ["uBOB"] = 1_000_000 });
+
+        var first = NewCollector();
+        await first.StartAsync(default);                                         // quits here, no tick
+        Assert.Null(_env.Context.Settings.LoadJson(CollectorNames.Line, "namesV2"));
+
+        var restarted = NewCollector(ctx: _env.Restart());
+        await restarted.StartAsync(default);
+        await restarted.TickAsync(default);
+        Assert.Equal(2, CountMessages(Batches()));                               // cursors cleared on its first tick
+        Assert.Equal("Bob Lee", Batches().Single().Root.GetProperty("messages")[0].GetProperty("senderName").GetString());
+        Assert.NotNull(_env.Context.Settings.LoadJson(CollectorNames.Line, "namesV2"));
+    }
+
+    [Fact]
+    public async Task Fresh_install_sets_namesV2_without_a_resync()
+    {
+        Seed(c => { LineFixture.Chat(c, "uBOB"); LineFixture.Message(c, "m1", "uBOB", "uBOB", 1_760_000_000_000, "one"); });
+        var line = NewCollector();
+        await line.StartAsync(default);
+        Assert.NotNull(_env.Context.Settings.LoadJson(CollectorNames.Line, "namesV2"));
+        await line.TickAsync(default);
+        Assert.Equal(1, CountMessages(Batches()));
+        Assert.DoesNotContain(_env.Activity.Recent(), e => e.Event == CollectorActivity.ScanStarted && e.Collector == CollectorNames.Line);
     }
 
     [Fact]

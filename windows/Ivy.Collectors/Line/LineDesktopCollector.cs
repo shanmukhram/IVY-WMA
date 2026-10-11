@@ -137,8 +137,32 @@ public sealed class LineDesktopCollector : Collector<LineSettings>
         var savedHash = Context.Settings.LoadJson(Name, "accountHash") as JsonValue;
         _lastAccountHash = savedHash is not null && savedHash.TryGetValue<string>(out var h) && !string.IsNullOrEmpty(h) ? h : null;
         MigratePollSeconds();
+        MigrateNamesV2();
         return Task.CompletedTask;
     }
+
+    /// <summary>
+    /// One-time: LINE 26.x keeps contact names in a JSON column rather than <c>_displayName</c>, so messages
+    /// uploaded before that was handled went out with raw mids as sender names and chat titles. Request one
+    /// re-sync so every chat re-emits with names; the Mac merges by platform message id (WX1), so this updates
+    /// the existing rows rather than duplicating them. A fresh install (no saved cursors) has nothing to redo,
+    /// so it records the flag at once. Otherwise the flag is saved only when a tick has actually applied the
+    /// re-sync (cursors cleared and saved), so quitting before that tick asks again on the next start.
+    /// </summary>
+    private void MigrateNamesV2()
+    {
+        if (Context.Settings.LoadJson(Name, "namesV2") is not null) return;
+        if (_cursors.Count == 0)
+        {
+            Context.Settings.SaveJson(Name, "namesV2", JsonValue.Create(true));
+            return;
+        }
+        _namesMigrationPending = true;
+        RequestResync();
+        Activity(CollectorActivity.Config, "re-sending LINE chats once so existing messages gain contact names and chat titles (names now read from LINE 26.x profile data)");
+    }
+
+    private bool _namesMigrationPending;
 
     public override Task TickAsync(CancellationToken ct)
     {
@@ -208,6 +232,12 @@ public sealed class LineDesktopCollector : Collector<LineSettings>
             _resyncRequested = false;
             _cursors.Clear();   // re-read every chat from the start
             SaveCursors();
+            if (_namesMigrationPending)
+            {
+                // The names re-sync is now applied (cursors are cleared on disk), so it is never requested again.
+                Context.Settings.SaveJson(Name, "namesV2", JsonValue.Create(true));
+                _namesMigrationPending = false;
+            }
             _lastKeepHash = null;    // re-emit Keep and the account snapshot too
             _lastAccountHash = null;
             Context.Settings.SaveJson(Name, "accountHash", JsonValue.Create(""));
@@ -353,8 +383,10 @@ public sealed class LineDesktopCollector : Collector<LineSettings>
             {
                 Mid = c.Mid, DisplayName = c.DisplayName, Status = c.Status, Type = c.Type, Settings = c.Settings,
                 StatusMessage = c.StatusMessage, PicturePath = c.PicturePath, ThumbnailUrl = c.ThumbnailUrl,
-                // blocked is left unresolved until the real _status/_settings values are confirmed, so the
-                // settings page never shows a wrong blocked list (it shows the raw status meanwhile).
+                // blocked is set only when the store states it as a plain boolean (26.x _blockDetail.notBlocked
+                // = true/false). Otherwise it stays null: the meaning of _status/_settings is not confirmed, so
+                // the settings page never shows a guessed blocked list (it shows the raw status meanwhile).
+                Blocked = c.Blocked,
             }).ToList(),
             ChatOptions = acct.Options.Select(o => new LineChatOptionRecord
             {

@@ -120,4 +120,8 @@ Live result: with LINE open, the main file alone yielded 366 messages across 8 c
 
 Cadence is the pollSeconds default described above.
 
+## Contact names in LINE 26.x, verified Oct 11 2026
+
+In the 26.x store `_contact._displayName` is NULL on every row, so chats and senders reached the Mac as raw mids. The name is the `profileName` key of the `_targetProfileDetail` JSON column (which also holds `picturePath`, `statusMessage` and `hiddenFromList`). `LineStore` now resolves a contact's name as `_displayNameOverridden` (the user's own rename) if non-empty, else `_displayName`, else `_targetProfileDetail.profileName`; all three are declared in `LineStoreMap.Names` and read only when the column exists, and malformed JSON just means no name. The account snapshot fills display name, picture path and status message from the same JSON when the plain columns are empty, and sets `blocked` only when `_blockDetail.notBlocked` is a plain boolean. `picturePath` is a LINE object-storage path on LINE's servers, so profile pictures cannot be read from the PC's files (only the encrypted `.eimg` cache is local). A one-time `namesV2` flag re-sends every chat once on existing installs so stored messages gain names; the Mac merges by platform message id, so rows are updated, not duplicated.
+
 Tests: LineTests.cs and LineWalFixture.cs build a real WAL-mode fixture. The cases cover rows that exist only in the WAL on the encrypted and plain paths, a trailing transaction with no commit frame, a frame with a bad checksum, and header edge cases in LineWal.ReadCommitted.
