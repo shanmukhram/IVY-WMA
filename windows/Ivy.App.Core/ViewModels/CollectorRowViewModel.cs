@@ -93,7 +93,7 @@ public sealed class CollectorRowViewModel : ObservableObject
         var interval = info?.ExpectedInterval ?? CollectorNames.DefaultInterval(Name);
         var (status, text) = info is null
             ? (CollectorStatus.Off, "not available")
-            : StatusRules.Evaluate(info.Enabled, globallyPaused, info.Running, info.LastError, info.LastRunAt, interval, now);
+            : StatusRules.Evaluate(Name, info.Enabled, globallyPaused, info.Running, info.LastError, info.LastRunAt, interval, now, info.Detail);
         Status = status;
         StatusText = string.IsNullOrEmpty(info?.Detail) ? text : text + " - " + info.Detail;
         StatusColor = StatusRules.Color(status);

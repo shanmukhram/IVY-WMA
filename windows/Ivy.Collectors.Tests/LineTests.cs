@@ -219,7 +219,9 @@ public class LineCollectorTests : IDisposable
             unlocker: unlocker,
             mapFor: mapFor,
             reportDir: _dir.Sub("report"),
-            tempRoot: _dir.Sub("line-tmp"));
+            tempRoot: _dir.Sub("line-tmp"),
+            isLineRunning: () => true,
+            keyFinder: _ => null);
 
     private void Seed(Action<SqliteConnection> seed)
     {
@@ -461,7 +463,7 @@ public class LineCollectorTests : IDisposable
     {
         var line = new LineDesktopCollector(_env.Context, new LineSettings(),
             roots: new[] { new LineProbeRoot("test", _dir.Sub("absent")) },
-            reportDir: _dir.Sub("report"), tempRoot: _dir.Sub("line-tmp"));
+            reportDir: _dir.Sub("report"), tempRoot: _dir.Sub("line-tmp"), isLineRunning: () => true, keyFinder: _ => null);
         await line.StartAsync(default);
         await line.TickAsync(default);
         Assert.Equal(LineState.NotInstalled, line.State);
@@ -528,7 +530,7 @@ public class LineCollectorTests : IDisposable
         var line = new LineDesktopCollector(_env.Context, new LineSettings(),
             roots: new[] { new LineProbeRoot("test", _dataFolder) },
             reportDir: _dir.Sub("rep"), tempRoot: _dir.Sub("tmp"),
-            keyStore: new InMemoryLineKeyStore(LineKey));
+            keyStore: new InMemoryLineKeyStore(LineKey), isLineRunning: () => true, keyFinder: _ => null);
         await line.StartAsync(default);
         await line.TickAsync(default);
 
@@ -538,22 +540,63 @@ public class LineCollectorTests : IDisposable
     }
 
     [Fact]
-    public async Task A_wrong_line_key_is_red_and_captures_nothing()
+    public async Task A_wrong_line_key_captures_nothing_and_waits_instead_of_going_red()
     {
         Seed(c => { LineFixture.Chat(c, "c1"); LineFixture.Message(c, "m1", "c1", "uA", 1, "x"); });
         EncryptStoreInPlace(_dbPath);
 
         var wrong = System.Text.Encoding.ASCII.GetBytes("ffffffffffffffffffffffffffffffff");
+        var running = false;
         var line = new LineDesktopCollector(_env.Context, new LineSettings(),
             roots: new[] { new LineProbeRoot("test", _dataFolder) },
             reportDir: _dir.Sub("rep2"), tempRoot: _dir.Sub("tmp2"),
-            keyStore: new InMemoryLineKeyStore(wrong));
+            keyStore: new InMemoryLineKeyStore(wrong), isLineRunning: () => running, keyFinder: _ => null);
+        await line.StartAsync(default);
+
+        // LINE closed: nothing to look for, so it just waits for LINE (informational, no error).
+        await line.TickAsync(default);
+        Assert.Equal(LineState.NotRunning, line.State);
+        Assert.StartsWith("LINE is not running", line.Detail);
+        Assert.Contains("nothing captured yet", line.Detail);
+        Assert.Null(line.LastError);
+        Assert.Empty(Batches());
+
+        // LINE open but no fitting key found in it yet: amber wait, retried, still no error.
+        running = true;
+        await line.TickAsync(default);
+        Assert.Equal(LineState.WaitingForLine, line.State);
+        Assert.StartsWith("Waiting for LINE", line.Detail);
+        Assert.Null(line.LastError);
+        Assert.Empty(Batches());
+    }
+
+    [Fact]
+    public async Task Without_a_key_store_an_encrypted_store_stays_red()
+    {
+        Seed(c => { LineFixture.Chat(c, "c1"); LineFixture.Message(c, "m1", "c1", "uA", 1, "x"); });
+        EncryptStoreInPlace(_dbPath);
+        var line = new LineDesktopCollector(_env.Context, new LineSettings(),
+            roots: new[] { new LineProbeRoot("test", _dataFolder) },
+            reportDir: _dir.Sub("rep3"), tempRoot: _dir.Sub("tmp3"), isLineRunning: () => false, keyFinder: _ => null);
         await line.StartAsync(default);
         await line.TickAsync(default);
-
         Assert.Equal(LineState.EncryptedStore, line.State);
-        Assert.Contains("does not fit", line.LastError);
-        Assert.Empty(Batches());
+        Assert.NotNull(line.LastError);
+    }
+
+    [Fact]
+    public async Task Schema_drift_in_an_encrypted_store_the_key_opens_stays_red_even_with_line_closed()
+    {
+        Seed(c => LineFixture.Exec(c, "DROP TABLE _message;"));
+        EncryptStoreInPlace(_dbPath);
+        var line = new LineDesktopCollector(_env.Context, new LineSettings(),
+            roots: new[] { new LineProbeRoot("test", _dataFolder) },
+            reportDir: _dir.Sub("rep4"), tempRoot: _dir.Sub("tmp4"),
+            keyStore: new InMemoryLineKeyStore(LineKey), isLineRunning: () => false, keyFinder: _ => null);
+        await line.StartAsync(default);
+        await line.TickAsync(default);
+        Assert.Equal(LineState.UnverifiedMap, line.State);
+        Assert.Contains("_message", line.LastError);
     }
 
     [Fact]
@@ -663,7 +706,7 @@ public class LineCollectorTests : IDisposable
         var line = new LineDesktopCollector(_env.Context, new LineSettings(),
             roots: new[] { new LineProbeRoot("test", _dataFolder) },
             reportDir: _dir.Sub("rk"), tempRoot: _dir.Sub("tk"),
-            keyStore: new InMemoryLineKeyStore(key));
+            keyStore: new InMemoryLineKeyStore(key), isLineRunning: () => true, keyFinder: _ => null);
         await line.StartAsync(default);
         await line.TickAsync(default);
 
@@ -1013,7 +1056,7 @@ public class LineCollectorTests : IDisposable
         var line = new LineDesktopCollector(_env.Context, new LineSettings(),
             roots: new[] { new LineProbeRoot("test", _dataFolder) },
             reportDir: _dir.Sub("rk2"), tempRoot: _dir.Sub("tk2"),
-            keyStore: new InMemoryLineKeyStore(key));
+            keyStore: new InMemoryLineKeyStore(key), isLineRunning: () => true, keyFinder: _ => null);
         await line.StartAsync(default);
         await line.TickAsync(default);
         _env.Time.Advance(TimeSpan.FromSeconds(5));
@@ -1050,7 +1093,7 @@ public class LineCollectorTests : IDisposable
         var line = new LineDesktopCollector(_env.Context, new LineSettings(),
             roots: new[] { new LineProbeRoot("test", _dataFolder) },
             reportDir: _dir.Sub("rep-" + tag), tempRoot: _dir.Sub("tmp-" + tag),
-            keyStore: new InMemoryLineKeyStore(LineKey));
+            keyStore: new InMemoryLineKeyStore(LineKey), isLineRunning: () => true, keyFinder: _ => null);
         await line.StartAsync(default);
         await line.TickAsync(default);
         Assert.Equal(LineState.OkPartial, line.State);
@@ -1174,11 +1217,14 @@ public class LineMultiAccountTests : IDisposable
         _dir.Dispose();
     }
 
-    private LineDesktopCollector NewCollector(LineSettings? settings = null, ILineKeyStore? keyStore = null, CollectorContext? ctx = null) =>
+    private LineDesktopCollector NewCollector(LineSettings? settings = null, ILineKeyStore? keyStore = null, CollectorContext? ctx = null,
+        Func<bool>? running = null) =>
         new(ctx ?? _env.Context, settings ?? new LineSettings(),
             roots: new[] { new LineProbeRoot("test", _dataFolder) },
             reportDir: _dir.Sub("report"),
             tempRoot: _dir.Sub("line-tmp"),
+            isLineRunning: running ?? (() => true),
+            keyFinder: _ => null,
             keyStore: keyStore);
 
     private string Store(string name, Action<SqliteConnection> seed)
@@ -1464,6 +1510,251 @@ public class LineMultiAccountTests : IDisposable
         var keep = Batches().Single(r => r.Root.GetProperty("convKey").GetString() == "keep");
         Assert.Equal("uB", Account(keep));
         Assert.Equal(new[] { "kB" }, MessageIds(new[] { keep }));
+    }
+
+    // ---------------------------------------------------------------- LINE closed, waiting, idle ticks
+
+    private static readonly byte[] KeyB = System.Text.Encoding.ASCII.GetBytes("fedcba9876543210fedcba9876543210");
+
+    // Plain working copies live outside the LINE folder; Publish encrypts one into it with a given key, so a
+    // test can change a store's content after it was encrypted (as LINE does when it checkpoints on quit).
+    private string PlainStore(string name, Action<SqliteConnection> seed)
+    {
+        var path = LineFixture.Create(_dir.Sub("plain"), name);
+        Seed(path, seed);
+        return path;
+    }
+
+    private string Publish(string plainPath, byte[] key)
+    {
+        SqliteConnection.ClearAllPools();
+        var plain = File.ReadAllBytes(plainPath);
+        var dest = Path.Combine(_dataFolder, Path.GetFileName(plainPath));
+        Directory.CreateDirectory(_dataFolder);
+        File.WriteAllBytes(dest, LineWxCipher.Encrypt(plain, LineWxCipher.DeriveKey(key), (plain[16] << 8) | (plain[17] << 16)));
+        return dest;
+    }
+
+    // Account A (key Key) and a larger account B (key KeyB), both encrypted, as two accounts on one PC.
+    private (string APlain, string A, string BPlain, string B) TwoEncryptedAccounts()
+    {
+        var aPlain = PlainStore("qwaaa.edb", c =>
+        {
+            LineFixture.OwnProfile(c, "uA", "A");
+            LineFixture.Chat(c, "c1");
+            LineFixture.Message(c, "a1", "c1", "c1", 1_760_000_000_000, "first");
+        });
+        var bPlain = PlainStore("qwbbb.edb", c =>
+        {
+            LineFixture.OwnProfile(c, "uB", "B");
+            LineFixture.Chat(c, "c2");
+            LineFixture.Message(c, "b1", "c2", "c2", 1_760_000_000_000, "other account");
+            // Make B clearly the larger store, so "largest store" would pick the wrong account.
+            LineFixture.Exec(c, "CREATE TABLE _padding (x TEXT); INSERT INTO _padding SELECT hex(randomblob(2000)) FROM (WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i < 100) SELECT i FROM n);");
+        });
+        return (aPlain, Publish(aPlain, Key), bPlain, Publish(bPlain, KeyB));
+    }
+
+    [Fact]
+    public async Task Line_closed_reads_the_last_opened_store_not_the_largest_and_reports_not_running()
+    {
+        var (aPlain, a, _, b) = TwoEncryptedAccounts();
+        var running = true;
+        var line = NewCollector(keyStore: new InMemoryLineKeyStore(Key), running: () => running);
+        await line.StartAsync(default);
+        MakeActive(a, b);
+        await line.TickAsync(default);
+        Assert.Equal(LineState.OkPartial, line.State);
+        Assert.Equal("uA", line.CurrentAccount);
+        Assert.Equal("qwaaa", _env.Context.Settings.LoadJson(CollectorNames.Line, "lastStore")!.GetValue<string>());
+
+        // LINE quits: it folds the WAL into the main file (a new message lands there) and removes the -wal.
+        Seed(aPlain, c => LineFixture.Message(c, "a2", "c1", "c1", 1_760_000_100_000, "written before quit"));
+        Publish(aPlain, Key);
+        File.Delete(a + "-wal");
+        running = false;
+        Assert.True(new FileInfo(b).Length > new FileInfo(a).Length);
+
+        _env.Sink.Clear();
+        await line.TickAsync(default);
+        Assert.Equal(LineState.NotRunning, line.State);
+        Assert.Null(line.LastError);
+        Assert.StartsWith("LINE is not running; last captured ", line.Detail);
+        Assert.EndsWith("resumes when LINE opens", line.Detail);
+        Assert.Equal("uA", line.CurrentAccount);
+        Assert.Equal(new[] { "a2" }, MessageIds(Batches()));   // cursors kept: only the checkpointed message
+        Assert.All(Batches(), r => Assert.Equal("uA", Account(r)));
+
+        // After a restart with LINE still closed, the remembered store is still the one read.
+        _env.Sink.Clear();
+        var restarted = NewCollector(keyStore: new InMemoryLineKeyStore(Key), ctx: _env.Restart(), running: () => false);
+        await restarted.StartAsync(default);
+        await restarted.TickAsync(default);
+        Assert.Equal(LineState.NotRunning, restarted.State);
+        Assert.Null(restarted.LastError);
+        Assert.Equal("uA", restarted.CurrentAccount);
+        Assert.Empty(Batches());
+    }
+
+    [Fact]
+    public async Task Line_closed_with_a_store_the_key_does_not_open_just_waits()
+    {
+        // Only B exists and the stored key is A's: LINE closed means wait, never red, and no key scan.
+        var bPlain = PlainStore("qwbbb.edb", c => { LineFixture.OwnProfile(c, "uB", "B"); LineFixture.Chat(c, "c2"); LineFixture.Message(c, "b1", "c2", "c2", 1_760_000_000_000, "x"); });
+        Publish(bPlain, KeyB);
+        var scans = 0;
+        var line = new LineDesktopCollector(_env.Context, new LineSettings(),
+            roots: new[] { new LineProbeRoot("test", _dataFolder) },
+            reportDir: _dir.Sub("report"), tempRoot: _dir.Sub("line-tmp"),
+            keyStore: new InMemoryLineKeyStore(Key), isLineRunning: () => false,
+            keyFinder: _ => { scans++; return null; });
+        await line.StartAsync(default);
+        await line.TickAsync(default);
+        await line.TickAsync(default);
+
+        Assert.Equal(LineState.NotRunning, line.State);
+        Assert.Null(line.LastError);
+        Assert.Equal(0, scans);
+        Assert.Empty(Batches());
+        Assert.Equal(1, line.SnapshotsTaken);   // the second tick saw nothing new and did not re-read
+    }
+
+    [Fact]
+    public async Task Line_running_on_the_other_account_waits_until_its_key_fits_then_captures_it()
+    {
+        var (_, a, _, b) = TwoEncryptedAccounts();
+        var keys = new InMemoryLineKeyStore(Key);
+        var line = NewCollector(keyStore: keys, running: () => true);
+        await line.StartAsync(default);
+        MakeActive(a, b);
+        await line.TickAsync(default);
+        Assert.Equal("uA", line.CurrentAccount);
+
+        // The owner switches LINE to the other account: B gains the -wal, the stored key fits only A.
+        _env.Sink.Clear();
+        MakeActive(b, a);
+        await line.TickAsync(default);
+        Assert.Equal(LineState.WaitingForLine, line.State);
+        Assert.StartsWith("Waiting for LINE to finish signing in", line.Detail);
+        Assert.Null(line.LastError);
+        Assert.Empty(Batches());
+        Assert.Equal("uA", line.CurrentAccount);   // the label is kept while waiting
+
+        // A fitting key becomes available (as detection would store it): the next tick captures under B.
+        keys.StoreKey(KeyB);
+        await line.TickAsync(default);
+        Assert.Equal(LineState.OkPartial, line.State);
+        Assert.Null(line.LastError);
+        Assert.Equal("uB", line.CurrentAccount);
+        Assert.Equal(new[] { "b1" }, MessageIds(Batches()));
+        Assert.All(Batches(), r => Assert.Equal("uB", Account(r)));
+    }
+
+    [Fact]
+    public async Task Detection_that_finds_the_key_in_running_line_captures_in_the_same_tick()
+    {
+        var (_, a, _, b) = TwoEncryptedAccounts();
+        MakeActive(b, a);
+        var keys = new InMemoryLineKeyStore(Key);
+        var line = new LineDesktopCollector(_env.Context, new LineSettings(),
+            roots: new[] { new LineProbeRoot("test", _dataFolder) },
+            reportDir: _dir.Sub("report"), tempRoot: _dir.Sub("line-tmp"),
+            keyStore: keys, isLineRunning: () => true,
+            keyFinder: fits => fits(KeyB) ? (byte[])KeyB.Clone() : null);
+        await line.StartAsync(default);
+        await line.TickAsync(default);
+        Assert.Equal(LineState.OkPartial, line.State);
+        Assert.Equal("uB", line.CurrentAccount);
+        Assert.Equal(new[] { "b1" }, MessageIds(Batches()));
+    }
+
+    [Fact]
+    public async Task A_tick_whose_snapshot_fails_leaves_no_state_and_no_temp_dir_and_the_next_tick_captures()
+    {
+        if (!OperatingSystem.IsWindows()) return;   // relies on Windows file sharing to make the store unreadable
+        var store = Store("qwaaa.edb", c => { LineFixture.OwnProfile(c, "uA", "A"); LineFixture.Chat(c, "c1"); LineFixture.Message(c, "m1", "c1", "c1", 1_760_000_000_000, "one"); });
+        var line = NewCollector();
+        await line.StartAsync(default);
+        await line.TickAsync(default);
+        Assert.Equal(LineState.OkPartial, line.State);
+        var detail = line.Detail;
+
+        Seed(store, c => LineFixture.Message(c, "m2", "c1", "c1", 1_760_000_100_000, "two"));
+        _env.Sink.Clear();
+        using (new FileStream(store, FileMode.Open, FileAccess.Read, FileShare.None))
+            await line.TickAsync(default);   // cannot copy the store this tick
+
+        Assert.Equal(LineState.OkPartial, line.State);   // previous state kept, no red
+        Assert.Equal(detail, line.Detail);
+        Assert.Null(line.LastError);
+        Assert.Empty(Batches());
+        var tmp = _dir.Sub("line-tmp");
+        Assert.Empty(Directory.EnumerateFileSystemEntries(tmp));   // no stale snapshot directory
+
+        await line.TickAsync(default);
+        Assert.Equal(LineState.OkPartial, line.State);
+        Assert.Equal(new[] { "m2" }, MessageIds(Batches()));
+        Assert.Empty(Directory.EnumerateFileSystemEntries(tmp));
+    }
+
+    [Fact]
+    public async Task Unchanged_store_skips_the_snapshot_and_a_wal_change_triggers_a_read()
+    {
+        var (_, a, _, b) = TwoEncryptedAccounts();
+        MakeActive(a, b);
+        var line = NewCollector(keyStore: new InMemoryLineKeyStore(Key));
+        await line.StartAsync(default);
+        await line.TickAsync(default);
+        Assert.Equal(1, line.SnapshotsTaken);
+        var detail = line.Detail;
+
+        await line.TickAsync(default);
+        await line.TickAsync(default);
+        Assert.Equal(1, line.SnapshotsTaken);               // idle: no snapshot, no decrypt
+        Assert.Equal(LineState.OkPartial, line.State);
+        Assert.Equal(detail, line.Detail);
+
+        // LINE writes to the side file (here bytes that are not a valid WAL, so the content is unchanged).
+        File.AppendAllText(a + "-wal", new string('x', 100));
+        await line.TickAsync(default);
+        Assert.Equal(2, line.SnapshotsTaken);
+        Assert.Equal(LineState.OkPartial, line.State);
+
+        // A re-sync request is never skipped.
+        line.RequestResync();
+        await line.TickAsync(default);
+        Assert.Equal(3, line.SnapshotsTaken);
+    }
+
+    [Fact]
+    public async Task Start_sweeps_leftover_snapshot_directories_but_keeps_fresh_ones()
+    {
+        var tmp = _dir.Sub("line-tmp");
+        var old = Directory.CreateDirectory(Path.Combine(tmp, "0123456789abcdef0123456789abcdef")).FullName;
+        File.WriteAllText(Path.Combine(old, "qwaaa.edb.plain"), "stale");
+        Directory.SetLastWriteTimeUtc(old, DateTime.UtcNow.AddHours(-1));
+        var fresh = Directory.CreateDirectory(Path.Combine(tmp, "fedcba9876543210fedcba9876543210")).FullName;
+
+        var line = NewCollector();
+        await line.StartAsync(default);
+
+        Assert.False(Directory.Exists(old));
+        Assert.True(Directory.Exists(fresh));
+    }
+
+    [Fact]
+    public void FindDb_without_a_wal_prefers_the_remembered_store_over_the_largest()
+    {
+        var a = LineFixture.Create(_dataFolder, "qwaaa.edb");
+        var b = LineFixture.Create(_dataFolder, "qwbbb.edb");
+        SqliteConnection.ClearAllPools();
+        File.WriteAllBytes(b, new byte[200_000]);   // B is the largest
+
+        Assert.Equal(b, LineStore.FindDb(_dataFolder, "*.edb"));
+        Assert.Equal(a, LineStore.FindDb(_dataFolder, "*.edb", "qwaaa"));
+        Assert.Equal(b, LineStore.FindDb(_dataFolder, "*.edb", "qwgone"));   // remembered store deleted: largest
+        MakeActive(b, a);
+        Assert.Equal(b, LineStore.FindDb(_dataFolder, "*.edb", "qwaaa"));    // a -wal always wins
     }
 }
 

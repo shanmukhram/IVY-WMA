@@ -46,7 +46,9 @@ partial from Windows), `probe needed` (run the probe on the PC first),
 `unverified map` (schema/column drift or an implausible timestamp — red),
 `encrypted store` (no unlocker for this version — red), `store not found` (a data
 folder exists but holds no db matching the pattern — red), `LINE not installed`
-(no data folder — informational, not an error).
+(no data folder — informational, not an error), `not running` (LINE closed —
+informational) and `waiting for LINE` (LINE running, key not fitting yet — amber); see
+"LINE closed, waiting, and idle ticks" below.
 
 **Controls (`collector_config`, WR3).** `enabled` toggles the row; `runProbe`
 (one-shot, cleared after it runs) runs the probe; `dataPath` overrides the data
@@ -129,3 +131,28 @@ Tests: LineTests.cs and LineWalFixture.cs build a real WAL-mode fixture. The cas
 ## Several LINE accounts on one PC, Oct 11 2026
 
 LINE for Windows keeps one set of stores per account in `%LOCALAPPDATA%\LINE\Data\db\` (`qw<hex>.edb`, `keep_qw<hex>.edb`, `chatStats_qw<hex>.edb`), and only the logged-in account's chat store has a `-wal` beside it, so `LineStore.FindDb` opens that one. When the owner uses two of their own accounts in turn, the collector now keeps them apart. The account label on every message batch, Keep batch and account snapshot is the open store's own mid (`LineStore.AccountId`, read from the own-profile table), or the store's `qw<hex>` file name if the mid cannot be read; a non-default `account` setting chosen by the user still wins. Per-account state is keyed by the store's identity (the mid, else the file name): chat cursors are saved as `cursors:<id>`, the account-snapshot hash as `accountHash:<id>`, and the in-memory Keep hash resets when the account changes, so switching accounts never reuses the other account's cursors and switching back resumes where that account left off. A re-sync applies to the open account at once and to each other account the next time its store is open (a saved re-sync epoch per account). The Keep store read is the one named after the open chat store (`keep_<chat store name>.edb`); a lone Keep store is used whatever its name, and with several and none matching, no Keep is read. The stored LINE key fits one account's stores; when the store switches and the key no longer fits, the existing path reads a fitting key from the running LINE process, stores it and reopens. On upgrade, the old single `cursors` blob moves once to the account open at the time, and a one-time `accountKeyV1` flag (same pattern as `namesV2`) re-sends every chat under the account's id instead of "default". Until the Mac removes its LINE records labelled "default", it holds those chats twice.
+
+## LINE closed, waiting, and idle ticks, Oct 11 2026
+
+The ordinary case of LINE being closed no longer needs a click and never shows red.
+
+- **Which store.** While LINE runs, the logged-in account's store is the one with a `-wal`, as before. LINE removes the `-wal` on quit, so with LINE closed `FindDb` used to fall back to the largest `qw*.edb`, which with two accounts can be the other account's. The collector now saves the `qw<hex>` name of the store it last opened successfully (collector setting `lastStore`), and with no `-wal` anywhere `FindDb` prefers that store; the largest is used only if the remembered store is gone.
+- **LINE closed** (no `LINE` process; `LineKeyFinder.IsLineRunning` only lists process names). No memory is read. If the stored key opens the store it is still read, so whatever LINE checkpointed into the main file on quit is captured in full. Either way the state is `NotRunning`, informational, with the detail "LINE is not running; last captured <time> (account <id>); resumes when LINE opens" (the time is saved as `lastCaptured`). Cursors and the account label are kept.
+- **LINE running, key does not fit** (for example just after switching to the other account). The once-per-tick key detection runs as before. If it finds no fitting key yet, the state is `WaitingForLine` (amber) with the detail "Waiting for LINE to finish signing in: ...", no error, and the next tick tries again.
+- **Still red:** schema drift or an unverified map (including an encrypted store the stored key does open but the map does not verify), no chat store in an existing data folder, and an encrypted store with no key store wired (`EncryptedStore`).
+- **Idle ticks.** Each tick builds a stamp from the chosen store's main, `-wal` and `-shm` sizes and mtimes (`LineSnapshot.StampOf`, the same stamp the snapshot uses), the matching Keep store's, the LINE version, whether LINE runs, the account setting, pairing, and the key. If it equals the stamp of the last tick that finished, the tick skips the snapshot and decrypt and keeps the previous state and detail. A new message always changes the `-wal`, so nothing is missed. A re-sync request or a probe run always reads.
+- **Transient failures.** A snapshot that cannot be copied (locked or changing file), or a read or decrypt that throws, keeps the previous state, sets no error, and leaves no temp directory (`LineSnapshot.TryCreate` deletes its directory on every failure path, including a side file vanishing mid-copy). The next tick reads normally. On start the collector also deletes snapshot directories under its temp root older than five minutes, left by a killed process or a file that was still locked at dispose.
+
+States as the window shows them (`StatusRules.Evaluate` with the LINE detail, `LineStatus` in `Ivy.App.Core/CollectorStatus.cs`; the host passes only the detail and the error, so the informational states are recognised by the fixed start of their detail line):
+
+| State | Colour | Text |
+| --- | --- | --- |
+| `OkPartial` | green | "Capturing all N chats on this PC for LINE account ... Full history confirmed from the phone." |
+| `NotRunning` | grey (Idle) | "LINE is not running; last captured ...; resumes when LINE opens" |
+| `NotInstalled` | grey (Idle) | "LINE for Windows not found" |
+| `WaitingForLine` | amber (Waiting) | "Waiting for LINE to finish signing in: the stored key does not open qw... yet; retrying every 5 s" |
+| `UnverifiedMap` | red | the verification reason (missing table or column, implausible timestamp) |
+| `StoreNotFound` | red | "no file matching '*.edb' in ..." |
+| `EncryptedStore` | red | the unlocker's reason (only when no key store is wired) |
+
+Tests (`LineTests.cs`, `LineMultiAccountTests`): two encrypted accounts with LINE closed read the remembered store (not the larger one) as `NotRunning` with cursors kept, also after a restart; a closed LINE with a store the key does not open waits without scanning; LINE running on the other account waits, then captures under that account once its key is stored; detection that finds the key captures in the same tick; a tick whose snapshot fails (the store locked for one tick) keeps the previous state, leaves no temp directory, and the next tick captures; an unchanged stamp takes no snapshot while a `-wal` change or a re-sync does; start sweeps old snapshot directories; `FindDb` preference.

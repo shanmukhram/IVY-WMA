@@ -64,6 +64,24 @@ public static partial class LineKeyFinder
     }
 
     /// <summary>
+    /// Whether LINE for Windows is running (a process named <c>LINE</c> exists). It only lists process names;
+    /// it opens no process and reads no memory. The collector uses it to tell "LINE is closed, wait" apart from
+    /// a real problem, and never looks for a key while LINE is closed.
+    /// </summary>
+    public static bool IsLineRunning()
+    {
+        try
+        {
+            var procs = System.Diagnostics.Process.GetProcessesByName("LINE");
+            try { return procs.Length > 0; }
+            finally { foreach (var p in procs) p.Dispose(); }
+        }
+        catch (InvalidOperationException) { return false; }
+        catch (System.ComponentModel.Win32Exception) { return false; }
+        catch (PlatformNotSupportedException) { return false; }
+    }
+
+    /// <summary>
     /// Scan the running LINE process for a key that <paramref name="fits"/> accepts (Windows only). Returns the
     /// first candidate the predicate confirms, or null if LINE is not running or none fit. The predicate is the
     /// store check, so only a key that actually decrypts the store is ever returned.

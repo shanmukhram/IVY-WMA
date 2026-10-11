@@ -507,10 +507,18 @@ public sealed class LineStore : IDisposable
         catch (UnauthorizedAccessException) { return false; }
     }
 
-    internal static string? FindDb(string dir, string pattern)
+    /// <summary>
+    /// The chat store to read: the one with a <c>-wal</c> beside it (the logged-in account while LINE runs).
+    /// With no <c>-wal</c> anywhere (LINE closed), the store named <paramref name="preferred"/> (the
+    /// <c>qw&lt;hex&gt;</c> name, without extension, of the store last opened successfully) if it still
+    /// exists, else the largest match. Preferring the last-opened store keeps a closed LINE on the account
+    /// whose key is stored instead of falling to another account's larger store.
+    /// </summary>
+    internal static string? FindDb(string dir, string pattern, string? preferred = null)
     {
         if (!Directory.Exists(dir)) return null;
         string? withWal = null; long withWalSize = -1;   // the live message store has a -wal sidecar
+        string? preferredMatch = null;                     // the store last opened successfully
         string? anyMatch = null; long anySize = -1;        // fallback: the largest match
         foreach (var f in Directory.EnumerateFiles(dir, "*", SearchOption.AllDirectories))
         {
@@ -522,11 +530,14 @@ public sealed class LineStore : IDisposable
             if (!Common.Glob.ToRegex(pattern).IsMatch(name)) continue;
             var size = new FileInfo(f).Length;
             if (size > anySize) { anySize = size; anyMatch = f; }
+            if (preferred is not null && preferredMatch is null
+                && string.Equals(Path.GetFileNameWithoutExtension(name), preferred, StringComparison.OrdinalIgnoreCase))
+                preferredMatch = f;
             // Among several candidates (album_, chatStats_, keep_, AutoSuggest...), the one with a -wal
             // sidecar is the active chat store, not merely the largest file.
             if (File.Exists(f + "-wal") && size > withWalSize) { withWalSize = size; withWal = f; }
         }
-        return withWal ?? anyMatch;
+        return withWal ?? preferredMatch ?? anyMatch;
     }
 
     public void Dispose()

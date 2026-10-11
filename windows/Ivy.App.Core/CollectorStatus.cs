@@ -1,7 +1,11 @@
 namespace Ivy.App.Core;
 
-/// <summary>Status dot: green working, amber stale (no run in more than two intervals, or not running), red error, grey off.</summary>
-public enum CollectorStatus { Off, Paused, Ok, Stale, Error }
+/// <summary>
+/// Status dot: green working, amber stale (no run in more than two intervals, or not running) or waiting (the
+/// collector is fine and waiting for its app, e.g. LINE signing in), red error, grey off or idle (nothing to do
+/// right now, e.g. LINE closed or not installed: informational, not a problem).
+/// </summary>
+public enum CollectorStatus { Off, Paused, Ok, Stale, Error, Idle, Waiting }
 
 /// <summary>InfoBar severity without a WinUI reference; the values equal <c>InfoBarSeverity</c>'s (the shell casts).</summary>
 public enum UiSeverity { Informational = 0, Success = 1, Warning = 2, Error = 3 }
@@ -93,6 +97,25 @@ public static class StatusRules
         return (CollectorStatus.Ok, "ok");
     }
 
+    /// <summary>
+    /// <see cref="Evaluate(bool, bool, bool, string?, DateTimeOffset?, TimeSpan, DateTimeOffset)"/> plus the
+    /// collector's own state where it reports one through its detail line (today: LINE, see
+    /// <see cref="LineStatus"/>). The general rules (off, paused, error, not running, stale) still win; only a
+    /// healthy, recently run collector is refined to idle (grey) or waiting (amber).
+    /// </summary>
+    public static (CollectorStatus Status, string Text) Evaluate(string name, bool enabled, bool globallyPaused, bool running,
+        string? lastError, DateTimeOffset? lastRunAt, TimeSpan interval, DateTimeOffset now, string? detail)
+    {
+        var result = Evaluate(enabled, globallyPaused, running, lastError, lastRunAt, interval, now);
+        if (result.Status != CollectorStatus.Ok || name != CollectorNames.Line) return result;
+        return LineStatus.Classify(detail) switch
+        {
+            LineStatusKind.Idle => (CollectorStatus.Idle, "idle"),
+            LineStatusKind.Waiting => (CollectorStatus.Waiting, "waiting"),
+            _ => result,
+        };
+    }
+
     /// <summary>Short status for tiles and headers.</summary>
     public static string Label(CollectorStatus s) => s switch
     {
@@ -100,6 +123,8 @@ public static class StatusRules
         CollectorStatus.Paused => "Paused",
         CollectorStatus.Stale => "Needs attention",
         CollectorStatus.Error => "Error",
+        CollectorStatus.Idle => "Idle",
+        CollectorStatus.Waiting => "Waiting",
         _ => "Off",
     };
 
@@ -107,6 +132,7 @@ public static class StatusRules
     {
         CollectorStatus.Ok => UiSeverity.Success,
         CollectorStatus.Stale => UiSeverity.Warning,
+        CollectorStatus.Waiting => UiSeverity.Warning,
         CollectorStatus.Error => UiSeverity.Error,
         _ => UiSeverity.Informational,
     };
@@ -141,7 +167,38 @@ public static class StatusRules
     {
         CollectorStatus.Ok => Green,
         CollectorStatus.Stale => Amber,
+        CollectorStatus.Waiting => Amber,
         CollectorStatus.Error => Red,
-        _ => Grey,
+        _ => Grey,   // Off, Paused, Idle
     };
+}
+
+/// <summary>How the LINE row's detail line reads: an informational idle state, a wait, or anything else.</summary>
+public enum LineStatusKind { Other, Idle, Waiting }
+
+/// <summary>
+/// The LINE collector's states as the window sees them. The host passes only the detail line and the error
+/// across, so the collector's informational states are recognised by the fixed start of their detail line
+/// (written by <c>LineDesktopCollector</c>; keep the two in step). Errors (schema drift, unverified map, a
+/// missing store, a wrong data path) arrive as <c>LastError</c> and stay red through the general rules.
+/// <list type="table">
+/// <item><term>NotInstalled</term><description>grey, "LINE for Windows not found"</description></item>
+/// <item><term>NotRunning</term><description>grey, "LINE is not running; last captured ...; resumes when LINE opens"</description></item>
+/// <item><term>WaitingForLine</term><description>amber, "Waiting for LINE to finish signing in: ..."</description></item>
+/// </list>
+/// </summary>
+public static class LineStatus
+{
+    public const string NotInstalledPrefix = "LINE for Windows not found";
+    public const string NotRunningPrefix = "LINE is not running";
+    public const string WaitingPrefix = "Waiting for LINE";
+
+    public static LineStatusKind Classify(string? detail)
+    {
+        if (string.IsNullOrEmpty(detail)) return LineStatusKind.Other;
+        if (detail.StartsWith(NotRunningPrefix, StringComparison.Ordinal) || detail.StartsWith(NotInstalledPrefix, StringComparison.Ordinal))
+            return LineStatusKind.Idle;
+        if (detail.StartsWith(WaitingPrefix, StringComparison.Ordinal)) return LineStatusKind.Waiting;
+        return LineStatusKind.Other;
+    }
 }

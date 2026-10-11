@@ -3,6 +3,7 @@ using Ivy.Collectors.Common;
 using Ivy.Core.Protocol;
 using Ivy.Core.Records;
 using Ivy.Core.Sink;
+using Microsoft.Extensions.Logging;
 
 namespace Ivy.Collectors.Line;
 
@@ -21,6 +22,16 @@ public enum LineState
     UnverifiedMap,
     /// <summary>Verified and capturing; coverage is always partial from Windows (WL2).</summary>
     OkPartial,
+    /// <summary>
+    /// LINE is closed (no LINE.exe). Informational, not an error: the last store is still read if the stored
+    /// key opens it, otherwise the collector just waits. Capture resumes on its own when LINE opens.
+    /// </summary>
+    NotRunning,
+    /// <summary>
+    /// LINE is running but the stored key does not open the store it is using (for example just after a
+    /// switch to the other account) and no fitting key was found in LINE yet. Amber, retried every tick.
+    /// </summary>
+    WaitingForLine,
 }
 
 /// <summary>
@@ -69,6 +80,27 @@ public sealed class LineDesktopCollector : Collector<LineSettings>
 
     private readonly ILineKeyStore? _keyStore;
     private string? _lastAccountHash;
+    private readonly Func<bool> _isLineRunning;
+    private readonly Func<Func<byte[], bool>, byte[]?> _findKey;
+
+    // The qw<hex> name of the store last opened successfully, persisted as "lastStore", so that with LINE
+    // closed (no -wal anywhere) the collector reads that account's store rather than the largest one.
+    private const string LastStoreKey = "lastStore";
+    // When a store was last read successfully (ISO 8601), shown while LINE is closed.
+    private const string LastCapturedKey = "lastCaptured";
+    private string? _lastStore;
+
+    // Stamp of the inputs of the last tick that finished without needing a retry (see IdleStamp). While it
+    // matches, a tick skips the snapshot and decrypt and keeps the previous state and Detail. Null forces a read.
+    private string? _idleStamp;
+    // Bumped whenever the stored key changes through this collector, so a key change is never skipped.
+    private int _keyVersion;
+
+    // Snapshot directories older than this are leftovers from a killed process or a locked file; swept on start.
+    private static readonly TimeSpan LeftoverAge = TimeSpan.FromMinutes(5);
+
+    /// <summary>How many chat-store snapshots ticks have taken (tests check that idle ticks take none).</summary>
+    internal int SnapshotsTaken { get; private set; }
 
     public LineDesktopCollector(
         CollectorContext context,
@@ -78,11 +110,15 @@ public sealed class LineDesktopCollector : Collector<LineSettings>
         Func<string, LineStoreMap>? mapFor = null,
         string? reportDir = null,
         string? tempRoot = null,
-        ILineKeyStore? keyStore = null)
+        ILineKeyStore? keyStore = null,
+        Func<bool>? isLineRunning = null,
+        Func<Func<byte[], bool>, byte[]?>? keyFinder = null)
         : base(CollectorNames.Line, context, settings)
     {
         _rootsOverride = roots;
         _keyStore = keyStore;
+        _isLineRunning = isLineRunning ?? LineKeyFinder.IsLineRunning;
+        _findKey = keyFinder ?? (fits => OperatingSystem.IsWindows() ? LineKeyFinder.FromRunningLine(fits) : null);
         // With a key store, decrypt via the real wxSQLite3 scheme once a key is set; otherwise stay honest.
         _unlocker = unlocker ?? (keyStore is not null ? new KeyedLineUnlocker(keyStore) : NotImplementedUnlocker.Instance);
         _mapFor = mapFor ?? (_ => LineStoreMap.ShippedDefault);
@@ -102,7 +138,11 @@ public sealed class LineDesktopCollector : Collector<LineSettings>
     public bool HasKey => _keyStore?.HasKey ?? false;
 
     /// <summary>Store the LINE key (entered once in the app, kept in DPAPI, never uploaded — WX2).</summary>
-    public void SetKey(ReadOnlySpan<byte> passphrase) => _keyStore?.StoreKey(passphrase);
+    public void SetKey(ReadOnlySpan<byte> passphrase)
+    {
+        _keyStore?.StoreKey(passphrase);
+        Interlocked.Increment(ref _keyVersion);
+    }
 
     /// <summary>
     /// Try to read a working key from the running LINE process and store it. Scans LINE's memory for 32-hex
@@ -114,18 +154,19 @@ public sealed class LineDesktopCollector : Collector<LineSettings>
         if (_keyStore is null || !OperatingSystem.IsWindows()) return false;
         var dataFolder = ResolveDataFolder();
         if (dataFolder is null) return false;
-        var dbPath = LineStore.FindDb(dataFolder, _mapFor(Settings.Version ?? "unknown").DbFilePattern);
+        var dbPath = LineStore.FindDb(dataFolder, _mapFor(Settings.Version ?? "unknown").DbFilePattern, LoadLastStore());
         if (dbPath is null || !File.Exists(dbPath)) return false;
+        return TryDetectAndStoreKey(dbPath);
+    }
 
-        // The first page (up to the max page size) is enough to confirm a key.
-        byte[] page1;
-        using (var fs = new FileStream(dbPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
-        {
-            page1 = new byte[(int)Math.Min(fs.Length, 65536)];
-            _ = fs.Read(page1, 0, page1.Length);
-        }
+    // Look for a key that opens dbFile (a snapshot copy during a tick) in the running LINE and store it.
+    private bool TryDetectAndStoreKey(string dbFile)
+    {
+        if (_keyStore is null) return false;
+        var page1 = ReadFirstPage(dbFile);
+        if (page1 is null) return false;
 
-        var found = LineKeyFinder.FromRunningLine(cand =>
+        var found = _findKey(cand =>
         {
             var key = LineWxCipher.DeriveKey(cand);
             try { return LineWxCipher.KeyFits(page1, key); }
@@ -134,11 +175,46 @@ public sealed class LineDesktopCollector : Collector<LineSettings>
         if (found is null) return false;
         try { _keyStore.StoreKey(found); }
         finally { System.Security.Cryptography.CryptographicOperations.ZeroMemory(found); }
+        Interlocked.Increment(ref _keyVersion);
         return true;
     }
 
+    // The first page (up to the max page size) is enough to confirm a key.
+    private static byte[]? ReadFirstPage(string dbFile)
+    {
+        try
+        {
+            using var fs = new FileStream(dbFile, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            var page1 = new byte[(int)Math.Min(fs.Length, 65536)];
+            var got = 0;
+            int read;
+            while (got < page1.Length && (read = fs.Read(page1, got, page1.Length - got)) > 0) got += read;
+            return page1;
+        }
+        catch (IOException) { return null; }
+        catch (UnauthorizedAccessException) { return null; }
+    }
+
+    // Whether the stored key decrypts dbFile's first page (false with no key store or no key).
+    private bool StoredKeyFits(string dbFile)
+    {
+        if (_keyStore is not { HasKey: true }) return false;
+        var page1 = ReadFirstPage(dbFile);
+        if (page1 is null) return false;
+        var passphrase = _keyStore.LoadKey();
+        byte[] key;
+        try { key = LineWxCipher.DeriveKey(passphrase); }
+        finally { System.Security.Cryptography.CryptographicOperations.ZeroMemory(passphrase); }
+        try { return LineWxCipher.KeyFits(page1, key); }
+        finally { System.Security.Cryptography.CryptographicOperations.ZeroMemory(key); }
+    }
+
     /// <summary>Forget the stored LINE key.</summary>
-    public void ClearKey() => _keyStore?.Clear();
+    public void ClearKey()
+    {
+        _keyStore?.Clear();
+        Interlocked.Increment(ref _keyVersion);
+    }
 
     protected override void Validate(LineSettings s)
     {
@@ -156,6 +232,10 @@ public sealed class LineDesktopCollector : Collector<LineSettings>
         _lastAccountHash = null;
         _lastKeepHash = null;
         _verifiedVersion = null;
+        _idleStamp = null;
+        _lastStore = null;
+        // Snapshot directories a killed process or a still-locked file left behind (file times are real time).
+        LineSnapshot.SweepLeftovers(_tempRoot, LeftoverAge, DateTimeOffset.UtcNow);
         MigratePollSeconds();
         MigrateNamesV2();
         MigrateAccountKeyV1();
@@ -235,15 +315,18 @@ public sealed class LineDesktopCollector : Collector<LineSettings>
     {
         var version = Settings.Version ?? "unknown";
 
+        var probed = false;
         if (Settings.RunProbe)
         {
             RunProbe(version);
             ClearRunProbe();
+            probed = true;
         }
 
         var dataFolder = ResolveDataFolder();
         if (dataFolder is null)
         {
+            _idleStamp = null;
             State = LineState.NotInstalled;
             Detail = "LINE for Windows not found" + (LastReportPath is null ? "" : $"; report {LastReportPath}");
             return Task.CompletedTask;
@@ -253,9 +336,12 @@ public sealed class LineDesktopCollector : Collector<LineSettings>
         if (_verifiedVersion is not null && _verifiedVersion != version)
             Detail = $"LINE version changed {_verifiedVersion} -> {version}; re-verifying";
 
-        var dbPath = LineStore.FindDb(dataFolder, map.DbFilePattern);
+        // Only lists process names; no memory is read while LINE is closed.
+        var running = _isLineRunning();
+        var dbPath = LineStore.FindDb(dataFolder, map.DbFilePattern, LoadLastStore());
         if (dbPath is null)
         {
+            _idleStamp = null;
             State = LineState.StoreNotFound;
             _verifiedVersion = null;
             SetError($"no file matching '{map.DbFilePattern}' in {dataFolder}" +
@@ -263,29 +349,72 @@ public sealed class LineDesktopCollector : Collector<LineSettings>
             return Task.CompletedTask;
         }
 
+        // Cheap idle tick: nothing LINE writes has changed since the last tick that finished (a new message
+        // always changes the -wal), so skip the snapshot and decrypt and keep the previous state and Detail.
+        var stamp = IdleStamp(dataFolder, dbPath, version, running);
+        if (!probed && !_resyncRequested && stamp == _idleStamp) return Task.CompletedTask;
+        _idleStamp = null;   // set again below only when this tick finishes without needing a retry
+
+        SnapshotsTaken++;
         using var snapshot = LineSnapshot.TryCreate(dbPath, _tempRoot, out var snapReason);
         if (snapshot is null)
         {
-            State = LineState.StoreNotFound;
-            _verifiedVersion = null;
-            SetError(snapReason ?? "could not snapshot the LINE store");
+            if (!File.Exists(dbPath))
+            {
+                // The store vanished between finding and copying it: report it like a missing store.
+                State = LineState.StoreNotFound;
+                _verifiedVersion = null;
+                SetError(snapReason ?? "could not snapshot the LINE store");
+                return Task.CompletedTask;
+            }
+            // A locked or changing file is transient: keep the previous state, set no error, retry next tick.
+            // TryCreate already removed its temp directory.
+            Logger.LogInformation("{Collector}: no snapshot this tick, retrying next tick: {Reason}", Name, snapReason);
             return Task.CompletedTask;
         }
 
-        var store = LineStore.Open(snapshot.Directory, map, _unlocker, out var openReason);
-        // Encrypted store without a working key: automatically read a key from the running LINE process and
-        // retry, so capture starts on its own with no button press. Only runs while no key fits, so once a
-        // working key is stored it is reused and no scanning happens.
-        if (store is null && _keyStore is not null && !IsPlainSqlite(dbPath) && OperatingSystem.IsWindows() && TryDetectAndStoreKey())
+        LineStore? store;
+        string? openReason;
+        try
+        {
             store = LineStore.Open(snapshot.Directory, map, _unlocker, out openReason);
+            // Encrypted store the stored key does not open. With LINE closed there is no key to find: report
+            // NotRunning and wait (never red). With LINE running, look for a fitting key in LINE once this tick
+            // and retry; if none fits yet (LINE still signing in, or just switched account) wait in amber.
+            if (store is null && _keyStore is not null && !IsPlainSqlite(snapshot.DbCopy) && !StoredKeyFits(snapshot.DbCopy))
+            {
+                if (!running)
+                {
+                    ReportNotRunning(null);
+                    _idleStamp = stamp;   // nothing to retry until a file, the key or LINE's state changes
+                    return Task.CompletedTask;
+                }
+                if (!TryDetectAndStoreKey(snapshot.DbCopy))
+                {
+                    State = LineState.WaitingForLine;
+                    Detail = $"Waiting for LINE to finish signing in: the stored key does not open {Path.GetFileNameWithoutExtension(dbPath)} yet; retrying every {Settings.PollSeconds} s";
+                    return Task.CompletedTask;
+                }
+                store = LineStore.Open(snapshot.Directory, map, _unlocker, out openReason);
+            }
+        }
+        catch (Exception e) when (IsTransient(e))
+        {
+            // A failed decrypt or a read error on the copy: keep the previous state, retry next tick. The
+            // snapshot (with any plaintext copy inside it) is deleted when it is disposed below.
+            Logger.LogInformation("{Collector}: could not read the snapshot this tick, retrying next tick: {Reason}", Name, e.Message);
+            return Task.CompletedTask;
+        }
         using var storeGuard = store;
         if (store is null)
         {
             _verifiedVersion = null;
             var reason = openReason ?? "the LINE store could not be read";
-            // Tell the encrypted case apart for the UI state from the file's own header, not the reason text:
-            // a store whose header is not "SQLite format 3" is encrypted; otherwise the map did not verify (WL3).
-            State = IsPlainSqlite(dbPath) ? LineState.UnverifiedMap : LineState.EncryptedStore;
+            // Tell the cases apart for the UI state from the file itself, not the reason text: a plain SQLite
+            // header, or an encrypted store the stored key does open, means the map did not verify (WL3);
+            // otherwise it is an encrypted store with no way to open it (no key store wired).
+            var plain = IsPlainSqlite(snapshot.DbCopy);
+            State = plain || StoredKeyFits(snapshot.DbCopy) ? LineState.UnverifiedMap : LineState.EncryptedStore;
             SetError(reason);
             return Task.CompletedTask;
         }
@@ -293,6 +422,7 @@ public sealed class LineDesktopCollector : Collector<LineSettings>
         _verifiedVersion = version;
         // Which LINE account this store belongs to; load that account's own cursors and snapshot hash.
         SwitchAccount(store, dbPath);
+        RememberStore(dbPath);
         var account = _account!;
         var sink = Sink;
         if (sink is null) return Task.CompletedTask; // not paired yet; verified, nothing to emit
@@ -358,13 +488,77 @@ public sealed class LineDesktopCollector : Collector<LineSettings>
         EmitAccount(sink, store, account);
         EmitKeep(sink, account, dbPath);
 
-        State = LineState.OkPartial;
         Cursor = $"chats={chats.Count}";
+        var capturedAt = Now;
+        Context.Settings.SaveJson(Name, LastCapturedKey, JsonValue.Create(IvyTime.Format(capturedAt)));
+        if (!ct.IsCancellationRequested) _idleStamp = stamp;
+        if (!running)
+        {
+            // LINE is closed but the stored key opened the last store (a checkpoint on quit is captured in full).
+            ReportNotRunning(capturedAt);
+            return Task.CompletedTask;
+        }
+        State = LineState.OkPartial;
         // We read every chat and message this PC's LINE holds; "partial" only means the phone may hold older
         // history we cannot see from Windows, so it is confirmed complete only once the phone's import runs.
         Detail = $"Capturing all {chats.Count} chats on this PC for LINE account {account} ({newMessages} new this tick). Full history confirmed from the phone.";
         return Task.CompletedTask;
     }
+
+    /// <summary>
+    /// LINE is closed: an informational state, never an error. Cursors and the account label are kept.
+    /// <paramref name="capturedAt"/> is this tick's read, or null to show the last saved one.
+    /// </summary>
+    private void ReportNotRunning(DateTimeOffset? capturedAt)
+    {
+        State = LineState.NotRunning;
+        var last = capturedAt ?? LoadLastCaptured();
+        var when = last is null ? "nothing captured yet" : "last captured " + last.Value.ToLocalTime().ToString("yyyy-MM-dd HH:mm", System.Globalization.CultureInfo.InvariantCulture);
+        var who = _account is null ? "" : $" (account {_account})";
+        Detail = $"LINE is not running; {when}{who}; resumes when LINE opens";
+    }
+
+    private DateTimeOffset? LoadLastCaptured() =>
+        Context.Settings.LoadJson(Name, LastCapturedKey) is JsonValue v && v.TryGetValue<string>(out var s)
+        && DateTimeOffset.TryParse(s, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.RoundtripKind, out var t)
+            ? t : null;
+
+    private string? LoadLastStore()
+    {
+        if (_lastStore is not null) return _lastStore;
+        _lastStore = Context.Settings.LoadJson(Name, LastStoreKey) is JsonValue v && v.TryGetValue<string>(out var s) && !string.IsNullOrWhiteSpace(s) ? s : null;
+        return _lastStore;
+    }
+
+    // Persist the qw<hex> name of the store just opened, when it changed.
+    private void RememberStore(string dbPath)
+    {
+        var name = Path.GetFileNameWithoutExtension(dbPath);
+        if (string.Equals(LoadLastStore(), name, StringComparison.Ordinal)) return;
+        _lastStore = name;
+        Context.Settings.SaveJson(Name, LastStoreKey, JsonValue.Create(name));
+    }
+
+    /// <summary>
+    /// Everything a tick's outcome depends on, as one string: the chosen store and its Keep store with the
+    /// sizes and mtimes of their main, <c>-wal</c> and <c>-shm</c> files (<see cref="LineSnapshot.StampOf"/>),
+    /// plus the LINE version, whether LINE is running, the account setting, pairing and the key version.
+    /// </summary>
+    private string IdleStamp(string dataFolder, string dbPath, string version, bool running)
+    {
+        var keep = LineKeep.FindKeepDb(dataFolder, dbPath);
+        return string.Join("|",
+            dbPath, LineSnapshot.StampOf(dbPath),
+            keep ?? "-", keep is null ? "-" : LineSnapshot.StampOf(keep),
+            version, running ? "running" : "closed", Settings.Account,
+            Sink is null ? "unpaired" : "paired",
+            Volatile.Read(ref _keyVersion).ToString(System.Globalization.CultureInfo.InvariantCulture),
+            _keyStore?.HasKey == true ? "key" : "nokey");
+    }
+
+    private static bool IsTransient(Exception e) =>
+        e is IOException or UnauthorizedAccessException or Microsoft.Data.Sqlite.SqliteException
+            or System.Security.Cryptography.CryptographicException;
 
     /// <summary>
     /// Work out which account the opened store belongs to and, when it differs from the last one, load that
