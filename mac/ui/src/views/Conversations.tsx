@@ -192,7 +192,12 @@ export function ConversationsView(scope: ChatsScope = {}) {
         </div>
       </section>
       {selected ? (
-        <Thread key={selected} id={selected} around={around} hintAvatar={current?.avatarUrl ?? null} onOpenProfile={() => setProfileOpen(true)} />
+        // keyed on the anchor too: dropping or changing `around` starts a fresh window (and fresh earlier history)
+        <Thread key={`${selected}|${around ?? ""}`} id={selected} around={around} hintAvatar={current?.avatarUrl ?? null} onOpenProfile={() => setProfileOpen(true)}
+          onJumpLatest={() => {
+            if (scope.embedded) setLocal((l) => ({ ...l, around: null }));
+            else navigate(href("/conversations", { source, platform, chat: selected }), true);
+          }} />
       ) : (
         <section className="pane pane-main" aria-label="Chat"><Empty icon="chat" title="No chat selected">Pick a chat on the left.</Empty></section>
       )}
@@ -204,13 +209,32 @@ export function ConversationsView(scope: ChatsScope = {}) {
   );
 }
 
-function Thread({ id, around, hintAvatar, onOpenProfile }: { id: string; around: string | null; hintAvatar: string | null; onOpenProfile: () => void }) {
+/**
+ * The open chat. Its messages are two parts:
+ *  - the live window (`before`/`after` around the pivot, refetched by live refreshes, see liveWindow), and
+ *  - `earlier`: messages older than the window, loaded by "Load earlier messages" and kept in their own
+ *    state so the live window logic is unchanged. `earlier` always ends where the window starts (or
+ *    overlaps it); the shown list is `earlier` minus anything the window also has, then the window, so a
+ *    refetched window always wins for freshness. Before a live refresh that could move the window's
+ *    start forward (the newest window at its 200 cap), the current window is folded into `earlier`, so
+ *    nothing between the history and the new window is lost.
+ */
+function Thread({ id, around, hintAvatar, onOpenProfile, onJumpLatest }: { id: string; around: string | null; hintAvatar: string | null; onOpenProfile: () => void; onJumpLatest: () => void }) {
   const api = useApi();
   const [before, setBefore] = useState(40);
   const [after, setAfter] = useState(40);
-  const r = useLoad<any>((a) => a.get(`/api/views/chats/${encodeURIComponent(id)}/messages`, { around: around ?? undefined, before, after }), [id, around, before, after]);
-  const msgs = (r.data?.messages ?? []) as Msg[];
+  const url = `/api/views/chats/${encodeURIComponent(id)}/messages`;
+  const r = useLoad<any>((a) => a.get(url, { around: around ?? undefined, before, after }), [id, around, before, after]);
+  const windowMsgs = (r.data?.messages ?? []) as Msg[];
+  const [earlier, setEarlier] = useState<Msg[]>([]);
+  const msgs = useMemo(() => {
+    if (!earlier.length) return windowMsgs;
+    const inWindow = new Set(windowMsgs.map((m) => m.id));
+    return [...earlier.filter((m) => !inWindow.has(m.id)), ...windowMsgs];
+  }, [earlier, windowMsgs]);
   const conv = r.data?.conversation as (Chat & { conv_key?: string }) | undefined;
+  const alive = useRef(true);
+  useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   const [lightbox, setLightbox] = useState<number | null>(null);
   // the thread route serves each message's attachments inline; fall back to the separate lookup
   const inlineAtts = useMemo(() => {
@@ -243,13 +267,20 @@ function Thread({ id, around, hintAvatar, onOpenProfile }: { id: string; around:
   // refetch the window after a short debounce, growing it so new messages fit (see liveWindow); edits
   // alone, or a window far back in history, get a plain reload of what is shown.
   const pendingNew = useRef(0);
+  const folded = useRef<string | null>(null); // newest message id when the window was last folded into `earlier`
   const live = useRef<{ atBottom: boolean; anchor: { id: string; top: number } | null } | null>(null);
   const refresh = useDebounced(() => {
     const grow = pendingNew.current;
     pendingNew.current = 0;
     const el = scroller.current;
     live.current = { atBottom: el ? isNearBottom(el) : true, anchor: el ? firstVisible(el) : null };
-    const w = liveWindow({ around, ids: msgs.map((m) => m.id), before, after, grow });
+    if (earlier.length && windowMsgs.length) {
+      // fold the current window into the earlier history so a window whose start moves forward leaves no gap
+      const shown = windowMsgs;
+      setEarlier((e) => { const s = new Set(shown.map((m) => m.id)); return [...e.filter((m) => !s.has(m.id)), ...shown]; });
+      folded.current = shown[shown.length - 1]!.id;
+    }
+    const w = liveWindow({ around, ids: windowMsgs.map((m) => m.id), before, after, grow });
     if (w) { setBefore(w.before); setAfter(w.after); } else r.reload();
   }, 500);
   useEvents((ev) => {
@@ -272,7 +303,72 @@ function Thread({ id, around, hintAvatar, onOpenProfile }: { id: string; around:
       if (delta) el.scrollTop += delta;
       break;
     }
-  }, [r.data, r.loading]);
+  }, [r.data, r.loading, earlier]);
+
+  // After a fold, the refetched window normally still contains the folded newest message. If more new
+  // messages arrived than the window holds, it does not: page forward from there until the window's
+  // first message is reached, so the history stays contiguous.
+  useEffect(() => {
+    const from = folded.current;
+    if (!from || r.loading || !windowMsgs.length) return;
+    folded.current = null;
+    if (windowMsgs.some((m) => m.id === from)) return;
+    const first = windowMsgs[0]!.id;
+    const inWindow = new Set(windowMsgs.map((m) => m.id));
+    (async () => {
+      const add: Msg[] = [];
+      let cursor = from;
+      for (;;) {
+        const page = await api.get<any>(url, { around: cursor, before: 0, after: MAX_WINDOW });
+        if (!alive.current) return;
+        const got = ((page?.messages ?? []) as Msg[]).filter((m) => m.id !== cursor);
+        add.push(...got.filter((m) => !inWindow.has(m.id)));
+        if (!got.length || got.length < MAX_WINDOW || got.some((m) => m.id === first)) break;
+        cursor = got[got.length - 1]!.id;
+      }
+      if (add.length) setEarlier((e) => { const s = new Set(e.map((m) => m.id)); return [...e, ...add.filter((m) => !s.has(m.id))]; });
+    })().catch(() => {});
+  }, [r.data, r.loading]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // "Load earlier messages": one click pages the route backwards (`around` = the oldest shown message,
+  // `before` = the service's 200 cap, `after` = 0) until a page comes back short, i.e. the chat's first
+  // message is on screen. Each page is prepended to `earlier` with the reader's place kept.
+  const [hist, setHist] = useState<{ loading: boolean; done: boolean; count: number; error: unknown }>({ loading: false, done: false, count: 0, error: null });
+  const loadHistory = async () => {
+    if (hist.loading || !msgs.length) return;
+    let list = msgs;
+    setHist({ loading: true, done: false, count: list.length, error: null });
+    try {
+      for (;;) {
+        const oldest = list[0]!.id;
+        const page = await api.get<any>(url, { around: oldest, before: MAX_WINDOW, after: 0 });
+        if (!alive.current) return;
+        const got = (page?.messages ?? []) as Msg[];
+        if (!got.some((m) => m.id === oldest)) throw new Error("The oldest shown message is no longer in the archive; reopen the chat and try again.");
+        const olderRaw = got.filter((m) => m.id !== oldest);
+        const have = new Set(list.map((m) => m.id));
+        const older = olderRaw.filter((m) => !have.has(m.id));
+        if (older.length) {
+          const el = scroller.current;
+          if (el && !live.current) live.current = { atBottom: false, anchor: firstVisible(el) };
+          list = [...older, ...list];
+          setEarlier((e) => { const s = new Set(e.map((m) => m.id)); return [...older.filter((m) => !s.has(m.id)), ...e]; });
+          setHist((h) => ({ ...h, count: list.length }));
+        }
+        if (!older.length || olderRaw.length < MAX_WINDOW) break;
+      }
+      setHist({ loading: false, done: true, count: list.length, error: null });
+    } catch (error) {
+      if (alive.current) setHist((h) => ({ ...h, loading: false, error }));
+    }
+  };
+  // the first window may already reach the chat's first message (fewer older messages came back than asked for)
+  const windowAtStart = !!r.data && !earlier.length && (() => {
+    if (!around) return windowMsgs.length - 1 < before;
+    const i = windowMsgs.findIndex((m) => m.id === around);
+    return i >= 0 && i < before;
+  })();
+  const showEarlier = msgs.length > 0 && !hist.done && !windowAtStart;
 
   const byId = useMemo(() => new Map(msgs.map((m) => [m.id, m])), [msgs]);
   const account = conv?.account ?? "";
@@ -306,7 +402,12 @@ function Thread({ id, around, hintAvatar, onOpenProfile }: { id: string; around:
       <div className="msgs" ref={scroller} role="log" aria-label="Messages">
         <ErrorLine error={r.error} />
         {conv && msgs.length === 0 && <Empty icon="chat" title="No archived messages">This conversation has no archived messages.</Empty>}
-        {msgs.length > 0 && <button className="btn btn-sm load-more" onClick={() => setBefore((b) => b + 40)}>Load earlier messages</button>}
+        {showEarlier && (
+          <button className="btn btn-sm load-more" onClick={loadHistory} disabled={hist.loading} aria-busy={hist.loading || undefined}>
+            {hist.loading ? `Loading history… ${hist.count.toLocaleString("en-US")} messages` : "Load earlier messages"}
+          </button>
+        )}
+        {showEarlier && <ErrorLine error={hist.error} />}
         {msgs.map((m) => {
           const at = mSentAt(m);
           const day = dayKey(at);
@@ -362,7 +463,8 @@ function Thread({ id, around, hintAvatar, onOpenProfile }: { id: string; around:
             </div>
           );
         })}
-        {msgs.length > 0 && <button className="btn btn-sm load-more" onClick={() => setAfter((x) => x + 40)}>Load later messages</button>}
+        {/* opened at a search hit: drop the anchor to show the newest messages (the thread then stays live at the bottom) */}
+        {around && msgs.length > 0 && <button className="btn btn-sm load-more" onClick={onJumpLatest}>Jump to latest</button>}
       </div>
       {lightbox !== null && images[lightbox] && (
         <Lightbox images={images} index={lightbox} onIndex={setLightbox} onClose={() => setLightbox(null)} />
