@@ -18,7 +18,7 @@ public sealed class UploaderOptions
     /// in flight make the whole queue drain in a fraction of the time — the point being that a few minutes
     /// after the PC comes on, the Mac already has everything. A shared token bucket still caps total bandwidth.
     /// </summary>
-    public int Concurrency { get; init; } = 8;
+    public int Concurrency { get; init; } = 16;
     /// <summary>Idle re-check interval for <see cref="Uploader.RunAsync"/>.</summary>
     public TimeSpan IdlePoll { get; init; } = TimeSpan.FromSeconds(30);
 }
@@ -37,6 +37,8 @@ public sealed class Uploader
 {
     private const string PausedSetting = "uploader.paused";
     private const string BandwidthSetting = "uploader.bandwidth";
+    private const string ConcurrencySetting = "uploader.concurrency";
+    private readonly int _concurrency;
     private readonly UploadQueue _queue;
     private readonly IUpBucketClient _client;
     private readonly UploaderOptions _options;
@@ -63,6 +65,10 @@ public sealed class Uploader
         var bw = _options.BandwidthBytesPerSecond;
         if (settingsDb?.GetSetting(BandwidthSetting) is { } s && long.TryParse(s, out var saved)) bw = saved;
         _bucket = new TokenBucket(bw, _time);
+        // how many objects upload at once; tunable at runtime via the uploader.concurrency setting, clamped to a sane range
+        var conc = _options.Concurrency;
+        if (settingsDb?.GetSetting(ConcurrencySetting) is { } cs && int.TryParse(cs, out var savedConc)) conc = savedConc;
+        _concurrency = Math.Clamp(conc, 1, 64);
         _paused = settingsDb?.GetSetting(PausedSetting) == "1";
         _queue.Enqueued += (_, _) => Nudge();
     }
@@ -112,7 +118,7 @@ public sealed class Uploader
         try
         {
             var done = 0;
-            var workers = Math.Max(1, _options.Concurrency);
+            var workers = _concurrency;
             var tasks = new Task[workers];
             for (var i = 0; i < workers; i++) tasks[i] = Task.Run(() => WorkerAsync(ct), ct);
             await Task.WhenAll(tasks).ConfigureAwait(false);
