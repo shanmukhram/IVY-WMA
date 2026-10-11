@@ -300,6 +300,29 @@ public class MainViewModelTests
     }
 
     [Fact]
+    public async Task Paired_start_without_a_decision_registers_run_at_login()
+    {
+        // Paired before the run-at-login default existed, or the decision key was lost.
+        _agent.IsPaired = true;
+        var vm = Create();
+        await vm.StartAsync();
+        Assert.Equal(StartupCommand.Build(Exe), _startup.Command);
+        Assert.True(vm.Settings.RunAtLogin);
+        Assert.Equal("1", _agent.Settings[SettingsViewModel.RunAtLoginDecidedKey]);
+    }
+
+    [Fact]
+    public async Task Paired_start_with_run_at_login_turned_off_does_not_re_register()
+    {
+        _agent.IsPaired = true;
+        _agent.Settings[SettingsViewModel.RunAtLoginDecidedKey] = "1";
+        var vm = Create();
+        await vm.StartAsync();
+        Assert.Null(_startup.Command);
+        Assert.False(vm.Settings.RunAtLogin);
+    }
+
+    [Fact]
     public async Task Capture_settings_apply_on_every_change()
     {
         _agent.IsPaired = true;

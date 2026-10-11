@@ -207,6 +207,10 @@ public sealed class MainViewModel : ObservableObject
             ShowMain = true;
             await StartHostAsync();
             Settings.Load();
+            // Run-at-login default on every paired start, not only at pairing: an install paired before the default
+            // existed (or whose decision key was lost) gets registered here. A no-op once the user's choice is recorded.
+            Settings.EnableRunAtLoginByDefault();
+            await Settings.LastWork;
             // Uploader pause is persisted; carry it over to capture so both halves agree after a restart.
             var paused = _agent.UploadsPaused;
             _isRunning = !paused;

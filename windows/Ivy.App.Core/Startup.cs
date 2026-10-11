@@ -38,4 +38,31 @@ public static class StartupCommand
 
     public static bool IsMinimizedLaunch(IEnumerable<string> args) =>
         args.Any(a => string.Equals(a, MinimizedSwitch, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// For a second launch redirected to the running instance: true when the running instance should show its window.
+    /// <paramref name="commandLine"/> is the redirected launch's full command line (exe path included, as
+    /// AppLifecycle reports it), or null when it was not a plain launch (then the window is shown). A Run-key
+    /// launch (<c>--minimized</c>) leaves the tray instance hidden; a double-click on the exe brings the window up.
+    /// </summary>
+    public static bool ShouldShowWindowOnRedirect(string? commandLine) =>
+        commandLine is null || !IsMinimizedLaunch(SplitArgs(commandLine));
+
+    /// <summary>Whitespace-separated tokens with double quotes grouping (enough to find a switch; not a full CommandLineToArgvW).</summary>
+    private static IEnumerable<string> SplitArgs(string commandLine)
+    {
+        var current = new System.Text.StringBuilder();
+        var quoted = false;
+        foreach (var c in commandLine)
+        {
+            if (c == '"') { quoted = !quoted; continue; }
+            if (char.IsWhiteSpace(c) && !quoted)
+            {
+                if (current.Length > 0) { yield return current.ToString(); current.Clear(); }
+                continue;
+            }
+            current.Append(c);
+        }
+        if (current.Length > 0) yield return current.ToString();
+    }
 }

@@ -89,7 +89,11 @@ public partial class App : Application
             _windowEvents = new WindowEventLog(_window, _window.Hwnd, _log);
 
             _tray = new TrayIcon(AppPaths.IconPath, "IVY", ShowWindow, TrayMenu, e => _log?.LogError(e, "tray handler failed"), _log);
-            Program.RedirectedActivation += (_, _) => _dispatcher.TryEnqueue(ShowWindow);
+            // A redirected Run-key launch (--minimized, e.g. after fast startup) leaves the tray instance hidden.
+            Program.RedirectedActivation += (_, commandLine) =>
+            {
+                if (StartupCommand.ShouldShowWindowOnRedirect(commandLine)) _dispatcher.TryEnqueue(ShowWindow);
+            };
 
             await _vm.StartAsync();
             _timer = _dispatcher.CreateTimer();

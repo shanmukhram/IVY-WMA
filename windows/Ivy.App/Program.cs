@@ -13,8 +13,11 @@ public static class Program
 {
     private const string InstanceKey = "IVY.Windows.Main";
 
-    /// <summary>Raised in the main instance (on a worker thread) when another launch was redirected to it.</summary>
-    internal static event EventHandler? RedirectedActivation;
+    /// <summary>
+    /// Raised in the main instance (on a worker thread) when another launch was redirected to it. The argument is that
+    /// launch's command line, or null when it was not a plain launch (see StartupCommand.ShouldShowWindowOnRedirect).
+    /// </summary>
+    internal static event EventHandler<string?>? RedirectedActivation;
 
     [STAThread]
     private static int Main(string[] args)
@@ -44,7 +47,7 @@ public static class Program
         }
         if (main.IsCurrent)
         {
-            main.Activated += (_, _) => RedirectedActivation?.Invoke(null, EventArgs.Empty);
+            main.Activated += (_, e) => RedirectedActivation?.Invoke(null, LaunchCommandLine(e));
             return false;
         }
 
@@ -54,5 +57,22 @@ public static class Program
         // Redirect off the STA thread and wait (the wait pumps COM), as the AppLifecycle docs recommend.
         Task.Run(() => main.RedirectActivationToAsync(activation).AsTask()).Wait();
         return true;
+    }
+
+    /// <summary>The redirected launch's command line, or null for any other activation kind (or if it cannot be read).</summary>
+    private static string? LaunchCommandLine(AppActivationArguments args)
+    {
+        try
+        {
+            return args.Kind == ExtendedActivationKind.Launch
+                && args.Data is Windows.ApplicationModel.Activation.ILaunchActivatedEventArgs launch
+                ? launch.Arguments ?? ""
+                : null;
+        }
+        catch (Exception e)
+        {
+            AppPaths.AppendCrash("reading redirected activation arguments failed", e);
+            return null;
+        }
     }
 }
