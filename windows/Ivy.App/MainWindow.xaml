@@ -136,6 +136,7 @@
                         IsTitleBarAutoPaddingEnabled="False"
                         AlwaysShowHeader="False"
                         SelectionChanged="NavView_SelectionChanged"
+                        PaneClosing="NavView_PaneClosing"
                         Expanding="NavView_Expanding"
                         Collapsed="NavView_Collapsed"
                         ItemInvoked="NavView_ItemInvoked">
@@ -199,10 +200,6 @@
                 <NavigationViewItem x:Name="LockNavItem" Tag="lock" SelectsOnInvoked="False"
                                     AutomationProperties.Name="IVY"
                                     Visibility="{x:Bind ViewModel.ShowLocked, Mode=OneWay}">
-                    <!-- Compact pane (locked): the tile is empty except for a faint ellipsis on the hint presses. -->
-                    <NavigationViewItem.Icon>
-                        <FontIcon Glyph="&#xE712;" Opacity="0.5" Visibility="{x:Bind ViewModel.Lock.ShowHint, Mode=OneWay}" />
-                    </NavigationViewItem.Icon>
                     <StackPanel>
                         <TextBlock Text="IVY" />
                         <TextBlock Text="&#x2026;" Opacity="0.5" Foreground="{ThemeResource TextFillColorSecondaryBrush}"

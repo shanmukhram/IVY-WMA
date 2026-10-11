@@ -41,6 +41,10 @@ public sealed partial class MainWindow : Window
     /// </summary>
     private static readonly Type CoverSurfaceType = typeof(CoverPage);
 
+    /// <summary>Open pane width when unlocked (matches OpenPaneLength in MainWindow.xaml) and the narrow strip used while locked.</summary>
+    private const double NormalPaneLength = 264;
+    private const double LockedPaneLength = 112;
+
     /// <summary>True while a passphrase dialog is open, so two are never shown at once.</summary>
     private bool _promptOpen;
 
@@ -106,24 +110,30 @@ public sealed partial class MainWindow : Window
         if (e.PropertyName is nameof(MainViewModel.ShowLocked) or nameof(MainViewModel.ShowMain)) ApplyPaneMode();
     }
 
-    /// <summary>Locked: the pane stays compact and cannot be expanded. Otherwise the normal open left pane.</summary>
+    /// <summary>Locked: the pane cannot be collapsed by the user (also blocks programmatic/keyboard closing).</summary>
+    private void NavView_PaneClosing(NavigationView sender, NavigationViewPaneClosingEventArgs args)
+    {
+        if (ViewModel.ShowLocked) args.Cancel = true;
+    }
+
+    /// <summary>Locked: a narrow, always-open pane that still shows item text. Otherwise the normal full-width open left pane.</summary>
     private void ApplyPaneMode()
     {
         _syncing = true;
         try
         {
+            NavView.PaneDisplayMode = NavigationViewPaneDisplayMode.Left;
             if (ViewModel.ShowLocked)
             {
-                NavView.PaneDisplayMode = NavigationViewPaneDisplayMode.LeftCompact;
-                NavView.IsPaneOpen = false;
                 NavView.IsPaneToggleButtonVisible = false;
+                NavView.OpenPaneLength = LockedPaneLength;
             }
             else
             {
-                NavView.PaneDisplayMode = NavigationViewPaneDisplayMode.Left;
                 NavView.IsPaneToggleButtonVisible = true;
-                NavView.IsPaneOpen = true;
+                NavView.OpenPaneLength = NormalPaneLength;
             }
+            NavView.IsPaneOpen = true;
         }
         finally
         {
