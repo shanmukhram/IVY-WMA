@@ -55,6 +55,8 @@ public static class Ui
 
     public static Visibility VisibleWhen(bool value) => value ? Visibility.Visible : Visibility.Collapsed;
 
+    public static Visibility VisibleWhenEither(bool a, bool b) => a || b ? Visibility.Visible : Visibility.Collapsed;
+
     public static Visibility CollapsedWhen(bool value) => value ? Visibility.Collapsed : Visibility.Visible;
 
     public static bool Not(bool value) => !value;

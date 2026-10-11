@@ -83,7 +83,8 @@ public partial class App : Application
             var picker = new FolderPickerService(() => _window?.Hwnd ?? IntPtr.Zero);
             _vm = new MainViewModel(_view, _host, new DispatcherQueueUiDispatcher(_dispatcher), new RegistryStartupRegistration(),
                 picker.PickAsync, AppPaths.ExePath, AppPaths.Version, openFile: OpenInShell, log: _loggers.CreateLogger("Ivy.App.Ui"),
-                folders: new AppFolders(AppPaths.DataDirectory, AppPaths.LogDirectory)); // Settings > Advanced (Open uses ShellExecute)
+                folders: new AppFolders(AppPaths.DataDirectory, AppPaths.LogDirectory), // Settings > Advanced (Open uses ShellExecute)
+                lockStore: new DpapiWindowLockStore(AppPaths.KeysDirectory)); // window privacy lock; capture never reads it
             _window = new MainWindow(_vm);
             _window.AppWindow.Closing += OnWindowClosing;
             _windowEvents = new WindowEventLog(_window, _window.Hwnd, _log);
@@ -118,8 +119,9 @@ public partial class App : Application
         using (UiBreadcrumb.Enter("OnTick"))
         {
             _lastTickAt = DateTimeOffset.UtcNow;
-            // The tray applies it (on its own thread) only when the text changed.
-            if (_tray is not null) _tray.Tooltip = "IVY: " + _vm.RunStateText + ", " + _vm.PendingObjectsText + " queued";
+            // The tooltip is kept bare on purpose: just "IVY", no run state or queue count. The tray applies it
+            // (on its own thread) only when the text changed, so this assignment stays cheap.
+            if (_tray is not null) _tray.Tooltip = "IVY";
             // Hidden: refresh every 10 s only, to keep the tray tooltip roughly current. The workers do not depend on this timer.
             if (!_window.AppWindow.IsVisible && ++_hiddenTicks % 10 != 0) return;
         }
@@ -132,18 +134,15 @@ public partial class App : Application
     private UiSample SampleUi() => new(_vm?.Feed.Items.Count ?? 0, _window?.AppWindow.IsVisible == true, _lastTickAt);
 
     /// <summary>
-    /// Runs on the tray thread: reads cached state only (labels, the cached paired flag). The actions run on the UI
-    /// thread (the tray marshals them through the DispatcherQueue).
+    /// Runs on the tray thread. The menu is deliberately bare (Open and Quit) so the tray reveals nothing about
+    /// the backup; pause and sync live in the window. The actions run on the UI thread (the tray marshals them
+    /// through the DispatcherQueue).
     /// </summary>
     private IReadOnlyList<TrayMenuItem> TrayMenu()
     {
-        var paired = _view?.IsPaired == true;
         return new[]
         {
             new TrayMenuItem("Open", ShowWindow),
-            new TrayMenuItem(_vm?.PauseMenuText ?? "Pause", () => _vm?.TogglePause(), paired),
-            new TrayMenuItem("Sync now", () => _vm?.SyncNowCommand.Execute(null), paired && _vm?.SyncNowCommand.CanExecute(null) == true),
-            TrayMenuItem.Separator,
             new TrayMenuItem("Quit", () => _ = QuitAsync()),
         };
     }
@@ -172,6 +171,7 @@ public partial class App : Application
         if (_quitting) return;
         _log?.LogInformation("window: close requested; hiding to the tray");
         args.Cancel = true;
+        _vm?.Lock.Lock(); // closing to the tray locks the window again; workers and capture are untouched
         sender.Hide();
     }
 

@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using Ivy.App.Core.ViewModels;
+using Ivy.App.Core.WindowLock;
 using Ivy.App.Pages;
 using Ivy.App.Platform;
 using Microsoft.UI;
@@ -35,6 +36,14 @@ public sealed partial class MainWindow : Window
         [NavPages.Activity] = typeof(ActivityPage),
     };
 
+    /// <summary>
+    /// The one place the locked window's content page is named. A later phase can swap the page type here.
+    /// </summary>
+    private static readonly Type CoverSurfaceType = typeof(CoverPage);
+
+    /// <summary>True while a passphrase dialog is open, so two are never shown at once.</summary>
+    private bool _promptOpen;
+
     /// <summary>Set while this class changes the NavigationView itself, so its events do not echo back.</summary>
     private bool _syncing;
 
@@ -64,6 +73,8 @@ public sealed partial class MainWindow : Window
         Root.ActualThemeChanged += (_, _) => UpdateCaptionButtons();
         ViewModel.Appearance.PropertyChanged += OnAppearanceChanged;
         ViewModel.Navigation.PropertyChanged += OnNavigationChanged;
+        ViewModel.PropertyChanged += OnViewModelChanged;
+        ViewModel.Lock.PropertyChanged += OnLockChanged;
         SyncExpanded();
         SyncSelection();
     }
@@ -78,6 +89,50 @@ public sealed partial class MainWindow : Window
     {
         if (_syncing) return;
         if (args.SelectedItemContainer?.Tag is string tag) ViewModel.Navigation.Select(tag);
+    }
+
+    /// <summary>Pressing the plain "IVY" entry while locked. ItemInvoked fires once per mouse click or Enter/Space, so each activation counts once.</summary>
+    private void NavView_ItemInvoked(NavigationView sender, NavigationViewItemInvokedEventArgs args)
+    {
+        if (ReferenceEquals(args.InvokedItemContainer, LockNavItem)) ViewModel.Lock.Press();
+    }
+
+    // ---------------------------------------------------------------- window lock
+
+    private void OnViewModelChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(MainViewModel.ShowLocked)) SyncSelection();
+    }
+
+    private void OnLockChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(WindowLockViewModel.Prompt) && ViewModel.Lock.Prompt != LockPrompt.None) _ = ShowPromptAsync();
+    }
+
+    /// <summary>Open the passphrase dialog for the current prompt. Never two at once.</summary>
+    private async Task ShowPromptAsync()
+    {
+        if (_promptOpen) return;
+        var mode = ViewModel.Lock.Prompt;
+        if (Root.XamlRoot is null)
+        {
+            ViewModel.Lock.CancelPrompt();
+            return;
+        }
+        _promptOpen = true;
+        try
+        {
+            var dialog = new PassphraseDialog(ViewModel.Lock, mode)
+            {
+                XamlRoot = Root.XamlRoot,
+                RequestedTheme = Root.RequestedTheme,
+            };
+            await dialog.ShowAsync();
+        }
+        finally
+        {
+            _promptOpen = false;
+        }
     }
 
     private void NavView_Expanding(NavigationView sender, NavigationViewItemExpandingEventArgs args)
@@ -101,6 +156,13 @@ public sealed partial class MainWindow : Window
     /// <summary>Select the item for the view model's page and show that page in the Frame.</summary>
     private void SyncSelection()
     {
+        if (ViewModel.ShowLocked)
+        {
+            // Locked: the content area shows only the blank cover page; the selected page comes back on unlock.
+            if (ContentFrame.CurrentSourcePageType != CoverSurfaceType)
+                ContentFrame.Navigate(CoverSurfaceType, null, new SuppressNavigationTransitionInfo());
+            return;
+        }
         var tag = ViewModel.Navigation.SelectedPage;
         var item = FindItem(tag);
         _syncing = true;

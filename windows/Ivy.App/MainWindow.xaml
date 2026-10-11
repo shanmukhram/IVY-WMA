@@ -55,9 +55,9 @@
                         <FontIcon Glyph="&#xE71B;" FontSize="22" Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" />
                     </Border>
                     <StackPanel Spacing="4">
-                        <TextBlock Text="Pair this PC with your Mac" Style="{StaticResource SubtitleTextBlockStyle}" />
+                        <TextBlock Text="Pair with your Mac" Style="{StaticResource SubtitleTextBlockStyle}" />
                         <TextBlock Style="{StaticResource BodyTextBlockStyle}" TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                   Text="On the Mac, add a Windows device and copy the pairing string. Paste it here. This is the only thing you ever type on Windows." />
+                                   Text="Enter the pairing code here." />
                     </StackPanel>
 
                     <StackPanel Spacing="6">
@@ -128,7 +128,7 @@
 
         <!-- ============ Paired: navigation shell ============ -->
         <NavigationView x:Name="NavView" Grid.Row="1"
-                        Visibility="{x:Bind ViewModel.ShowMain, Mode=OneWay}"
+                        Visibility="{x:Bind local:Ui.VisibleWhenEither(ViewModel.ShowMain, ViewModel.ShowLocked), Mode=OneWay}"
                         PaneDisplayMode="Left"
                         OpenPaneLength="264"
                         IsBackButtonVisible="Collapsed"
@@ -137,14 +137,15 @@
                         AlwaysShowHeader="False"
                         SelectionChanged="NavView_SelectionChanged"
                         Expanding="NavView_Expanding"
-                        Collapsed="NavView_Collapsed">
+                        Collapsed="NavView_Collapsed"
+                        ItemInvoked="NavView_ItemInvoked">
             <NavigationView.MenuItems>
-                <NavigationViewItem Content="Overview" Tag="overview" AccessKey="O">
+                <NavigationViewItem Content="Overview" Tag="overview" AccessKey="O" Visibility="{x:Bind ViewModel.ShowMain, Mode=OneWay}">
                     <NavigationViewItem.Icon>
                         <FontIcon Glyph="&#xE80F;" />
                     </NavigationViewItem.Icon>
                 </NavigationViewItem>
-                <NavigationViewItem x:Name="CollectorsGroupItem" Content="Collectors" Tag="collectors" SelectsOnInvoked="False" AccessKey="L">
+                <NavigationViewItem x:Name="CollectorsGroupItem" Content="Collectors" Tag="collectors" SelectsOnInvoked="False" AccessKey="L" Visibility="{x:Bind ViewModel.ShowMain, Mode=OneWay}">
                     <NavigationViewItem.Icon>
                         <FontIcon Glyph="&#xE8F1;" />
                     </NavigationViewItem.Icon>
@@ -171,7 +172,7 @@
                         </NavigationViewItem>
                     </NavigationViewItem.MenuItems>
                 </NavigationViewItem>
-                <NavigationViewItem x:Name="ConversationsGroupItem" Content="Conversations" Tag="conversations" SelectsOnInvoked="False" AccessKey="V">
+                <NavigationViewItem x:Name="ConversationsGroupItem" Content="Conversations" Tag="conversations" SelectsOnInvoked="False" AccessKey="V" Visibility="{x:Bind ViewModel.ShowMain, Mode=OneWay}">
                     <NavigationViewItem.Icon>
                         <FontIcon Glyph="&#xE8F2;" />
                     </NavigationViewItem.Icon>
@@ -181,12 +182,12 @@
                         <NavigationViewItem x:Name="LineNavItem" Content="LINE" Tag="line" />
                     </NavigationViewItem.MenuItems>
                 </NavigationViewItem>
-                <NavigationViewItem Content="Transfers" Tag="transfers" AccessKey="T">
+                <NavigationViewItem Content="Transfers" Tag="transfers" AccessKey="T" Visibility="{x:Bind ViewModel.ShowMain, Mode=OneWay}">
                     <NavigationViewItem.Icon>
                         <FontIcon Glyph="&#xE898;" />
                     </NavigationViewItem.Icon>
                 </NavigationViewItem>
-                <NavigationViewItem Content="Settings" Tag="settings" AccessKey="S">
+                <NavigationViewItem Content="Settings" Tag="settings" AccessKey="S" Visibility="{x:Bind ViewModel.ShowMain, Mode=OneWay}">
                     <NavigationViewItem.Icon>
                         <FontIcon Glyph="&#xE713;" />
                     </NavigationViewItem.Icon>
@@ -194,7 +195,17 @@
             </NavigationView.MenuItems>
 
             <NavigationView.FooterMenuItems>
-                <NavigationViewItem Content="Activity" Tag="activity" AccessKey="A">
+                <!-- Locked window: the only entry. Plain "IVY", no icon. Each activation counts toward the unlock gesture (see ItemInvoked). -->
+                <NavigationViewItem x:Name="LockNavItem" Tag="lock" SelectsOnInvoked="False"
+                                    AutomationProperties.Name="IVY"
+                                    Visibility="{x:Bind ViewModel.ShowLocked, Mode=OneWay}">
+                    <StackPanel>
+                        <TextBlock Text="IVY" />
+                        <TextBlock Text="&#x2026;" Opacity="0.5" Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                   Visibility="{x:Bind ViewModel.Lock.ShowHint, Mode=OneWay}" />
+                    </StackPanel>
+                </NavigationViewItem>
+                <NavigationViewItem Content="Activity" Tag="activity" AccessKey="A" Visibility="{x:Bind ViewModel.ShowMain, Mode=OneWay}">
                     <NavigationViewItem.Icon>
                         <FontIcon Glyph="&#xE81C;" />
                     </NavigationViewItem.Icon>
@@ -203,7 +214,7 @@
 
             <!-- Run state at the bottom of the pane: always visible, one line. -->
             <NavigationView.PaneFooter>
-                <TextBlock Margin="16,4,16,12" Style="{StaticResource SecondaryTextStyle}" TextTrimming="CharacterEllipsis"><Run Text="{x:Bind ViewModel.RunStateText, Mode=OneWay}" /><Run Text="  ·  " /><Run Text="{x:Bind ViewModel.PendingObjectsText, Mode=OneWay}" /><Run Text=" queued" /></TextBlock>
+                <TextBlock Margin="16,4,16,12" Style="{StaticResource SecondaryTextStyle}" TextTrimming="CharacterEllipsis" Visibility="{x:Bind ViewModel.ShowMain, Mode=OneWay}"><Run Text="{x:Bind ViewModel.RunStateText, Mode=OneWay}" /><Run Text="  ·  " /><Run Text="{x:Bind ViewModel.PendingObjectsText, Mode=OneWay}" /><Run Text=" queued" /></TextBlock>
             </NavigationView.PaneFooter>
 
             <Frame x:Name="ContentFrame" CacheSize="12" />
