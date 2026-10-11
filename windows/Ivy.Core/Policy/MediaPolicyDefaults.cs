@@ -27,16 +27,16 @@ public static class MediaPolicyDefaults
 
     /// <summary>
     /// The user's standard folders to offer as indexed roots: Downloads (where chat apps save files),
-    /// Desktop, Documents and Pictures. Only the ones that exist on this machine are returned, de-duplicated.
-    /// The app seeds its indexed roots from these so the common case needs no manual folder picking (Bunny,
-    /// Oct 11 2026: index Downloads and the media/document folders, since originals now persist in R2).
+    /// Documents and Pictures. Only the ones that exist on this machine are returned, de-duplicated. Desktop
+    /// is deliberately NOT included: on this machine it holds the IVY project checkout (source and build
+    /// output), and indexing it swept in thousands of code files (Bunny, Oct 11 2026 — index Downloads and the
+    /// media/document folders, not Desktop). Originals persist in R2, so these stay a durable backup.
     /// </summary>
     public static IReadOnlyList<string> StandardUserFolders()
     {
         var profile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
         var candidates = new[]
         {
-            Environment.GetFolderPath(Environment.SpecialFolder.Desktop),
             Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
             Environment.GetFolderPath(Environment.SpecialFolder.MyPictures),
             // Downloads has no SpecialFolder enum; it is a known folder under the profile on Windows.
