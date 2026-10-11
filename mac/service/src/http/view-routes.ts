@@ -19,6 +19,10 @@
  *       carry their OCR text
  *   GET /api/views/notification-apps?device=<id|windows|android>
  *       per-app notification counts for one device or role
+ *
+ * Attachment status in these views (and /api/attachments) is the stored state
+ * (indexed / cached / on_demand) with one read-time refinement, phone_only (see
+ * attachmentStatusSql).
  */
 import type { FastifyInstance } from "fastify";
 import type { Service } from "../service.ts";
@@ -39,6 +43,27 @@ function deviceWhere(col: string, device: string | undefined): { sql: string; ar
   if (!device) return null;
   if (ROLE_RE.test(device)) return { sql: `${col} IN (SELECT id FROM devices WHERE role = ?)`, args: [device] };
   return { sql: `${col} = ?`, args: [device] };
+}
+
+/** The source session of the LINE for Windows collector. */
+export const LINE_WINDOWS_SOURCE = "windows:line-desktop";
+
+/**
+ * SQL for an attachment's shown status (`a` = the attachments row alias). It is the stored
+ * status, except that an attachment with no original on its way (stored 'on_demand') whose
+ * message was delivered only by LINE for Windows reads 'phone_only': LINE for Windows keeps no
+ * inline media on disk (PLAN decision 12), so no PC request can fetch it; the original lives on
+ * the phone and arrives when the Android adapter imports LINE. Once any other source (e.g.
+ * Android) has delivered the message, or a blob is on its way (indexed / cached), the stored
+ * status stands. Derived at read time rather than stored, so the stored status keeps meaning
+ * only "where the bytes are in the ingest pipeline" and the attachments CHECK constraint and
+ * blob placement code are unchanged.
+ */
+export function attachmentStatusSql(a = "a"): string {
+  return `CASE WHEN ${a}.status = 'on_demand'
+      AND EXISTS (SELECT 1 FROM message_sources ps WHERE ps.message_id = ${a}.message_id AND ps.source_session = '${LINE_WINDOWS_SOURCE}')
+      AND NOT EXISTS (SELECT 1 FROM message_sources ps WHERE ps.message_id = ${a}.message_id AND ps.source_session <> '${LINE_WINDOWS_SOURCE}')
+    THEN 'phone_only' ELSE ${a}.status END`;
 }
 
 export function registerViewRoutes(app: FastifyInstance, svc: Service): void {
@@ -137,8 +162,8 @@ export function registerViewRoutes(app: FastifyInstance, svc: Service): void {
                                        SUM(edited_at IS NOT NULL) AS edited, SUM(source_status = 'deleted_at_source') AS deletedAtSource,
                                        SUM(text_quality = 'preview') AS previewOnly
                                 FROM messages WHERE conversation_id = ? AND deleted_at IS NULL`).get(id) as Record<string, number | string | null>;
-    const attachments = db().prepare(`SELECT a.status, COUNT(*) AS n FROM attachments a JOIN messages m ON m.id = a.message_id
-                                      WHERE m.conversation_id = ? AND a.deleted_at IS NULL AND m.deleted_at IS NULL GROUP BY a.status`).all(id) as Array<{ status: string; n: number }>;
+    const attachments = db().prepare(`SELECT ${attachmentStatusSql("a")} AS status, COUNT(*) AS n FROM attachments a JOIN messages m ON m.id = a.message_id
+                                      WHERE m.conversation_id = ? AND a.deleted_at IS NULL AND m.deleted_at IS NULL GROUP BY 1`).all(id) as Array<{ status: string; n: number }>;
     const perSource = db().prepare(`SELECT ms.source_session AS source, COUNT(*) AS messages, MIN(m.sent_at) AS firstMessageAt, MAX(m.sent_at) AS lastMessageAt,
                                            SUM(ms.source_deleted_at IS NOT NULL) AS deletedThere, MAX(ms.last_seen_at) AS lastSeenAt
                                     FROM message_sources ms JOIN messages m ON m.id = ms.message_id
@@ -197,8 +222,8 @@ export function registerViewRoutes(app: FastifyInstance, svc: Service): void {
     }>;
     const attByMsg = new Map<string, Array<Record<string, unknown>>>();
     if (rows.length) {
-      const atts = db().prepare(`SELECT id, message_id AS messageId, kind, filename, status, local_path AS localPath
-                                 FROM attachments WHERE deleted_at IS NULL AND message_id IN (${rows.map(() => "?").join(",")}) ORDER BY rid`)
+      const atts = db().prepare(`SELECT a.id, a.message_id AS messageId, a.kind, a.filename, ${attachmentStatusSql("a")} AS status, a.local_path AS localPath
+                                 FROM attachments a WHERE a.deleted_at IS NULL AND a.message_id IN (${rows.map(() => "?").join(",")}) ORDER BY a.rid`)
         .all(...rows.map((m) => m.id)) as Array<{ id: string; messageId: string; kind: string; filename: string; status: string; localPath: string | null }>;
       for (const a of atts) {
         const l = attByMsg.get(a.messageId) ?? [];

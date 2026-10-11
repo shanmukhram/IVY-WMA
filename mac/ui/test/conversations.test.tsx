@@ -206,3 +206,33 @@ describe("conversations: two panes, profile on demand", () => {
     expect(hashColor("Aki")).toBe(hashColor("Aki"));
   });
 });
+
+describe("conversations: LINE for Windows attachment originals", () => {
+  it("labels a phone_only attachment as 'original on the phone', keeping its kind, with no request control", async () => {
+    const lineChat = {
+      id: "p1", platform: "line", account: ME, convKey: "k-p1", peer: "Aki", title: "Aki", kind: "dm", coverage: "partial",
+      coverageSources: [{ source: "windows:line-desktop", coverage: "partial" }], coverageText: "partial via windows:line-desktop", source: "windows:line-desktop",
+      messageCount: 1, lastAt: "2026-10-09T10:00:00.000Z", lastMessageAt: "2026-10-09T10:00:00.000Z", lastMessage: null,
+    };
+    const api = mockApi({
+      "GET /api/views/chats": { total: 1, page: 1, pages: 1, items: [lineChat] },
+      "GET /api/views/chats/p1/messages": { around: null, conversation: { ...lineChat, conv_key: "k-p1" }, messages: [
+        msg("y1", "Aki", "2026-10-09T10:00:00.000Z", "", { sentAt: "2026-10-09T10:00:00.000Z", sources: [{ source: "windows:line-desktop", deletedAtSource: null }],
+          attachments: [{ id: "v1", kind: "video", filename: "clip.mp4", status: "phone_only", imageUrl: null }] }),
+      ] },
+      "GET /api/attachments": { items: [] },
+      "GET /api/views/chats/p1/profile": { conversation: lineChat, title: "Aki", messageCount: 1, firstAt: null, lastAt: null, edited: 0, deletedAtSource: 0,
+        attachments: { phone_only: 1 }, sources: [{ source: "windows:line-desktop", coverage: "partial", messages: 1, deletedThere: 0 }], senders: [] },
+    });
+    renderWith(<ConversationsView />, api, { path: "/conversations?source=windows:line-desktop&platform=line" });
+    const log = await screen.findByRole("log", { name: "Messages" });
+    const chip = await within(log).findByTestId("attachment");
+    expect(chip).toHaveTextContent(/clip\.mp4.*video · original on the phone/);
+    expect(chip).not.toHaveTextContent(/on demand/);
+    expect(within(chip).queryByRole("button")).toBeNull();
+    // the profile counts it the same way
+    await userEvent.setup().click(screen.getByRole("button", { name: "About Aki" }));
+    const profile = await screen.findByRole("complementary", { name: "Profile" });
+    expect(profile).toHaveTextContent("1 with original on the phone");
+  });
+});

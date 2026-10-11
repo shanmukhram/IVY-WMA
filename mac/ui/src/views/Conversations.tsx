@@ -51,6 +51,10 @@ export interface Msg {
   sources?: Array<{ source: string; deletedAtSource: string | null }>; attachments?: Att[];
 }
 interface Att { id: string; messageId?: string; kind: string; filename: string; imageUrl?: string | null; status: string; size?: number | null }
+/** Where an attachment's original is. phone_only: captured by LINE for Windows, which keeps no
+ *  inline media on disk (PLAN decision 12); the original is on the phone, not fetchable from the PC. */
+export const attStatusLabel = (status: string) =>
+  status === "cached" ? "cached locally" : status === "on_demand" ? "on device (on demand)" : status === "phone_only" ? "original on the phone" : "indexed";
 
 const covTone = (c: string) => (c === "complete" ? "green" : c === "partial" ? "amber" : undefined) as "green" | "amber" | undefined;
 export const chatName = (c: Pick<Chat, "peer" | "chatTitle" | "convKey" | "title">) => c.title ?? c.peer ?? c.chatTitle ?? c.convKey;
@@ -445,7 +449,7 @@ function Thread({ id, around, hintAvatar, onOpenProfile, onJumpLatest }: { id: s
                         </button>
                       ) : (
                         <span key={a.id} className="att-chip" data-testid="attachment"><Icon name="paperclip" size={12} />{a.filename}
-                          <span className="att-status">{a.kind} · {a.status === "cached" ? "cached locally" : a.status === "on_demand" ? "on device (on demand)" : "indexed"}</span></span>
+                          <span className="att-status">{a.kind} · {attStatusLabel(a.status)}</span></span>
                       )))}</div>
                     )}
                   </div>
@@ -529,7 +533,7 @@ function ProfileSheet({ id, onClose }: { id: string; onClose: () => void }) {
               <div className="group-row"><span className="row-label muted">Last message</span><span className="tnum small" title={fmtTime(lastAt)}>{friendlyTime(lastAt)}</span></div>
               {(d.edited > 0 || d.deletedAtSource > 0) && <div className="group-row"><span className="row-label muted">Edited · deleted at source</span><span className="tnum">{d.edited} · {d.deletedAtSource}</span></div>}
               {Object.keys(d.attachments ?? {}).length > 0 && (
-                <div className="group-row"><span className="row-label muted">Attachments</span><span className="small">{Object.entries(d.attachments).map(([k, n]) => `${n} ${k.replace("_", " ")}`).join(" · ")}</span></div>
+                <div className="group-row"><span className="row-label muted">Attachments</span><span className="small">{Object.entries(d.attachments).map(([k, n]) => `${n} ${k === "phone_only" ? "with original on the phone" : k.replace("_", " ")}`).join(" · ")}</span></div>
               )}
             </div>
           </div>

@@ -19,6 +19,7 @@ import { enrich, itemView, type BaseItem } from "../query/details.ts";
 import { TYPE_DEFS, selectList } from "../query/types.ts";
 import { getSetting, setSetting } from "../db/index.ts";
 import { coverageView } from "../query/sources.ts";
+import { attachmentStatusSql } from "./view-routes.ts";
 
 const int = (v: unknown, dflt: number, min: number, max: number): number => {
   const n = v === undefined || v === "" ? NaN : Number(v);
@@ -64,8 +65,8 @@ export function registerUiRoutes(app: FastifyInstance, svc: Service): void {
   app.get("/api/attachments", async (req) => {
     const ids = String((req.query as { message?: string }).message ?? "").split(",").map((s) => s.trim()).filter(Boolean).slice(0, 500);
     if (!ids.length) return { items: [] };
-    const rows = db().prepare(`SELECT id, message_id AS messageId, kind, filename, size, status, local_path IS NOT NULL AS local
-                               FROM attachments WHERE deleted_at IS NULL AND message_id IN (${ids.map(() => "?").join(",")}) ORDER BY rid`).all(...ids);
+    const rows = db().prepare(`SELECT a.id, a.message_id AS messageId, a.kind, a.filename, a.size, ${attachmentStatusSql("a")} AS status, a.local_path IS NOT NULL AS local
+                               FROM attachments a WHERE a.deleted_at IS NULL AND a.message_id IN (${ids.map(() => "?").join(",")}) ORDER BY a.rid`).all(...ids);
     return { items: rows };
   });
 
@@ -110,7 +111,7 @@ export function registerUiRoutes(app: FastifyInstance, svc: Service): void {
     const m = db().prepare("SELECT id, sha256, attachment_id FROM media WHERE id = ?").get(id) as { id: string; sha256: string | null; attachment_id: string | null } | undefined;
     if (!m) return reply.status(404).send({ error: "not_found", message: "no such media" });
     const att = (where: string, arg: unknown) => db().prepare(`
-      SELECT a.id AS attachmentId, a.filename, a.kind, a.status, m.id AS messageId, m.sender, m.sent_at AS sentAt,
+      SELECT a.id AS attachmentId, a.filename, a.kind, ${attachmentStatusSql("a")} AS status, m.id AS messageId, m.sender, m.sent_at AS sentAt,
              c.id AS conversationId, c.platform, c.account, c.peer
       FROM attachments a JOIN messages m ON m.id = a.message_id JOIN conversations c ON c.id = m.conversation_id
       WHERE a.deleted_at IS NULL AND ${where}`).all(arg) as Array<Record<string, unknown>>;
