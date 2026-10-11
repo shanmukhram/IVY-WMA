@@ -80,7 +80,7 @@ Source: Kang, Kim, Hur, Kim, "Forensic Analysis of wxSQLite3-Encrypted Databases
 Corrections to earlier notes: the data lives under `%LocalAppData%\LINE` (Local, not Roaming), and the format is a documented wxSQLite3 database, not an opaque app-internal one. LINE for Windows is a Qt app and ships the QtCipherSQLite plugin.
 
 Layout (matches the probe report exactly):
-- `%LocalAppData%\LINE\Data\db\` holds three `.edb` files per account: `qw<15-byte-hex>.edb` (the chat store — contacts, chats, all history), `keep_<hex>.edb`, `chatStats_<hex>.edb`. The chat store is the one with a `-wal` sidecar; the collector already selects it that way.
+- `%LocalAppData%\LINE\Data\db\` holds three `.edb` files per account: `qw<15-byte-hex>.edb` (the chat store — contacts, chats, all history), `keep_<hex>.edb`, `chatStats_<hex>.edb`. The chat store is the one with a `-wal` sidecar (the `-wal` exists only while LINE is running; LINE folds it into the main file and removes it on quit); the collector already selects it that way.
 - Thumbnails are `.eimg` files under `Cache`, AES-128-ECB, a per-file key deleted from memory after use (out of scope).
 
 Cipher (implemented in `windows/Ivy.Collectors/Line/LineWxCipher.cs`):
@@ -93,3 +93,31 @@ Schema: `_contact(_mid, display name)`, `_chats(_from, _to, content, created tim
 What remains: obtaining the passphrase, which is the one step that is not on disk. The decryptor is ready for it. See the collector integration plan: a key the user supplies once is stored in DPAPI and never uploaded (WX2); the collector decrypts to a temporary plaintext copy, reads it read-only, and deletes the copy.
 
 Poll cadence: LINE is polled every 5 seconds (`pollSeconds`, default 5) so a new message shows up almost at once; each tick snapshots and reads the small store.
+
+## Side file (write-ahead log), verified Oct 11 2026
+
+LINE keeps the chat store in SQLite WAL mode, so recent writes sit in a side file until they are folded into the main file. Before this change the decrypt step read only the main file, which meant new messages stayed invisible until LINE quit.
+
+The unlocker (KeyedLineUnlocker in LineKeyStore.cs) now overlays the committed frames of the snapshot's -wal copy, using LineWal.cs and SQLite's own recovery rules. Salts must match the WAL header. The running checksum, computed over the stored, still-encrypted bytes, must hold. Reading stops at the first bad frame. Only frames up to the last commit frame count, and for a page that appears more than once the later frame wins. Each kept page is decrypted with the same per-page cipher, with page 1 following its special header rule. The plaintext copy is then marked as a rollback-journal database with the real page count, so it opens standalone. The Keep store (EmitKeep) gets the same overlay.
+
+Nothing is guessed. An unfinished or damaged tail is dropped, and an unusable WAL leaves the main file as it was. The live -wal is never read in place; only the snapshot copy is.
+
+Observed on the real store (headers and frame headers only, no content):
+
+| Item | Observed |
+| --- | --- |
+| Main file page size | 4096 bytes |
+| Header bytes 18 and 19 | 2 (WAL mode) |
+| WAL magic | 0x377f0682 (little-endian checksums) |
+| Format and checkpoint sequence | 3007000, sequence 1 |
+| Frames in the WAL | 1003: 778 with current salts, 225 stale-salt |
+| Commit frames | 64 |
+| Database size after last commit | 322 pages (main file: 249) |
+
+The WAL file is reused rather than truncated, so the 225 stale-salt frames from an earlier checkpoint cycle are still present and are skipped by the salt check. A page-1 frame is present, and bytes 16 to 23 of the main file are in the clear with standard SQLite values, which confirms the page-1 rule.
+
+Live result: with LINE open, the main file alone yielded 366 messages across 8 chats. With the side file folded in, it yielded 821. A message sent while LINE stayed open appeared on the next snapshot (822, with the newest timestamp advanced) while the main file was unchanged.
+
+Cadence is the pollSeconds default described above.
+
+Tests: LineTests.cs and LineWalFixture.cs build a real WAL-mode fixture. The cases cover rows that exist only in the WAL on the encrypted and plain paths, a trailing transaction with no commit frame, a frame with a bad checksum, and header edge cases in LineWal.ReadCommitted.
