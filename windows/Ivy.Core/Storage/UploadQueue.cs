@@ -161,6 +161,36 @@ public sealed class UploadQueue
 
     public string FullPathOf(QueueItem item) => Path.Combine(QueueDirectory, item.PartPath);
 
+    /// <summary>
+    /// Drop every still-queued item of a collector and kind, deleting each part file and its row. Used once
+    /// when the catalog switched from one <c>file_meta</c> per file to batched <c>file_catalog</c> records: the
+    /// old per-file records are superseded, so removing them lets the compact batches flow instead of the old
+    /// backlog draining for hours. Items already uploading or done are left alone. Returns how many were dropped.
+    /// </summary>
+    public int PurgeQueued(string collector, Kind kind)
+    {
+        using var c = _db.Open();
+        var partPaths = new List<string>();
+        using (var sel = c.CreateCommand())
+        {
+            sel.CommandText = "SELECT part_path FROM pending_uploads WHERE collector = $c AND kind = $k AND status = 'queued'";
+            sel.Parameters.AddWithValue("$c", collector);
+            sel.Parameters.AddWithValue("$k", kind.WireName());
+            using var r = sel.ExecuteReader();
+            while (r.Read()) partPaths.Add(r.GetString(0));
+        }
+        using (var del = c.CreateCommand())
+        {
+            del.CommandText = "DELETE FROM pending_uploads WHERE collector = $c AND kind = $k AND status = 'queued'";
+            del.Parameters.AddWithValue("$c", collector);
+            del.Parameters.AddWithValue("$k", kind.WireName());
+            var n = del.ExecuteNonQuery();
+            foreach (var p in partPaths)
+                try { var f = Path.Combine(QueueDirectory, p); if (File.Exists(f)) File.Delete(f); } catch { /* best effort; reconcile cleans stragglers */ }
+            return n;
+        }
+    }
+
     private const string Columns = "id, seq, object_key, part_path, size, attempts, status, kind, group_key, collector, created_at, next_attempt_ms, last_error, upload_id, part_size";
 
     private static QueueItem Read(SqliteDataReader r) => new(

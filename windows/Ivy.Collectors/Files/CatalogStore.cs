@@ -16,6 +16,15 @@ internal sealed class CatalogStore
 
     public Batch BeginBatch() => new(_db.Open());
 
+    /// <summary>Forget every catalogued file, so the next scan re-emits all of them (e.g. to re-emit as batches).</summary>
+    public void Clear()
+    {
+        using var c = _db.Open();
+        using var cmd = c.CreateCommand();
+        cmd.CommandText = "DELETE FROM catalog_entry";
+        cmd.ExecuteNonQuery();
+    }
+
     /// <summary>The highest scan generation stored, or 0 when the catalogue is empty. The next pass uses this + 1,
     /// so generations strictly increase regardless of the clock.</summary>
     public long MaxGeneration()

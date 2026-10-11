@@ -71,6 +71,28 @@ public class QueueTests : IDisposable
     }
 
     [Fact]
+    public void PurgeQueued_drops_one_collector_and_kind_leaving_the_rest()
+    {
+        using var p = new AgentProcess(_dir.Path);
+        var catKeys = Enumerable.Range(0, 4).Select(_ => ObjectKeys.Up(Kind.FileMeta, Oids.New())).ToList();
+        foreach (var k in catKeys) p.Queue.EnqueueCiphertext(k, Kind.FileMeta, Envelope(k), "catalog");
+        var filesKey = ObjectKeys.Up(Kind.FileMeta, Oids.New());
+        p.Queue.EnqueueCiphertext(filesKey, Kind.FileMeta, Envelope(filesKey), "files");       // a different collector
+        var msgKey = ObjectKeys.Up(Kind.MessageBatch, Oids.New());
+        p.Queue.EnqueueCiphertext(msgKey, Kind.MessageBatch, Envelope(msgKey, Kind.MessageBatch), "catalog"); // a different kind
+        var catPaths = p.Queue.All().Where(i => i.Collector == "catalog" && i.ObjectKey.Contains("/file/")).Select(p.Queue.FullPathOf).ToList();
+
+        var dropped = p.Queue.PurgeQueued("catalog", Kind.FileMeta);
+
+        Assert.Equal(4, dropped);
+        Assert.All(catPaths, path => Assert.False(File.Exists(path)));          // part files deleted too
+        var left = p.Queue.All().Select(i => i.ObjectKey).ToHashSet();
+        Assert.Contains(filesKey, left);                                        // the files collector's record stays
+        Assert.Contains(msgKey, left);                                          // the message batch stays
+        Assert.All(catKeys, k => Assert.DoesNotContain(k, left));               // every catalog file_meta is gone
+    }
+
+    [Fact]
     public void Group_items_are_strictly_ordered_but_do_not_block_others()
     {
         using var p = new AgentProcess(_dir.Path);

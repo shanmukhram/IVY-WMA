@@ -99,6 +99,7 @@ public sealed class FileCatalogCollector : Collector<FileCatalogSettings>
     {
         var sink = Sink;
         if (sink is null) return Task.CompletedTask; // not paired
+        RebatchIfNeeded();
         AutoScopeIfNeeded();
         var roots = ExistingRoots();
         if (roots.Count == 0)
@@ -121,6 +122,26 @@ public sealed class FileCatalogCollector : Collector<FileCatalogSettings>
     /// the user later clears the roots to turn it off, it stays off. Gated to Windows, so tests on other
     /// platforms never scope to the real machine.
     /// </summary>
+    /// <summary>
+    /// One-time switch from the old per-file catalogue to batched records: drop the previous build's queued
+    /// per-file <c>file_meta</c> catalog records (which would otherwise drain for hours ahead of the compact
+    /// batches) and clear the catalog store so the next pass re-emits everything as <c>file_catalog</c>
+    /// batches. Guarded by a flag so it runs exactly once. Does nothing when there was no old backlog.
+    /// </summary>
+    private void RebatchIfNeeded()
+    {
+        if (Context.Settings.LoadJson(Name, "rebatchV1") is not null) return;
+        Context.Settings.SaveJson(Name, "rebatchV1", JsonValue.Create("1"));
+        var purged = Context.Queue?.PurgeQueued(Name, Kind.FileMeta) ?? 0;
+        if (purged == 0) return; // nothing from the old per-file catalogue was queued
+        _store.Clear();
+        Context.Settings.Save<CatalogScanState>(Name, ScanKey, null);
+        _scan = null;
+        _walk = null;
+        _pendingRescanReason = "rebatch"; // re-walk now and emit compact batches
+        Activity(CollectorActivity.Config, $"re-cataloguing as batches: dropped {purged} old per-file records from the queue");
+    }
+
     private void AutoScopeIfNeeded()
     {
         if (!OperatingSystem.IsWindows()) return;
