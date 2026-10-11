@@ -99,6 +99,7 @@ public sealed class FileCatalogCollector : Collector<FileCatalogSettings>
     {
         var sink = Sink;
         if (sink is null) return Task.CompletedTask; // not paired
+        AutoScopeIfNeeded();
         var roots = ExistingRoots();
         if (roots.Count == 0)
         {
@@ -112,6 +113,28 @@ public sealed class FileCatalogCollector : Collector<FileCatalogSettings>
     }
 
     // ---------------------------------------------------------------- scan
+
+    /// <summary>
+    /// Catalogue the whole PC with no setup: the first time this runs on Windows with no roots configured, set
+    /// the roots to <see cref="MediaPolicyDefaults.CatalogScope"/> (profile + data drives, OS and AppData left
+    /// out) and save them, so browsing everything on the PC is automatic. Runs once (a flag guards it), so if
+    /// the user later clears the roots to turn it off, it stays off. Gated to Windows, so tests on other
+    /// platforms never scope to the real machine.
+    /// </summary>
+    private void AutoScopeIfNeeded()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        if (Settings.Roots.Count > 0) return;
+        if (Context.Settings.LoadJson(Name, "autoScoped") is not null) return;
+        Context.Settings.SaveJson(Name, "autoScoped", JsonValue.Create("1"));
+        var scope = MediaPolicyDefaults.CatalogScope();
+        if (scope.Count == 0) return;
+        var next = GetSettingsJson();
+        next["roots"] = new JsonArray(scope.Select(r => (JsonNode?)r).ToArray());
+        ApplySettings(next);
+        Context.Settings.SaveSettings(Name, next); // persist so it survives a restart
+        Activity(CollectorActivity.Config, $"cataloguing automatically: {string.Join(", ", scope)}");
+    }
 
     private IReadOnlyList<string> ExistingRoots() =>
         Settings.Roots.Where(r => !string.IsNullOrWhiteSpace(r) && _fs.Stat(r) is { IsDirectory: true }).ToList();
