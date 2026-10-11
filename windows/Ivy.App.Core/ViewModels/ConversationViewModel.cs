@@ -92,7 +92,7 @@ public sealed class ConversationViewModel : ObservableObject
     // ---- Telegram page (fourth run): per-chat progress parsed from the collector's detail line -------------
 
     public const string PhoneOnlyNote = "Secret chats live only on the phone. Telegram never syncs them to Telegram Desktop, so they are not captured from Windows.";
-    public const string LineCoverageNote = "Always partial from Windows: LINE for Windows holds only what this PC has synced. The phone has the full history.";
+    public const string LineCoverageNote = "Always partial from Windows: LINE for Windows holds only what this PC has synced. The phone has the full history. Media: only files you saved from a chat (Save or Save As) are captured, through the file index; inline chat-media originals are not kept on this PC and come from the phone.";
     /// <summary><see cref="LineCoverageNote"/> as an instance property (x:Bind on the LINE page).</summary>
     public string LineCoverageText => LineCoverageNote;
     public const string NoProbeYet = "No probe has run on this PC yet.";
