@@ -50,7 +50,9 @@ public class MainViewModelTests
         var vm = Create();
         await vm.StartAsync();
 
-        Assert.True(vm.ShowMain);
+        // The window opens locked by design (PRD "Window privacy lock").
+        Assert.True(vm.ShowLocked);
+        Assert.False(vm.ShowMain);
         Assert.Equal(1, _host.Starts);
         Assert.Equal(new long?[] { 2, 1 }, vm.Feed.Items.Select(i => i.ActivityId).ToArray());
         Assert.Equal(new[] { @"D:\Docs" }, vm.Settings.IndexedRoots.Items);
@@ -264,7 +266,15 @@ public class MainViewModelTests
         Assert.False(vm.Pairing.PairCommand.CanExecute(null));
         Assert.True(vm.Pairing.ContinueCommand.CanExecute(null));
         vm.Pairing.ContinueCommand.Execute(null);
+        // The window opens locked by design (PRD "Window privacy lock").
+        Assert.True(vm.ShowLocked);
+        Assert.False(vm.ShowMain);
+        // The main panel is still reachable: the gesture, then a first passphrase, reveals it.
+        for (var i = 0; i < Ivy.App.Core.WindowLock.UnlockGesture.PressCount; i++) vm.Lock.Press();
+        Assert.True(vm.Lock.SetPassphrase("test passphrase", "test passphrase"));
         Assert.True(vm.ShowMain);
+        Assert.False(vm.ShowLocked);
+        Assert.False(vm.ShowPairing);
     }
 
     [Fact]

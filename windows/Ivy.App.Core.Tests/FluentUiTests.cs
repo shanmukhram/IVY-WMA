@@ -493,7 +493,9 @@ public class PageViewModelTests
     {
         var vm = Create();
         await vm.StartAsync();
-        Assert.True(vm.ShowMain);
+        // The window opens locked by design (PRD "Window privacy lock").
+        Assert.True(vm.ShowLocked);
+        Assert.False(vm.ShowMain);
         Assert.True(vm.UnpairCommand.CanExecute(null));
 
         await vm.UnpairAsync();

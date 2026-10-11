@@ -3,6 +3,7 @@ using System.Collections.ObjectModel;
 using System.Diagnostics;
 using Ivy.App.Core.Diagnostics;
 using Ivy.App.Core.Hosting;
+using Ivy.App.Core.WindowLock;
 using Ivy.Core.Storage;
 using Ivy.Core.Upload;
 using Microsoft.Extensions.Logging;
@@ -55,7 +56,7 @@ public sealed class MainViewModel : ObservableObject
 
     public MainViewModel(IAgentView agent, ICollectorHostView host, IUiDispatcher ui, IStartupRegistration startup,
         Func<Task<string?>> pickFolder, string exePath, string appVersion, TimeProvider? time = null, Action<string>? openFile = null,
-        ILogger? log = null, AppFolders? folders = null)
+        ILogger? log = null, AppFolders? folders = null, IWindowLockStore? lockStore = null)
     {
         _agent = agent;
         _log = log;
@@ -83,6 +84,14 @@ public sealed class MainViewModel : ObservableObject
             LastHostWork = OnPairedAsync();
         };
         Pairing.Continued += (_, _) => ShowMain = true;
+        // The window lock only changes what this window shows; nothing else in this class reads it.
+        Lock = new WindowLockViewModel(lockStore ?? new InMemoryWindowLockStore(), log);
+        Lock.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName != nameof(WindowLockViewModel.IsLocked)) return;
+            Raise(nameof(ShowLocked));
+            Raise(nameof(ShowMain));
+        };
     }
 
     public string AppVersion { get; }
@@ -135,16 +144,29 @@ public sealed class MainViewModel : ObservableObject
         if (path.Length > 0) _openFile?.Invoke(path);
     }
 
-    /// <summary>Paired and past the fingerprint confirmation: show the status panel instead of the pairing panel.</summary>
+    /// <summary>
+    /// The window privacy lock (PRD Part 1 "App UI"). It hides the status panel behind a neutral cover until the
+    /// owner's passphrase is entered. It does not gate the pairing panel: a fresh install must be able to pair.
+    /// </summary>
+    public WindowLockViewModel Lock { get; }
+
+    /// <summary>
+    /// Paired, past the fingerprint confirmation, and the window lock is open: show the status panel. The setter
+    /// records only the paired-and-confirmed half; the lock supplies the other half.
+    /// </summary>
     public bool ShowMain
     {
-        get => _showMain;
+        get => _showMain && !Lock.IsLocked;
         private set
         {
-            if (Set(ref _showMain, value)) Raise(nameof(ShowPairing));
+            if (!Set(ref _showMain, value)) return;
+            Raise(nameof(ShowPairing));
+            Raise(nameof(ShowLocked));
         }
     }
     public bool ShowPairing => !_showMain;
+    /// <summary>Paired and confirmed, but the window lock is closed: show the neutral cover instead of the status panel.</summary>
+    public bool ShowLocked => _showMain && Lock.IsLocked;
 
     /// <summary>Global Paused/Running toggle: pauses both capture (collector host) and uploads (uploader).</summary>
     public bool IsRunning
