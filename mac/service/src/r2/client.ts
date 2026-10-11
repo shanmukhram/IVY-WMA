@@ -5,7 +5,7 @@
  * unbounded memory.
  */
 import {
-  S3Client, ListObjectsV2Command, GetObjectCommand, PutObjectCommand, DeleteObjectCommand,
+  S3Client, ListObjectsV2Command, GetObjectCommand, PutObjectCommand, DeleteObjectCommand, DeleteObjectsCommand,
 } from "@aws-sdk/client-s3";
 import type { Readable } from "node:stream";
 
@@ -85,6 +85,21 @@ export class Bucket {
 
   async delete(key: string): Promise<void> {
     await this.s3.send(new DeleteObjectCommand({ Bucket: this.name, Key: key }));
+  }
+
+  /**
+   * Delete many objects in as few round-trips as possible (S3 DeleteObjects takes up to 1000 keys per call).
+   * Deleting committed objects one at a time is the ingest bottleneck; this turns a backlog's worth of
+   * deletes into a handful of calls. Returns the keys that failed, so the caller can retry them next pass.
+   */
+  async deleteMany(keys: string[]): Promise<string[]> {
+    const failed: string[] = [];
+    for (let i = 0; i < keys.length; i += 1000) {
+      const chunk = keys.slice(i, i + 1000);
+      const r = await this.s3.send(new DeleteObjectsCommand({ Bucket: this.name, Delete: { Objects: chunk.map((Key) => ({ Key })), Quiet: true } }));
+      for (const e of r.Errors ?? []) if (e.Key) failed.push(e.Key);
+    }
+    return failed;
   }
 
   close(): void { this.s3.destroy(); }

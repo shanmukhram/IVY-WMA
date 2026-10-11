@@ -314,6 +314,7 @@ export class Ingester {
         tally(out);
         if (out === "committed" || out === "replayed") seeOid(o.oid);
       }
+      await this.flushDeletes(src.bucketName); // one batched delete per window, not one round-trip per object
     }
     for (const [oid, g] of [...blobs.entries()].sort(([a], [b]) => (a < b ? -1 : 1))) {
       // a completed media original is kept in R2 (PLAN decision 6): its manifest and parts are
@@ -343,6 +344,8 @@ export class Ingester {
       const b = getBlob(this.ctx, src.bucketName, row.oid)!;
       if (committedSet(b).size === b.total_chunks) await this.finalize(src, row.oid);
     }
+
+    await this.flushDeletes(src.bucketName); // blob parts and any stragglers committed since the last window flush
 
     if (maxOid && maxOid !== (res.marker ?? "")) {
       setSetting(this.ctx.db, `marker:${src.bucketName}`, maxOid);
@@ -382,10 +385,34 @@ export class Ingester {
     catch { return undefined; }
   }
 
+  // committed/quarantined objects are deleted from R2 in batches, not one round-trip each: a single
+  // DeleteObjects call removes up to 1000, which is what lets a large first sync drain fast instead of
+  // being gated by one delete latency per object. A deferred delete is safe — the ledger marks the object
+  // committed, so if the process stops before the batch flush the next pass recognises and removes it.
+  private readonly pendingDeletes = new Map<string, { src: Source; keys: string[] }>();
+
   private async remove(src: Source, key: string): Promise<void> {
     if (!src.bucket) return;
-    try { await src.bucket.delete(key); }
-    catch (e) { this.ctx.events.emit("ingest.error", { bucket: src.bucketName, key, error: `delete failed (retried next pass): ${(e as Error).message}` }); }
+    const e = this.pendingDeletes.get(src.bucketName);
+    if (e) e.keys.push(key);
+    else this.pendingDeletes.set(src.bucketName, { src, keys: [key] });
+  }
+
+  /** Flush buffered deletes for a bucket (or all) in batched DeleteObjects calls. */
+  private async flushDeletes(bucketName?: string): Promise<void> {
+    const entries = bucketName
+      ? (this.pendingDeletes.has(bucketName) ? [[bucketName, this.pendingDeletes.get(bucketName)!] as const] : [])
+      : [...this.pendingDeletes.entries()];
+    for (const [name, { src, keys }] of entries) {
+      this.pendingDeletes.delete(name);
+      if (!src.bucket || keys.length === 0) continue;
+      try {
+        const failed = await src.bucket.deleteMany(keys);
+        if (failed.length) this.ctx.events.emit("ingest.error", { bucket: name, error: `delete of ${failed.length} object(s) failed (retried next pass)` });
+      } catch (e) {
+        this.ctx.events.emit("ingest.error", { bucket: name, error: `batch delete failed (retried next pass): ${(e as Error).message}` });
+      }
+    }
   }
 
   private ledger(bucket: string, key: string) {
