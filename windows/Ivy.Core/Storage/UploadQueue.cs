@@ -184,6 +184,38 @@ public sealed class UploadQueue
         return r.Read() ? Read(r) : null;
     }
 
+    /// <summary>
+    /// Atomically take the next due item and mark it <c>uploading</c>, so several uploader workers can drain
+    /// the queue in parallel without two of them grabbing the same row. Same ordering as <see cref="NextDue"/>
+    /// (normal lane before bulk, then lowest seq, never ahead of an unfinished earlier item of its group).
+    /// Returns null when nothing is due.
+    /// </summary>
+    public QueueItem? ClaimNextDue()
+    {
+        using var c = _db.Open();
+        using var tx = c.BeginTransaction(deferred: false); // IMMEDIATE: take the write lock up front so claims serialize
+        using var sel = c.CreateCommand();
+        sel.Transaction = tx;
+        sel.CommandText = $"""
+            SELECT {Columns} FROM pending_uploads p
+            WHERE p.status = 'queued' AND p.next_attempt_ms <= $now
+              AND (p.group_key IS NULL OR NOT EXISTS (
+                    SELECT 1 FROM pending_uploads q WHERE q.group_key = p.group_key AND q.seq < p.seq AND q.status <> 'done'))
+            ORDER BY p.lane, p.seq LIMIT 1
+            """;
+        sel.Parameters.AddWithValue("$now", _time.GetUtcNow().ToUnixTimeMilliseconds());
+        QueueItem? item;
+        using (var r = sel.ExecuteReader()) item = r.Read() ? Read(r) : null;
+        if (item is null) { tx.Commit(); return null; }
+        using var upd = c.CreateCommand();
+        upd.Transaction = tx;
+        upd.CommandText = "UPDATE pending_uploads SET status = 'uploading' WHERE id = $id AND status = 'queued'";
+        upd.Parameters.AddWithValue("$id", item.Id);
+        var claimed = upd.ExecuteNonQuery() == 1;
+        tx.Commit();
+        return claimed ? item : null;
+    }
+
     /// <summary>Earliest backoff gate among queued items (for the uploader's sleep), or null.</summary>
     public DateTimeOffset? NextAttemptTime()
     {

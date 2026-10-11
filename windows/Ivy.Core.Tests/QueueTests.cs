@@ -55,6 +55,22 @@ public class QueueTests : IDisposable
     }
 
     [Fact]
+    public async Task Parallel_drain_uploads_every_item_exactly_once()
+    {
+        using var p = new AgentProcess(_dir.Path);
+        var server = new FakeBucketServer();
+        var keys = Enumerable.Range(0, 60).Select(_ => ObjectKeys.Up(Kind.FileMeta, Oids.New())).ToList();
+        foreach (var k in keys) p.Queue.EnqueueCiphertext(k, Kind.FileMeta, Envelope(k), "files");
+
+        var uploader = new Uploader(p.Queue, new FakeUpClient(server), new UploaderOptions { Concurrency = 8 }, p.Activity, p.Db);
+        var done = await uploader.DrainAsync();
+
+        Assert.Equal(60, done);                                                   // every item uploaded
+        Assert.Equal(keys.OrderBy(k => k), server.Up.Keys.OrderBy(k => k));         // exactly once, no duplicates or misses
+        Assert.Equal(0, p.Queue.Depth());                                          // queue fully drained
+    }
+
+    [Fact]
     public void Group_items_are_strictly_ordered_but_do_not_block_others()
     {
         using var p = new AgentProcess(_dir.Path);
@@ -276,7 +292,9 @@ public class UploaderTests : IDisposable
         var shot = sink.EnqueueBlob(new MemoryStream(new byte[10]), PayloadKinds.Screenshot, "screenshots");
         Assert.Throws<ArgumentException>(() => sink.EnqueueBlob(new MemoryStream(new byte[1]), PayloadKinds.Photo, oid: "not-an-oid"));
 
-        Assert.Equal(6, await new Uploader(p.Queue, new FakeUpClient(server)).DrainAsync());
+        // concurrency 1 so the lane/group ordering is deterministic to assert; parallel drain (which relaxes
+        // global completion order to lane-priority-at-claim plus strict per-group order) is covered separately.
+        Assert.Equal(6, await new Uploader(p.Queue, new FakeUpClient(server), new UploaderOptions { Concurrency = 1 }).DrainAsync());
         var puts = server.Calls.Select(c => c.Split(' ')[1]).ToList();
         Assert.Equal(new[] { rec.ObjectKey, shot.ManifestKey, ObjectKeys.BlobChunk(shot.Oid, 0), bulk.ManifestKey, ObjectKeys.BlobChunk(oid, 0), ObjectKeys.BlobChunk(oid, 1) }, puts);
         Assert.Equal(0, p.Queue.BulkBytes("files"));

@@ -13,6 +13,12 @@ public sealed class UploaderOptions
     public long PartSize { get; init; } = 8L * 1024 * 1024;
     /// <summary>Initial bandwidth cap in bytes/second; 0 = unlimited.</summary>
     public long BandwidthBytesPerSecond { get; init; }
+    /// <summary>
+    /// How many objects upload at once. Uploads are latency-bound (many small records and blobs), so several
+    /// in flight make the whole queue drain in a fraction of the time — the point being that a few minutes
+    /// after the PC comes on, the Mac already has everything. A shared token bucket still caps total bandwidth.
+    /// </summary>
+    public int Concurrency { get; init; } = 8;
     /// <summary>Idle re-check interval for <see cref="Uploader.RunAsync"/>.</summary>
     public TimeSpan IdlePoll { get; init; } = TimeSpan.FromSeconds(30);
 }
@@ -94,22 +100,33 @@ public sealed class Uploader
         if (_wake.CurrentCount == 0) _wake.Release();
     }
 
-    /// <summary>Upload every item that is currently due, in order. Returns the number uploaded.</summary>
+    /// <summary>
+    /// Upload every item that is currently due, with up to <see cref="UploaderOptions.Concurrency"/> objects in
+    /// flight at once. Each worker atomically claims the next due item (so no two take the same one) until the
+    /// queue is drained; a failed item is gated by backoff, so it is not retried again within this drain.
+    /// Returns the number uploaded.
+    /// </summary>
     public async Task<int> DrainAsync(CancellationToken ct = default)
     {
         await _drainLock.WaitAsync(ct).ConfigureAwait(false);
         try
         {
             var done = 0;
-            var failed = new HashSet<string>(StringComparer.Ordinal);
-            while (!_paused && !ct.IsCancellationRequested)
+            var workers = Math.Max(1, _options.Concurrency);
+            var tasks = new Task[workers];
+            for (var i = 0; i < workers; i++) tasks[i] = Task.Run(() => WorkerAsync(ct), ct);
+            await Task.WhenAll(tasks).ConfigureAwait(false);
+            return Volatile.Read(ref done);
+
+            async Task WorkerAsync(CancellationToken token)
             {
-                var item = _queue.NextDue();
-                if (item is null || failed.Contains(item.Id)) break;
-                if (await UploadOneAsync(item, ct).ConfigureAwait(false)) done++;
-                else failed.Add(item.Id);
+                while (!_paused && !token.IsCancellationRequested)
+                {
+                    var item = _queue.ClaimNextDue();
+                    if (item is null) break; // nothing due right now; another worker may still be finishing
+                    if (await UploadOneAsync(item, token).ConfigureAwait(false)) Interlocked.Increment(ref done);
+                }
             }
-            return done;
         }
         finally
         {

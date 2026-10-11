@@ -362,7 +362,8 @@ public sealed class TelegramCollector : Collector<TelegramSettings>
                     if (ms.Length > 0)
                     {
                         ms.Position = 0;
-                        avatarOid = sink.EnqueueBlob(ms, PayloadKinds.Avatar, CollectorName, ms.Length, bulk: true).Oid;
+                        // avatars are small and drive the UI, so they ride the normal lane (with records), not the bulk lane behind big originals
+                        avatarOid = sink.EnqueueBlob(ms, PayloadKinds.Avatar, CollectorName, ms.Length, bulk: false).Oid;
                         _avatarCaptured[dialog.ConvKey] = aref; // don't re-download until the photo changes
                     }
                 }
