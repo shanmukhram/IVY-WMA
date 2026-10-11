@@ -60,8 +60,8 @@ public static class CollectorNames
         Usage => TimeSpan.FromSeconds(30),
         Screenshots => TimeSpan.FromMinutes(5),
         Notifications => TimeSpan.FromMinutes(5),
-        Line => TimeSpan.FromMinutes(5),
-        Telegram => TimeSpan.FromSeconds(30),
+        Line => TimeSpan.FromSeconds(5),
+        Telegram => TimeSpan.FromSeconds(5),
         Files => TimeSpan.FromHours(1),
         _ => TimeSpan.FromMinutes(5),
     };

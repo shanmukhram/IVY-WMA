@@ -414,6 +414,9 @@ public class LineCollectorTests : IDisposable
     }
 
     [Fact]
+    public void Poll_cadence_defaults_to_five_seconds() => Assert.Equal(5, new LineSettings().PollSeconds);
+
+    [Fact]
     public async Task Not_installed_when_no_data_folder_exists()
     {
         var line = new LineDesktopCollector(_env.Context, new LineSettings(),

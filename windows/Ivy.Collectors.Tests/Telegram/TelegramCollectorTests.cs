@@ -59,6 +59,29 @@ public class TelegramCollectorTests : IDisposable
     // ---------------------------------------------------------------- backfill
 
     [Fact]
+    public void Poll_interval_is_five_seconds() =>
+        Assert.Equal(TimeSpan.FromSeconds(5), NewCollector(new FakeTelegramClient()).Interval);
+
+    [Fact]
+    public async Task Dialog_list_is_refreshed_about_once_a_minute_not_every_tick()
+    {
+        WriteFixture();
+        var fake = new FakeTelegramClient();
+        fake.AddDm("user:20", "Alice", "Alice");
+        var tg = NewCollector(fake);
+        await tg.StartAsync(default);
+
+        await tg.TickAsync(default);
+        _env.Time.Advance(TimeSpan.FromSeconds(5));
+        await tg.TickAsync(default);
+        Assert.Equal(1, fake.GetDialogsCalls);
+
+        _env.Time.Advance(TimeSpan.FromSeconds(61));
+        await tg.TickAsync(default);
+        Assert.Equal(2, fake.GetDialogsCalls);
+    }
+
+    [Fact]
     public async Task Captures_the_chat_avatar_and_links_it_on_chatMeta()
     {
         WriteFixture();

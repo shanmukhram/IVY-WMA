@@ -34,9 +34,14 @@ internal sealed class FakeTelegramClient : ITelegramClient, ITelegramClientFacto
         return Task.CompletedTask;
     }
 
-    public Task<IReadOnlyList<TgDialog>> GetDialogsAsync(bool includeChannels, CancellationToken ct) =>
-        Task.FromResult<IReadOnlyList<TgDialog>>(
+    public int GetDialogsCalls { get; private set; }
+
+    public Task<IReadOnlyList<TgDialog>> GetDialogsAsync(bool includeChannels, CancellationToken ct)
+    {
+        GetDialogsCalls++;
+        return Task.FromResult<IReadOnlyList<TgDialog>>(
             includeChannels ? Dialogs : Dialogs.Where(d => !d.IsChannel).ToList());
+    }
 
     public Task<TgHistoryPage> GetHistoryAsync(TgDialog dialog, long offsetId, int limit, CancellationToken ct)
     {

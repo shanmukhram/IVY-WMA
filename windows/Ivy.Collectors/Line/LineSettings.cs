@@ -21,5 +21,6 @@ public sealed class LineSettings
     /// <summary>Messages read per chat per tick.</summary>
     public int BatchSize { get; init; } = 500;
 
-    public int PollSeconds { get; init; } = 300;
+    /// <summary>Seconds between polls. Kept to a few seconds so a new message shows up almost at once; each tick snapshots and reads the small store.</summary>
+    public int PollSeconds { get; init; } = 5;
 }

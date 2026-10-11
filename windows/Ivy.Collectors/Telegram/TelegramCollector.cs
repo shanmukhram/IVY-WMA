@@ -53,6 +53,9 @@ public sealed class TelegramCollector : Collector<TelegramSettings>
     private DateTimeOffset? _floodUntil;
     private IReadOnlyList<TgDialog> _dialogs = Array.Empty<TgDialog>();
     private volatile bool _resyncRequested;
+    private DateTimeOffset? _dialogsRefreshedAt;   // null until loaded on this connection
+    private bool _dialogsStale;                    // set when a diff saw a chat not in _dialogs
+    private static readonly TimeSpan DialogRefreshEvery = TimeSpan.FromSeconds(60);
 
     /// <summary>
     /// Ask the collector to re-walk all history on its next tick (the one-time re-sync). Existing chats then
@@ -76,8 +79,8 @@ public sealed class TelegramCollector : Collector<TelegramSettings>
         _store = new TelegramStore(context.Db);
     }
 
-    /// <summary>Incremental poll cadence while connected; the initial backfill proceeds across ticks.</summary>
-    public override TimeSpan Interval => TimeSpan.FromSeconds(30);
+    /// <summary>Incremental poll cadence while connected (5 s so new messages show up almost at once); the initial backfill proceeds across ticks.</summary>
+    public override TimeSpan Interval => TimeSpan.FromSeconds(5);
 
     public TelegramHealth Health { get; private set; } = TelegramHealth.Ok;
     public DateTimeOffset? FloodWaitUntil => _floodUntil;
@@ -133,6 +136,7 @@ public sealed class TelegramCollector : Collector<TelegramSettings>
         _account = null;
         _connected = false;
         _dialogs = Array.Empty<TgDialog>();
+        _dialogsRefreshedAt = null;
     }
 
     public override async Task TickAsync(CancellationToken ct)
@@ -153,7 +157,10 @@ public sealed class TelegramCollector : Collector<TelegramSettings>
 
         try
         {
-            await RefreshDialogsAsync(ct).ConfigureAwait(false);
+            // The dialog list is a full network call plus a store write per chat, so at a 5 s tick it is
+            // refreshed only when needed: first load, every 60 s, on re-sync, or after a diff saw a new chat.
+            if (_dialogsRefreshedAt is null || _dialogsStale || _resyncRequested || Now - _dialogsRefreshedAt >= DialogRefreshEvery)
+                await RefreshDialogsAsync(ct).ConfigureAwait(false);
             if (_resyncRequested)
             {
                 _resyncRequested = false;
@@ -244,6 +251,8 @@ public sealed class TelegramCollector : Collector<TelegramSettings>
         _dialogs = await _client!.GetDialogsAsync(Settings.IncludeChannels, ct).ConfigureAwait(false);
         foreach (var d in _dialogs) _store.UpsertDialog(_account0, d);
         foreach (var secret in _client.SecretChats) _store.MarkPhoneOnly(secret, "secret chat — phone-only (not in the cloud)");
+        _dialogsRefreshedAt = Now;
+        _dialogsStale = false;
     }
 
     // ------------------------------------------------------------------ backfill (complete history)
@@ -299,6 +308,7 @@ public sealed class TelegramCollector : Collector<TelegramSettings>
             foreach (var group in diff.Updates.GroupBy(u => u.ConvKey))
             {
                 var dialog = _dialogs.FirstOrDefault(d => d.ConvKey == group.Key);
+                if (dialog is null) _dialogsStale = true; // brand-new chat: re-list on the next tick
                 var messages = group.Select(ToUpdatedMessage).ToList();
                 if (messages.Count == 0) continue;
                 var maxId = messages.Max(m => m.MsgId);

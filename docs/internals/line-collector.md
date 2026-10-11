@@ -91,3 +91,5 @@ Cipher (implemented in `windows/Ivy.Collectors/Line/LineWxCipher.cs`):
 Schema: `_contact(_mid, display name)`, `_chats(_from, _to, content, created time)`.
 
 What remains: obtaining the passphrase, which is the one step that is not on disk. The decryptor is ready for it. See the collector integration plan: a key the user supplies once is stored in DPAPI and never uploaded (WX2); the collector decrypts to a temporary plaintext copy, reads it read-only, and deletes the copy.
+
+Poll cadence: LINE is polled every 5 seconds (`pollSeconds`, default 5) so a new message shows up almost at once; each tick snapshots and reads the small store.

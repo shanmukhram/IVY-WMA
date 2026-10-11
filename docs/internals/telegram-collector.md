@@ -116,3 +116,5 @@ decrypts to the JSON WTelegramClient expects (main DC, api_id, user id, base64 k
 seed DC address) while the **raw key bytes never appear in the produced buffer** in
 plaintext.
 
+
+Poll cadence: the collector ticks every 5 seconds (was 30) so a new message shows up almost at once; an idle tick costs one `GetDifference` call, with the dialog list refreshed about once a minute (and sooner on re-sync or when a new chat appears).
