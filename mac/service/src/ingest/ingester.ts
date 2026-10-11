@@ -45,7 +45,9 @@ import { deleteCommandObject, maintainCommands, sendQueued } from "../commands/c
 /** Record prefixes listed incrementally (PROTOCOL §5). */
 const RECORD_PREFIXES = ["file", "fcat", "scr", "usg", "wnotif", "anotif", "call", "msg", "lineacct", "cstat", "status", "blob"];
 const RECORD_PREFIX_PATHS = RECORD_PREFIXES.map((p) => `up/${p}/`);
-const PREFETCH = 16; // objects fetched from R2 concurrently during a pass; commit stays sequential
+const PREFETCH = 64; // objects fetched from R2 concurrently during a pass; commit stays sequential.
+// Fetch latency (the per-object round-trip) is the ingest bottleneck, so a wider window drains a large
+// backlog far faster — the whole up-bucket after the PC first syncs, for instance.
 
 export interface BucketPassResult {
   bucket: string;
