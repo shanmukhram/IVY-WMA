@@ -97,4 +97,12 @@ public interface ICollectorHostView : IAsyncDisposable
 
     /// <summary>The last LINE probe report written, or null if none has been produced on this machine.</summary>
     string? LineReportPath { get; }
+
+    /// <summary>Re-walk all Telegram and LINE history once and re-emit it (sides, sender names, avatars, Keep,
+    /// account snapshot); the Mac merges by message id, so this does not duplicate.</summary>
+    Task ResyncConversationsAsync();
+
+    /// <summary>Add the standard user folders (Downloads, Desktop, Documents, Pictures that exist) to the file
+    /// index roots, de-duped against the current roots. Returns the resulting roots.</summary>
+    Task<IReadOnlyList<string>> IndexStandardFoldersAsync();
 }

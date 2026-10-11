@@ -37,6 +37,23 @@
                 </Grid>
             </Border>
 
+            <!-- ============ Maintenance ============ -->
+            <TextBlock Text="Maintenance" Style="{StaticResource SectionHeaderStyle}" />
+            <Border Style="{StaticResource SettingsRowStyle}">
+                <StackPanel Spacing="8">
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <Button Content="Re-sync conversations (one time)"
+                                Command="{x:Bind ViewModel.Settings.ResyncConversationsCommand}"
+                                AutomationProperties.Name="Re-sync conversations" />
+                        <Button Content="Index my standard folders"
+                                Command="{x:Bind ViewModel.Settings.IndexStandardFoldersCommand}"
+                                AutomationProperties.Name="Index my standard folders" />
+                    </StackPanel>
+                    <TextBlock Text="{x:Bind ViewModel.Settings.MaintenanceStatus, Mode=OneWay}"
+                               Style="{StaticResource SecondaryTextStyle}" TextWrapping="Wrap" />
+                </StackPanel>
+            </Border>
+
             <!-- ============ Appearance ============ -->
             <TextBlock Text="Appearance" Style="{StaticResource SectionHeaderStyle}" />
             <Border Style="{StaticResource SettingsRowStyle}">

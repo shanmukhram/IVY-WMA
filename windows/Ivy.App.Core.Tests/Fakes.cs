@@ -184,6 +184,10 @@ public sealed class FakeHost : ICollectorHostView
     public Task SetTelegramIncludeChannelsAsync(bool include) { IncludeChannels = include; return Task.CompletedTask; }
     public Task RunLineProbeAsync() { ProbeRuns++; ReportPath ??= @"C:\IVY\line-probe-26.3.json"; return Task.CompletedTask; }
     public string? LineReportPath => ReportPath;
+    public int ResyncRuns { get; private set; }
+    public Task ResyncConversationsAsync() { ResyncRuns++; return Task.CompletedTask; }
+    public List<string> StandardFolders { get; } = new();
+    public Task<IReadOnlyList<string>> IndexStandardFoldersAsync() { StandardFolders.Add("standard"); return Task.FromResult<IReadOnlyList<string>>(StandardFolders); }
 }
 
 public sealed class FakeStartup : IStartupRegistration

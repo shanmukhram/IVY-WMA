@@ -186,6 +186,26 @@ public sealed class CollectorHostAdapter : ICollectorHostView
         await _host.TickNowAsync(Line);
     }
 
+    public async Task ResyncConversationsAsync()
+    {
+        // Ask both conversation collectors to re-walk their whole history and re-emit; the Mac merges by
+        // message id (PLAN 1.10), so re-emitting does not duplicate. Tick each once so it starts now.
+        _host.Get<TelegramCollector>().RequestResync();
+        _host.Get<LineDesktopCollector>().RequestResync();
+        await _host.TickNowAsync(Telegram);
+        await _host.TickNowAsync(Line);
+    }
+
+    public async Task<IReadOnlyList<string>> IndexStandardFoldersAsync()
+    {
+        var merged = new List<string>(_host.Get<FileIndexCollector>().Settings.Roots);
+        var seen = new HashSet<string>(merged, StringComparer.OrdinalIgnoreCase);
+        foreach (var folder in Ivy.Core.Policy.MediaPolicyDefaults.StandardUserFolders())
+            if (seen.Add(folder)) merged.Add(folder);
+        await UpdateAsync(Files, new() { ["roots"] = JsonSerializer.SerializeToElement(merged) });
+        return merged;
+    }
+
     public bool LineHasKey => _host.Get<LineDesktopCollector>().HasKey;
 
     public async Task ApplyLineKeyAsync(string key)

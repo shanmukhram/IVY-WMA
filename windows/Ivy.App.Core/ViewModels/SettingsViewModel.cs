@@ -51,6 +51,34 @@ public sealed class SettingsViewModel : ObservableObject
         DocumentExtensions.Load(MediaPolicyDefaults.DocumentExtensions);
         ApplyBandwidthCommand = new RelayCommand(ApplyBandwidth);
         ApplyCapsCommand = new RelayCommand(ApplyCaps);
+        ResyncConversationsCommand = new AsyncRelayCommand(ResyncConversationsAsync);
+        IndexStandardFoldersCommand = new AsyncRelayCommand(IndexStandardFoldersAsync);
+    }
+
+    public AsyncRelayCommand ResyncConversationsCommand { get; }
+    public AsyncRelayCommand IndexStandardFoldersCommand { get; }
+    private string _maintenanceStatus = "";
+    public string MaintenanceStatus { get => _maintenanceStatus; private set => Set(ref _maintenanceStatus, value); }
+
+    private async Task ResyncConversationsAsync()
+    {
+        MaintenanceStatus = "Re-syncing conversations...";
+        try { await (LastWork = _work.Run(() => _host.ResyncConversationsAsync())); MaintenanceStatus = "Re-sync started; Telegram and LINE re-walk their history."; }
+        catch (Exception e) { MaintenanceStatus = "Re-sync failed: " + e.Message; }
+    }
+
+    private async Task IndexStandardFoldersAsync()
+    {
+        MaintenanceStatus = "Adding standard folders...";
+        try
+        {
+            var task = _work.Run(() => _host.IndexStandardFoldersAsync());
+            LastWork = task;
+            var roots = await task;
+            IndexedRoots.Load(roots);
+            MaintenanceStatus = "Indexed roots: " + string.Join(", ", roots);
+        }
+        catch (Exception e) { MaintenanceStatus = "Add folders failed: " + e.Message; }
     }
 
     public StringListViewModel IndexedRoots { get; }

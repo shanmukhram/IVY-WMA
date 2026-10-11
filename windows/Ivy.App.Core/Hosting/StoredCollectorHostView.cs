@@ -78,6 +78,8 @@ public sealed class StoredCollectorHostView : ICollectorHostView
     public Task SetTelegramIncludeChannelsAsync(bool include) => Task.CompletedTask;
     public Task RunLineProbeAsync() => Task.CompletedTask;
     public string? LineReportPath => null;
+    public Task ResyncConversationsAsync() => Task.CompletedTask;
+    public Task<IReadOnlyList<string>> IndexStandardFoldersAsync() => Task.FromResult(GetSettings().IndexedRoots);
 
     public ValueTask DisposeAsync() => ValueTask.CompletedTask;
 
