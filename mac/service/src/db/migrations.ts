@@ -773,6 +773,14 @@ CREATE VIEW items AS
     FROM calls cl;
 `;
 
+// v10: call events carried as messages (LINE call records): the message's `call` object, all nullable.
+const v10 = `
+ALTER TABLE messages ADD COLUMN call_kind TEXT;          -- audio | video | unknown
+ALTER TABLE messages ADD COLUMN call_outcome TEXT;       -- completed | missed | declined | cancelled | unknown
+ALTER TABLE messages ADD COLUMN call_duration_s INTEGER; -- whole seconds, completed calls only
+ALTER TABLE messages ADD COLUMN call_direction TEXT;     -- outgoing | incoming
+`;
+
 export const MIGRATIONS: Migration[] = [
   { version: 1, name: "initial vault schema", sql: v1 },
   { version: 2, name: "import progress, manifest commandId, transferring commands", sql: v2 },
@@ -783,4 +791,5 @@ export const MIGRATIONS: Migration[] = [
   { version: 7, name: "LINE account state: profile, contacts, chat options and settings", sql: v7 },
   { version: 8, name: "media originals kept in R2: the media_archive record", sql: v8 },
   { version: 9, name: "catalog entries: browse-and-fetch-on-demand (files.catalog, status 'catalog')", sql: v9 },
+  { version: 10, name: "call events on messages (call_kind, call_outcome, call_duration_s, call_direction)", sql: v10 },
 ];

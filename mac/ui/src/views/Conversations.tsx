@@ -40,8 +40,10 @@ export interface Chat {
   coverageSources?: SourceClaim[]; coverageText?: string;
   title?: string | null; avatarUrl?: string | null; source?: string; lastText?: string | null; lastAt?: string | null;
   messageCount: number; firstMessageAt?: string | null; lastMessageAt: string | null;
-  lastMessage?: { id: string; sender: string; senderName?: string | null; fromMe?: boolean; sentAt: string; text: string; mediaKind?: string | null; sourceStatus?: string } | null;
+  lastMessage?: { id: string; sender: string; senderName?: string | null; fromMe?: boolean; sentAt: string; text: string; mediaKind?: string | null; sourceStatus?: string; call?: MsgCall | null } | null;
 }
+/** A call event carried as a message (PROTOCOL.md §6); shown instead of the platform's system text. */
+export interface MsgCall { kind: string; outcome: string; durationSec?: number; direction?: string }
 export interface Msg {
   id: string; msg_key: string; sender: string; senderName?: string | null; senderAvatarUrl?: string | null; fromMe?: boolean;
   sent_at: string; sentAt?: string; captured_at: string; capturedAt?: string; text: string; text_quality?: string; previewOnly?: boolean;
@@ -49,6 +51,7 @@ export interface Msg {
   source_status: string; source_deleted_at?: string | null; deletedAtSource?: string | null;
   forwarded_from: string | null; forwardedFrom?: string | null; media_kind: string | null; mediaKind?: string | null;
   sources?: Array<{ source: string; deletedAtSource: string | null }>; attachments?: Att[];
+  call?: MsgCall | null;
 }
 interface Att { id: string; messageId?: string; kind: string; filename: string; imageUrl?: string | null; status: string; size?: number | null }
 /** Where an attachment's original is. phone_only: captured by LINE for Windows, which keeps no
@@ -71,6 +74,37 @@ const mForwarded = (m: Msg) => m.forwardedFrom ?? m.forwarded_from ?? null;
 const mMediaKind = (m: Msg) => m.mediaKind ?? m.media_kind ?? null;
 const mPreview = (m: Msg) => m.previewOnly ?? m.text_quality === "preview";
 const mDeleted = (m: Msg) => m.deletedAtSource != null || m.source_status === "deleted_at_source";
+
+/** A call's length: m:ss, or h:mm:ss from an hour up. */
+export function callDuration(sec: number): string {
+  const s = Math.max(0, Math.round(sec));
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), r = s % 60;
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return h > 0 ? `${h}:${pad(m)}:${pad(r)}` : `${m}:${pad(r)}`;
+}
+
+/** The short label for a call ("Audio call · 2:35", "Missed audio call", ...), used in the bubble and the chat list. */
+export function callLabel(c: MsgCall): string {
+  const noun = c.kind === "audio" ? "audio call" : c.kind === "video" ? "video call" : "call";
+  const Noun = noun[0]!.toUpperCase() + noun.slice(1);
+  switch (c.outcome) {
+    case "completed": return c.durationSec != null ? `${Noun} · ${callDuration(c.durationSec)}` : Noun;
+    case "missed": return `Missed ${noun}`;
+    case "declined": return `Declined ${noun}`;
+    case "cancelled": return `Cancelled ${noun}`;
+    default: return Noun;
+  }
+}
+
+/** The call row shown in a bubble in place of the text: a handset or camera icon, then the label. */
+function CallRow({ call }: { call: MsgCall }) {
+  return (
+    <span className="call-row" data-testid="call-row" data-call-kind={call.kind} style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+      <Icon name={call.kind === "video" ? "video" : "call"} size={14} />
+      <span>{callLabel(call)}</span>
+    </span>
+  );
+}
 
 /** Telegram blue / LINE green, applied around the open conversation only. */
 /** The service clamps the thread's before/after counts to this. */
@@ -182,7 +216,8 @@ export function ConversationsView(scope: ChatsScope = {}) {
             const lm = c.lastMessage;
             const mine = lm ? lm.fromMe ?? isMine(lm.sender, c.account) : false;
             const who = lm ? (lm.senderName ?? lm.sender) : "";
-            const preview = c.lastText ?? (lm ? `${mine ? "You: " : c.kind === "group" ? `${who}: ` : ""}${lm.text || (lm.mediaKind ? `[${lm.mediaKind}]` : "")}` : "No messages");
+            const preview = lm?.call ? callLabel(lm.call)
+              : c.lastText ?? (lm ? `${mine ? "You: " : c.kind === "group" ? `${who}: ` : ""}${lm.text || (lm.mediaKind ? `[${lm.mediaKind}]` : "")}` : "No messages");
             return (
               <button key={c.id} className="chat-item" aria-current={c.id === selected ? "true" : undefined} onClick={() => open(c.id)} data-testid="chat-item">
                 <Avatar name={name} size={40} colorKey={`${c.platform}:${c.convKey}`} src={c.avatarUrl} />
@@ -440,8 +475,9 @@ function Thread({ id, around, hintAvatar, onOpenProfile, onJumpLatest }: { id: s
                   )}
                   <div className="mb">
                     {mForwarded(m) && <span className="fwd"><Icon name="forward" size={11} /> Forwarded from {mForwarded(m)}</span>}
-                    {mReplyTo(m) && <span className="quote" data-testid="reply-quote">{quoted ? <><b>{fromMe(quoted, account) ? "You" : quoted.senderName ?? quoted.sender}</b>{quoted.text || (mMediaKind(quoted) ? `[${mMediaKind(quoted)}]` : "")}</> : "Reply to an earlier message"}</span>}
-                    {m.text || (mMediaKind(m) ? <span className="media-kind">[{mMediaKind(m)}]</span> : (mAtts.length === 0 && <span className="media-kind">(no text)</span>))}
+                    {mReplyTo(m) && <span className="quote" data-testid="reply-quote">{quoted ? <><b>{fromMe(quoted, account) ? "You" : quoted.senderName ?? quoted.sender}</b>{quoted.call ? callLabel(quoted.call) : quoted.text || (mMediaKind(quoted) ? `[${mMediaKind(quoted)}]` : "")}</> : "Reply to an earlier message"}</span>}
+                    {m.call ? <CallRow call={m.call} />
+                      : m.text || (mMediaKind(m) ? <span className="media-kind">[{mMediaKind(m)}]</span> : (mAtts.length === 0 && <span className="media-kind">(no text)</span>))}
                     {mAtts.length > 0 && (
                       <div className="atts">{mAtts.map((a) => (a.imageUrl ? (
                         <button key={a.id} type="button" className="att-img" data-testid="attachment-image" onClick={() => setLightbox(imageIndex.get(a.id) ?? 0)}>

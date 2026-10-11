@@ -101,6 +101,20 @@ describe("record schemas", () => {
     expect(() => validateRecord({ ...rec, chatMeta: { participantCount: -1 } })).toThrow();
   });
 
+  it("message_batch accepts an optional call object and rejects bad call values", () => {
+    const msg = { msgId: "c1", sender: "u1", sentAt: "2026-10-09T10:00:00.000Z", text: "system text", sourceStatus: "live", attachments: [], mediaKind: "call" };
+    const rec = {
+      ...common, kind: "message_batch", platform: "line", account: "u0", convKey: "u1", convKind: "dm",
+      sourceSession: "windows:line-desktop", coverage: "partial", cursor: "c1",
+      messages: [{ ...msg, call: { kind: "video", outcome: "completed", durationSec: 155, direction: "outgoing" } }],
+    };
+    expect(validateRecordKind("message_batch", rec).messages[0].call).toEqual({ kind: "video", outcome: "completed", durationSec: 155, direction: "outgoing" });
+    expect(validateRecordKind("message_batch", { ...rec, messages: [{ ...msg, call: { kind: "unknown", outcome: "unknown" } }] }).messages[0].call).toEqual({ kind: "unknown", outcome: "unknown" });
+    expect(() => validateRecord({ ...rec, messages: [{ ...msg, call: { kind: "fax", outcome: "completed" } }] })).toThrow();
+    expect(() => validateRecord({ ...rec, messages: [{ ...msg, call: { kind: "audio", outcome: "completed", durationSec: -1 } }] })).toThrow();
+    expect(() => validateRecord({ ...rec, messages: [{ ...msg, call: { kind: "audio", outcome: "completed", durationSec: 1.5 } }] })).toThrow();
+  });
+
   it("accepts a command (file_request) and command_status", () => {
     const cmd = {
       ...common, kind: "command", commandId: "cmd1", issuedAt: common.eventTime,

@@ -66,6 +66,19 @@ export function attachmentStatusSql(a = "a"): string {
     THEN 'phone_only' ELSE ${a}.status END`;
 }
 
+/** The stored call columns of a message (all null for an ordinary message). */
+type CallCols = { call_kind: string | null; call_outcome: string | null; call_duration_s: number | null; call_direction: string | null };
+
+/** The message's `call` object as the UI reads it (PROTOCOL.md §6), or null when the message is not a call. */
+export function callView(r: CallCols): { kind: string; outcome: string; durationSec?: number; direction?: string } | null {
+  if (r.call_kind == null) return null;
+  return {
+    kind: r.call_kind, outcome: r.call_outcome ?? "unknown",
+    ...(r.call_duration_s != null ? { durationSec: r.call_duration_s } : {}),
+    ...(r.call_direction != null ? { direction: r.call_direction } : {}),
+  };
+}
+
 export function registerViewRoutes(app: FastifyInstance, svc: Service): void {
   const db = () => svc.ctx.db;
 
@@ -132,11 +145,14 @@ export function registerViewRoutes(app: FastifyInstance, svc: Service): void {
              (SELECT MAX(m.sent_at) FROM messages m WHERE m.conversation_id = c.id AND m.deleted_at IS NULL) AS lastMessageAt
       FROM conversations c WHERE ${w}
       ORDER BY lastMessageAt IS NULL, lastMessageAt DESC, c.rid DESC LIMIT ? OFFSET ?`).all(...args, pageSize, (page - 1) * pageSize) as Array<Record<string, unknown> & { id: string; coverage_by_source: string; avatarLocalPath: string | null }>;
-    const last = db().prepare(`SELECT id, sender, sent_at AS sentAt, substr(text, 1, 200) AS text, media_kind AS mediaKind, source_status AS sourceStatus
+    const last = db().prepare(`SELECT id, sender, sent_at AS sentAt, substr(text, 1, 200) AS text, media_kind AS mediaKind, source_status AS sourceStatus,
+                                      call_kind, call_outcome, call_duration_s, call_direction
                                FROM messages WHERE conversation_id = ? AND deleted_at IS NULL ORDER BY sent_at DESC, rid DESC LIMIT 1`);
     const items = rows.map(({ coverage_by_source, avatarLocalPath, ...c }) => {
       const cov = coverageView(coverage_by_source);
-      const lastMessage = (last.get(c.id) as { text: string; sentAt: string } | undefined) ?? null;
+      const lastRow = last.get(c.id) as ({ text: string; sentAt: string } & CallCols) | undefined;
+      const lastMessage = lastRow ? (({ call_kind, call_outcome, call_duration_s, call_direction, ...rest }) =>
+        ({ ...rest, call: callView({ call_kind, call_outcome, call_duration_s, call_direction }) }))(lastRow) : null;
       return {
         ...c, ...cov, lastMessage,
         // the resolved display name (chatMeta title), then the peer, then the raw conversation key
@@ -213,13 +229,13 @@ export function registerViewRoutes(app: FastifyInstance, svc: Service): void {
     const before = int(q.before, 40, 0, 200), after = int(q.after, 40, 0, 200);
     let pivot = q.around ? (db().prepare("SELECT sent_at, rid FROM messages WHERE id = ? AND conversation_id = ? AND deleted_at IS NULL").get(q.around, id) as { sent_at: string; rid: number } | undefined) : undefined;
     pivot ??= db().prepare("SELECT sent_at, rid FROM messages WHERE conversation_id = ? AND deleted_at IS NULL ORDER BY sent_at DESC, rid DESC LIMIT 1").get(id) as { sent_at: string; rid: number } | undefined;
-    const cols = "id, sender, from_me, sender_name, sent_at, text, text_quality, reply_to, edited_at, source_deleted_at, forwarded_from";
+    const cols = "id, sender, from_me, sender_name, sent_at, text, text_quality, reply_to, edited_at, source_deleted_at, forwarded_from, call_kind, call_outcome, call_duration_s, call_direction";
     const older = pivot ? db().prepare(`SELECT ${cols} FROM messages WHERE conversation_id = ? AND deleted_at IS NULL AND (sent_at < ? OR (sent_at = ? AND rid < ?)) ORDER BY sent_at DESC, rid DESC LIMIT ?`).all(id, pivot.sent_at, pivot.sent_at, pivot.rid, before).reverse() : [];
     const newer = pivot ? db().prepare(`SELECT ${cols} FROM messages WHERE conversation_id = ? AND deleted_at IS NULL AND (sent_at > ? OR (sent_at = ? AND rid >= ?)) ORDER BY sent_at ASC, rid ASC LIMIT ?`).all(id, pivot.sent_at, pivot.sent_at, pivot.rid, after + 1) : [];
     const rows = [...older, ...newer] as Array<Record<string, unknown> & {
       id: string; sender: string; from_me: number | null; sender_name: string | null; sent_at: string; text: string;
       text_quality: string; reply_to: string | null; edited_at: string | null; source_deleted_at: string | null; forwarded_from: string | null;
-    }>;
+    } & CallCols>;
     const attByMsg = new Map<string, Array<Record<string, unknown>>>();
     if (rows.length) {
       const atts = db().prepare(`SELECT a.id, a.message_id AS messageId, a.kind, a.filename, ${attachmentStatusSql("a")} AS status, a.local_path AS localPath
@@ -236,6 +252,7 @@ export function registerViewRoutes(app: FastifyInstance, svc: Service): void {
       id: m.id, fromMe: m.from_me === 1, sender: m.sender, senderName: m.sender_name ?? null, sentAt: m.sent_at,
       text: m.text, editedAt: m.edited_at ?? null, deletedAtSource: m.source_deleted_at ?? null, forwardedFrom: m.forwarded_from ?? null,
       previewOnly: m.text_quality === "preview", replyTo: m.reply_to ?? null, attachments: attByMsg.get(m.id) ?? [],
+      call: callView(m),
     }));
     return { conversation, around: q.around ?? null, messages };
   });

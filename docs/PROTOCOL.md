@@ -366,7 +366,7 @@ durationS` (AC8).
 account, convKey, peer?, convKind(dm|group), sourceSession, coverage(complete|partial|
 notification_only), chatMeta?, cursor, messages[]`. Each message:
 `msgId, sender, sentAt, text, replyTo?, editedAt?,
-sourceStatus(live|deleted_at_source), forwardedFrom?, mediaKind?, deletedAtSource?,
+sourceStatus(live|deleted_at_source), forwardedFrom?, mediaKind?, call?, deletedAtSource?,
 attachments[]`. Each attachment:
 `attId, kind(image|video|audio|doc), filename, size, originHash?, blobOid?`
 (C1–C10, AC2/AC5/AC6, WT1–WT4, WL1–WL3, WX1; `sentAt` is the source's truth,
@@ -402,6 +402,17 @@ attachments[]`. Each attachment:
 - `forwardedFrom?` — who it was forwarded from, as the platform shows it.
 - `mediaKind?` — the media kind as the platform names it (`photo`, `sticker`,
   `voice`, …); absent for plain text.
+- `call?` — a call event that the platform records as a message:
+  `{ kind(audio|video|unknown), outcome(completed|missed|declined|cancelled|unknown),
+  durationSec?, direction?(outgoing|incoming) }`. `durationSec` is a non-negative
+  integer (whole seconds) sent only when `outcome` is `completed`; `direction` comes
+  from whether the account's own user placed the call. A value the collector does
+  not recognise is sent as `unknown`, never guessed. `text` may still carry the
+  platform's own system string for the call (kept as the store has it); a renderer
+  prefers `call` when present. LINE (content type 6, `mediaKind: "call"`): metadata
+  `TYPE` `A`→`audio`, `V`→`video`; `RESULT` `NORMAL`→`completed`,
+  `NO_RESPONSE`→`missed`, `REJECTED`→`declined`, `CANCELED`→`cancelled`;
+  `durationSec` = round(`DURATION` ms / 1000).
 - `deletedAtSource?` — when the source observed the deletion; only valid with
   `sourceStatus: deleted_at_source` (a deletion without it is dated by
   `captureTime`).

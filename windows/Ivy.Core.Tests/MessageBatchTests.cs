@@ -59,6 +59,34 @@ public class MessageBatchTests
     }
 
     [Fact]
+    public void Call_object_uses_the_reference_field_names_and_round_trips()
+    {
+        var r = Batch(
+            Msg() with
+            {
+                MediaKind = "call",
+                Call = new MessageCall { Kind = "video", Outcome = "completed", DurationSec = 155, Direction = "outgoing" },
+            },
+            Msg("7782") with { MediaKind = "call", Call = new MessageCall { Kind = "audio", Outcome = "missed" } });
+        r.Validate();
+        var json = IvyJson.Serialize(r);
+        var o = JsonNode.Parse(json)!.AsObject();
+        Assert.Equal(new[] { "msgId", "sender", "sentAt", "text", "sourceStatus", "mediaKind", "call", "attachments" },
+            o["messages"]![0]!.AsObject().Select(p => p.Key));
+        Assert.Equal("""{"kind":"video","outcome":"completed","durationSec":155,"direction":"outgoing"}""", o["messages"]![0]!["call"]!.ToJsonString());
+        Assert.Equal("""{"kind":"audio","outcome":"missed"}""", o["messages"]![1]!["call"]!.ToJsonString()); // absent optionals omitted
+
+        var back = RecordJson.Parse<MessageBatchRecord>(Bytes.Utf8.GetBytes(json));
+        Assert.Equal(json, IvyJson.Serialize(back));
+        Assert.Equal(155, back.Messages[0].Call!.DurationSec);
+
+        Assert.Throws<RecordValidationException>(() => Batch(Msg() with { Call = new MessageCall { Kind = "fax", Outcome = "completed" } }).Validate());
+        Assert.Throws<RecordValidationException>(() => Batch(Msg() with { Call = new MessageCall { Kind = "audio", Outcome = "busy" } }).Validate());
+        Assert.Throws<RecordValidationException>(() => Batch(Msg() with { Call = new MessageCall { Kind = "audio", Outcome = "completed", DurationSec = -1 } }).Validate());
+        Assert.Throws<RecordValidationException>(() => Batch(Msg() with { Call = new MessageCall { Kind = "audio", Outcome = "completed", Direction = "sideways" } }).Validate());
+    }
+
+    [Fact]
     public void Validation_matches_the_reference()
     {
         Assert.Throws<RecordValidationException>(() => (Batch(Msg()) with { SourceSession = "telegram" }).Validate());

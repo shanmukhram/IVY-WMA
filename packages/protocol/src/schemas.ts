@@ -132,6 +132,18 @@ export const MessageAttachment = z.object({
   blobOid: z.string().optional(),
 });
 
+/**
+ * A call event carried as a message (LINE writes its call records into the chat). `text` may still hold
+ * the platform's own system string for the call; a renderer prefers `call` when present.
+ */
+export const MessageCall = z.object({
+  kind: z.enum(["audio", "video", "unknown"]),
+  outcome: z.enum(["completed", "missed", "declined", "cancelled", "unknown"]),
+  /** whole seconds; sent only for a completed call */
+  durationSec: z.number().int().nonnegative().optional(),
+  direction: z.enum(["outgoing", "incoming"]).optional(),
+});
+
 export const Message = z.object({
   /**
    * The platform's own message id (Telegram message id, LINE local/server id, WhatsApp key id, SMS
@@ -154,6 +166,8 @@ export const Message = z.object({
   forwardedFrom: z.string().min(1).optional(),
   /** the media kind as the platform names it (photo, sticker, voice, video_note, ...); absent for plain text */
   mediaKind: z.string().min(1).optional(),
+  /** a call event (audio/video, outcome, duration); a renderer prefers this over `text` when present */
+  call: MessageCall.optional(),
   /** when the source observed the deletion; only with sourceStatus deleted_at_source (C6) */
   deletedAtSource: ts.optional(),
   attachments: z.array(MessageAttachment).default([]),

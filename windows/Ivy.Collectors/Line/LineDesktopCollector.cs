@@ -159,6 +159,7 @@ public sealed class LineDesktopCollector : Collector<LineSettings>
         MigratePollSeconds();
         MigrateNamesV2();
         MigrateAccountKeyV1();
+        MigrateCallsV1();
         return Task.CompletedTask;
     }
 
@@ -207,6 +208,28 @@ public sealed class LineDesktopCollector : Collector<LineSettings>
     }
 
     private bool _namesMigrationPending;
+
+    /// <summary>
+    /// One-time: LINE call records (content type 6) went out before the message <c>call</c> field existed, so
+    /// the Mac shows LINE's raw system text for them. Request one re-sync so they re-emit with <c>call</c>
+    /// (kind, outcome, duration, direction); the Mac merges by platform message id and fills the call columns
+    /// on the existing rows. Same pattern as <see cref="MigrateNamesV2"/>: a fresh install records the flag at
+    /// once; otherwise the flag is saved only after a tick has applied the re-sync.
+    /// </summary>
+    private void MigrateCallsV1()
+    {
+        if (Context.Settings.LoadJson(Name, "callsV1") is not null) return;
+        if (LoadCursors(LegacyCursorsKey).Count == 0)
+        {
+            Context.Settings.SaveJson(Name, "callsV1", JsonValue.Create(true));
+            return;
+        }
+        _callsMigrationPending = true;
+        RequestResync();
+        Activity(CollectorActivity.Config, "re-sending LINE chats once so existing call records show as audio/video calls with outcome and duration");
+    }
+
+    private bool _callsMigrationPending;
 
     public override Task TickAsync(CancellationToken ct)
     {
@@ -295,6 +318,12 @@ public sealed class LineDesktopCollector : Collector<LineSettings>
                 // Likewise for the re-send under the account's own id.
                 Context.Settings.SaveJson(Name, "accountKeyV1", JsonValue.Create(true));
                 _accountKeyMigrationPending = false;
+            }
+            if (_callsMigrationPending)
+            {
+                // Likewise for the re-send that adds the call field.
+                Context.Settings.SaveJson(Name, "callsV1", JsonValue.Create(true));
+                _callsMigrationPending = false;
             }
             _lastKeepHash = null;    // re-emit Keep and the account snapshot too
             _lastAccountHash = null;

@@ -926,6 +926,76 @@ public class LineCollectorTests : IDisposable
     }
 
     [Fact]
+    public async Task Call_records_are_emitted_with_a_call_object_and_the_store_text()
+    {
+        const string sysText = "system call text from the store";
+        Seed(c =>
+        {
+            LineFixture.Chat(c, "uBOB");
+            // Outgoing (sender is not the 1:1 peer), completed video call of 155.4 s.
+            LineFixture.Message(c, "k1", "uBOB", "uME", 1_760_000_000_000, sysText, contentType: 6,
+                meta: """{"TYPE":"V","RESULT":"NORMAL","CAUSE":"16","VERSION":"M","DURATION":"155400"}""");
+            // Incoming missed audio call.
+            LineFixture.Message(c, "k2", "uBOB", "uBOB", 1_760_000_100_000, sysText, contentType: 6,
+                meta: """{"TYPE":"A","RESULT":"NO_RESPONSE","CAUSE":"18","VERSION":"M","DURATION":"0"}""");
+            // Malformed metadata: still a call, but no call object.
+            LineFixture.Message(c, "k3", "uBOB", "uBOB", 1_760_000_200_000, sysText, contentType: 6, meta: "{not json");
+        });
+
+        var line = NewCollector();
+        await line.StartAsync(default);
+        await line.TickAsync(default);
+
+        var msgs = Batches().Single().Root.GetProperty("messages");
+        var k1 = msgs[0];
+        Assert.Equal("call", k1.GetProperty("mediaKind").GetString());
+        Assert.Equal(sysText, k1.GetProperty("text").GetString());               // text kept as the store has it
+        Assert.Equal("""{"kind":"video","outcome":"completed","durationSec":155,"direction":"outgoing"}""", k1.GetProperty("call").GetRawText());
+        Assert.Equal(0, k1.GetProperty("attachments").GetArrayLength());
+        Assert.Equal("""{"kind":"audio","outcome":"missed","direction":"incoming"}""", msgs[1].GetProperty("call").GetRawText());
+        Assert.Equal("call", msgs[2].GetProperty("mediaKind").GetString());
+        Assert.False(msgs[2].TryGetProperty("call", out _));
+    }
+
+    [Fact]
+    public async Task CallsV1_migration_resends_all_chats_once_with_the_call_field()
+    {
+        Seed(c =>
+        {
+            LineFixture.Chat(c, "uBOB");
+            LineFixture.Message(c, "k1", "uBOB", "uBOB", 1_760_000_000_000, "call", contentType: 6,
+                meta: """{"TYPE":"A","RESULT":"NORMAL","DURATION":"6000"}""");
+        });
+        // An install from before the call field: cursors cover everything, the earlier one-time flags are done.
+        _env.Context.Settings.SaveJson(CollectorNames.Line, "cursors", new System.Text.Json.Nodes.JsonObject { ["uBOB"] = 1_000_000 });
+        _env.Context.Settings.SaveJson(CollectorNames.Line, "namesV2", System.Text.Json.Nodes.JsonValue.Create(true));
+        _env.Context.Settings.SaveJson(CollectorNames.Line, "accountKeyV1", System.Text.Json.Nodes.JsonValue.Create(true));
+
+        var line = NewCollector();
+        await line.StartAsync(default);
+        Assert.Null(_env.Context.Settings.LoadJson(CollectorNames.Line, "callsV1"));   // not applied before a tick
+        await line.TickAsync(default);
+        Assert.NotNull(_env.Context.Settings.LoadJson(CollectorNames.Line, "callsV1"));
+        var call = Batches().Single().Root.GetProperty("messages")[0].GetProperty("call");
+        Assert.Equal(6, call.GetProperty("durationSec").GetInt64());
+
+        _env.Sink.Clear();
+        var restarted = NewCollector(ctx: _env.Restart());
+        await restarted.StartAsync(default);
+        await restarted.TickAsync(default);
+        Assert.Empty(Batches());                                                  // only once
+    }
+
+    [Fact]
+    public async Task Fresh_install_sets_callsV1_without_a_resync()
+    {
+        Seed(c => { LineFixture.Chat(c, "uBOB"); LineFixture.Message(c, "m1", "uBOB", "uBOB", 1_760_000_000_000, "one"); });
+        var line = NewCollector();
+        await line.StartAsync(default);
+        Assert.NotNull(_env.Context.Settings.LoadJson(CollectorNames.Line, "callsV1"));
+    }
+
+    [Fact]
     public async Task Unchanged_keep_is_emitted_once_across_ticks()
     {
         Seed(c => { LineFixture.OwnProfile(c, "uME", "Me"); LineFixture.Chat(c, "uX"); LineFixture.Message(c, "m", "uX", "uX", 1_760_000_000_000, "hi"); });
@@ -1336,6 +1406,7 @@ public class LineMultiAccountTests : IDisposable
         _env.Context.Settings.SaveJson(CollectorNames.Line, "cursors", new System.Text.Json.Nodes.JsonObject { ["uBOB"] = 1_000_000 });
         _env.Context.Settings.SaveJson(CollectorNames.Line, "namesV2", System.Text.Json.Nodes.JsonValue.Create(true));
         _env.Context.Settings.SaveJson(CollectorNames.Line, "accountKeyV1", System.Text.Json.Nodes.JsonValue.Create(true));
+        _env.Context.Settings.SaveJson(CollectorNames.Line, "callsV1", System.Text.Json.Nodes.JsonValue.Create(true));
 
         var line = NewCollector();
         await line.StartAsync(default);
@@ -1442,5 +1513,61 @@ public class LineWalReadCommittedTests
         wal = LineWalBytes.AppendFrame(wal, Ps, pageNumber: 3, commitSize: 0);
         Assert.Null(LineWal.ReadCommitted(wal, Ps));
         Assert.Null(LineWal.ReadCommitted(LineWalBytes.Header(Ps), Ps)); // header only, no frames
+    }
+}
+
+/// <summary><see cref="LineCalls"/>: LINE's content-type-6 call record metadata to the protocol call object.</summary>
+public class LineCallsTests
+{
+    [Fact]
+    public void Completed_video_call_with_duration()
+    {
+        var c = LineCalls.FromContentMetadata(6, """{"TYPE":"V","RESULT":"NORMAL","CAUSE":"16","VERSION":"M","DURATION":"31649000"}""", false)!;
+        Assert.Equal("video", c.Kind);
+        Assert.Equal("completed", c.Outcome);
+        Assert.Equal(31649, c.DurationSec);
+        Assert.Equal("incoming", c.Direction);
+        Assert.Equal(155, LineCalls.FromContentMetadata(6, """{"TYPE":"V","RESULT":"NORMAL","DURATION":154500}""", true)!.DurationSec); // numeric, rounds half up
+    }
+
+    [Fact]
+    public void Missed_audio_call_has_no_duration()
+    {
+        var c = LineCalls.FromContentMetadata(6, """{"TYPE":"A","RESULT":"NO_RESPONSE","CAUSE":"18","DURATION":"0"}""", false)!;
+        Assert.Equal(("audio", "missed", (long?)null, "incoming"), (c.Kind, c.Outcome, c.DurationSec, c.Direction));
+        Assert.Equal("declined", LineCalls.FromContentMetadata(6, """{"TYPE":"A","RESULT":"REJECTED","DURATION":"0"}""", false)!.Outcome);
+    }
+
+    [Fact]
+    public void Cancelled_outgoing_call()
+    {
+        var c = LineCalls.FromContentMetadata(6, """{"TYPE":"V","RESULT":"CANCELED","CAUSE":"77","DURATION":"0"}""", true)!;
+        Assert.Equal(("video", "cancelled", (long?)null, "outgoing"), (c.Kind, c.Outcome, c.DurationSec, c.Direction));
+    }
+
+    [Fact]
+    public void Unknown_codes_become_unknown()
+    {
+        var c = LineCalls.FromContentMetadata(6, """{"TYPE":"X","RESULT":"BUSY","DURATION":"5000"}""", null)!;
+        Assert.Equal(("unknown", "unknown", (long?)null, (string?)null), (c.Kind, c.Outcome, c.DurationSec, c.Direction));
+        var empty = LineCalls.FromContentMetadata(6, "{}", null)!;
+        Assert.Equal(("unknown", "unknown"), (empty.Kind, empty.Outcome));
+    }
+
+    [Fact]
+    public void Malformed_or_missing_metadata_gives_no_call_but_the_kind_stays_call()
+    {
+        Assert.Null(LineCalls.FromContentMetadata(6, "{not json", true));
+        Assert.Null(LineCalls.FromContentMetadata(6, "[1,2]", true));
+        Assert.Null(LineCalls.FromContentMetadata(6, null, true));
+        Assert.Equal("call", LineStoreMap.MediaKindFor(6));
+    }
+
+    [Fact]
+    public void Other_content_types_are_not_calls()
+    {
+        Assert.Null(LineCalls.FromContentMetadata(0, """{"TYPE":"V","RESULT":"NORMAL"}""", true));
+        Assert.Null(LineCalls.FromContentMetadata(17, """{"SPEC_REV":"1"}""", true));
+        Assert.Null(LineCalls.FromContentMetadata(null, """{"TYPE":"V"}""", true));
     }
 }

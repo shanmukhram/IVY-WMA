@@ -369,6 +369,7 @@ export function commitMessageBatch(db: DB, r: MessageBatchRecordT): CommitResult
     // from_me stays 0/1 when the source said so, null when it did not (so a later source can fill it)
     const fromMe = m.fromMe === undefined ? null : m.fromMe ? 1 : 0;
     const senderName = m.senderName ?? null;
+    const call = m.call; // a call event (LINE call record): kind, outcome, durationSec?, direction?
     const editedAt = normTs(m.editedAt);
     const deletedAt = m.sourceStatus === "deleted_at_source" ? (normTs(m.deletedAtSource) ?? captured) : null;
     const replyId = m.replyTo
@@ -401,14 +402,24 @@ export function commitMessageBatch(db: DB, r: MessageBatchRecordT): CommitResult
                     from_me = COALESCE(from_me, ?), sender_name = COALESCE(sender_name, ?),
                     reply_to = COALESCE(?, reply_to), reply_to_key = COALESCE(?, reply_to_key) WHERE id = ?`)
         .run(editedAt, editedAt, deletedAt, deletedAt, deletedAt, deletedAt, m.forwardedFrom ?? null, m.mediaKind ?? null, fromMe, senderName, replyId, m.replyTo ?? null, ex.id);
+      if (call) {
+        // a copy that carries the call fields fills them (e.g. LINE's one-time re-send); a copy without them
+        // never clears them. Its media kind wins too: LINE call rows were first stored as "location".
+        db.prepare(`UPDATE messages SET call_kind = COALESCE(?, call_kind), call_outcome = COALESCE(?, call_outcome),
+                      call_duration_s = COALESCE(?, call_duration_s), call_direction = COALESCE(?, call_direction),
+                      media_kind = COALESCE(?, media_kind) WHERE id = ?`)
+          .run(call.kind, call.outcome, call.durationSec ?? null, call.direction ?? null, m.mediaKind ?? null, ex.id);
+      }
       relink = d === "upgrade";
     } else {
       msgId = randomUUID();
       db.prepare(`INSERT INTO messages(id, conversation_id, device_id, msg_key, sender, sent_at, captured_at, text, reply_to, reply_to_key, edited_at, source_status,
-                    text_source, text_quality, forwarded_from, media_kind, from_me, sender_name, source_deleted_at)
-                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+                    text_source, text_quality, forwarded_from, media_kind, from_me, sender_name, source_deleted_at,
+                    call_kind, call_outcome, call_duration_s, call_direction)
+                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
         .run(msgId, conv.id, r.deviceId, m.msgId, m.sender, normTs(m.sentAt), captured, m.text, replyId, m.replyTo ?? null, editedAt,
-          deletedAt ? "deleted_at_source" : "live", source, preview ? "preview" : "full", m.forwardedFrom ?? null, m.mediaKind ?? null, fromMe, senderName, deletedAt);
+          deletedAt ? "deleted_at_source" : "live", source, preview ? "preview" : "full", m.forwardedFrom ?? null, m.mediaKind ?? null, fromMe, senderName, deletedAt,
+          call?.kind ?? null, call?.outcome ?? null, call?.durationSec ?? null, call?.direction ?? null);
       // resolve earlier replies that pointed at this message before it arrived
       db.prepare("UPDATE messages SET reply_to = ? WHERE conversation_id = ? AND reply_to_key = ? AND reply_to IS NULL").run(msgId, conv.id, m.msgId);
       inserted++;

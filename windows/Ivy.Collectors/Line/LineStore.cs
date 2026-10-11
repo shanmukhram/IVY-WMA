@@ -201,6 +201,7 @@ public sealed class LineStore : IDisposable
                     Text = text,
                     SourceStatus = MessageSourceStatus.Live,
                     MediaKind = LineStoreMap.MediaKindFor(contentType),
+                    Call = LineCalls.FromContentMetadata(contentType, meta, fromMe),
                     Attachments = LineAttachments.FromContentMetadata(msgId, contentType, meta),
                 });
             }

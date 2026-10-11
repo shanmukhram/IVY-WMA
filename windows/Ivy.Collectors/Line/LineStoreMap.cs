@@ -181,7 +181,7 @@ public sealed record LineStoreMap
         1 => "image",
         2 => "video",
         3 => "audio",
-        6 => "location",
+        6 => "call", // LINE's call record; details come from LineCalls (TYPE/RESULT/DURATION metadata)
         7 => "sticker",
         13 => "contact",
         14 => "file",

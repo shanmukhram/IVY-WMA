@@ -268,6 +268,25 @@ public sealed record MessageAttachment
     [JsonPropertyName("blobOid")] public string? BlobOid { get; init; }
 }
 
+/// <summary>
+/// A call event carried as a message (LINE stores its call records in the chat). <see cref="ChatMessage.Text"/>
+/// may still hold the platform's own system string; the Mac renders this object instead when present.
+/// </summary>
+public sealed record MessageCall
+{
+    /// <summary><c>audio</c>, <c>video</c> or <c>unknown</c>.</summary>
+    [JsonPropertyName("kind")] public required string Kind { get; init; }
+    /// <summary><c>completed</c>, <c>missed</c>, <c>declined</c>, <c>cancelled</c> or <c>unknown</c>.</summary>
+    [JsonPropertyName("outcome")] public required string Outcome { get; init; }
+    /// <summary>Whole seconds; set only for a completed call.</summary>
+    [JsonPropertyName("durationSec")] public long? DurationSec { get; init; }
+    /// <summary><c>outgoing</c> or <c>incoming</c>; null when not known.</summary>
+    [JsonPropertyName("direction")] public string? Direction { get; init; }
+
+    public static bool IsValidKind(string s) => s is "audio" or "video" or "unknown";
+    public static bool IsValidOutcome(string s) => s is "completed" or "missed" or "declined" or "cancelled" or "unknown";
+}
+
 /// <summary>One message of a <see cref="MessageBatchRecord"/>.</summary>
 public sealed record ChatMessage
 {
@@ -293,6 +312,8 @@ public sealed record ChatMessage
     [JsonPropertyName("forwardedFrom")] public string? ForwardedFrom { get; init; }
     /// <summary>The media kind as the platform names it (<c>photo</c>, <c>sticker</c>, <c>voice</c>, ...); null for plain text.</summary>
     [JsonPropertyName("mediaKind")] public string? MediaKind { get; init; }
+    /// <summary>A call event (kind, outcome, duration, direction); null for an ordinary message.</summary>
+    [JsonPropertyName("call")] public MessageCall? Call { get; init; }
     /// <summary>When the source observed the deletion; only with <c>sourceStatus: deleted_at_source</c>.</summary>
     [JsonPropertyName("deletedAtSource")] public string? DeletedAtSource { get; init; }
     [JsonPropertyName("attachments")] public IReadOnlyList<MessageAttachment> Attachments { get; init; } = Array.Empty<MessageAttachment>();
@@ -360,6 +381,13 @@ public sealed record MessageBatchRecord() : IvyRecord(Protocol.Kind.MessageBatch
             Optional(m.DeletedAtSource, "deletedAtSource");
             if (m.DeletedAtSource is not null && m.SourceStatus != MessageSourceStatus.DeletedAtSource)
                 throw new RecordValidationException("deletedAtSource requires sourceStatus deleted_at_source");
+            if (m.Call is { } call)
+            {
+                if (!MessageCall.IsValidKind(call.Kind)) throw new RecordValidationException($"invalid call.kind '{call.Kind}'");
+                if (!MessageCall.IsValidOutcome(call.Outcome)) throw new RecordValidationException($"invalid call.outcome '{call.Outcome}'");
+                if (call.DurationSec is < 0) throw new RecordValidationException("call.durationSec must be non-negative");
+                if (call.Direction is not (null or "outgoing" or "incoming")) throw new RecordValidationException($"invalid call.direction '{call.Direction}'");
+            }
             if (m.Attachments is null) throw new RecordValidationException("attachments is required");
             foreach (var a in m.Attachments)
             {

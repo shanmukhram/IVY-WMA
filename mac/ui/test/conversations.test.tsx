@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { screen, within, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { ConversationsView, isMine, looksLikeId } from "../src/views/Conversations.tsx";
+import { ConversationsView, callDuration, callLabel, isMine, looksLikeId } from "../src/views/Conversations.tsx";
 import { hashColor, initials } from "../src/components/Avatar.tsx";
 import { mockApi, renderWith } from "./helpers.tsx";
 
@@ -234,5 +234,60 @@ describe("conversations: LINE for Windows attachment originals", () => {
     await userEvent.setup().click(screen.getByRole("button", { name: "About Aki" }));
     const profile = await screen.findByRole("complementary", { name: "Profile" });
     expect(profile).toHaveTextContent("1 with original on the phone");
+  });
+});
+
+describe("conversations: LINE call records", () => {
+  it("labels calls by kind, outcome and duration", () => {
+    expect(callDuration(155)).toBe("2:35");
+    expect(callDuration(6)).toBe("0:06");
+    expect(callDuration(3600)).toBe("1:00:00");
+    expect(callDuration(31649)).toBe("8:47:29");
+    expect(callLabel({ kind: "audio", outcome: "completed", durationSec: 155 })).toBe("Audio call · 2:35");
+    expect(callLabel({ kind: "video", outcome: "completed", durationSec: 3725 })).toBe("Video call · 1:02:05");
+    expect(callLabel({ kind: "video", outcome: "completed" })).toBe("Video call");
+    expect(callLabel({ kind: "audio", outcome: "missed" })).toBe("Missed audio call");
+    expect(callLabel({ kind: "video", outcome: "declined" })).toBe("Declined video call");
+    expect(callLabel({ kind: "video", outcome: "cancelled" })).toBe("Cancelled video call");
+    expect(callLabel({ kind: "audio", outcome: "unknown" })).toBe("Audio call");
+    expect(callLabel({ kind: "unknown", outcome: "missed" })).toBe("Missed call");
+  });
+
+  it("renders a call row with an icon instead of LINE's system text, on the sender's side, and in the chat list", async () => {
+    const sys = "LINE system call text 155400";
+    const lineChat = {
+      id: "p2", platform: "line", account: ME, convKey: "k-p2", peer: "Aki", title: "Aki", kind: "dm", coverage: "partial",
+      coverageSources: [{ source: "windows:line-desktop", coverage: "partial" }], coverageText: "partial via windows:line-desktop", source: "windows:line-desktop",
+      messageCount: 3, lastAt: "2026-10-09T11:00:00.000Z", lastMessageAt: "2026-10-09T11:00:00.000Z", lastText: sys,
+      lastMessage: { id: "z3", sender: "Aki", fromMe: false, sentAt: "2026-10-09T11:00:00.000Z", text: sys, mediaKind: "call", call: { kind: "audio", outcome: "missed", direction: "incoming" } },
+    };
+    const line = { sources: [{ source: "windows:line-desktop", deletedAtSource: null }], media_kind: "call" };
+    const api = mockApi({
+      "GET /api/views/chats": { total: 1, page: 1, pages: 1, items: [lineChat] },
+      "GET /api/views/chats/p2/messages": { around: null, conversation: { ...lineChat, conv_key: "k-p2" }, messages: [
+        msg("z1", ME, "2026-10-09T10:00:00.000Z", sys, { ...line, fromMe: true, call: { kind: "video", outcome: "completed", durationSec: 155, direction: "outgoing" } }),
+        msg("z2", ME, "2026-10-09T10:30:00.000Z", sys, { ...line, fromMe: true, call: { kind: "video", outcome: "cancelled", direction: "outgoing" } }),
+        msg("z3", "Aki", "2026-10-09T11:00:00.000Z", sys, { ...line, fromMe: false, call: { kind: "audio", outcome: "missed", direction: "incoming" } }),
+        msg("z4", "Aki", "2026-10-09T11:05:00.000Z", "plain text", { sources: line.sources, fromMe: false }),
+      ] },
+      "GET /api/attachments": { items: [] },
+      "GET /api/views/chats/p2/profile": { conversation: lineChat, title: "Aki", messageCount: 3, firstAt: null, lastAt: null, edited: 0, deletedAtSource: 0,
+        attachments: {}, sources: [], senders: [] },
+    });
+    renderWith(<ConversationsView />, api, { path: "/conversations?source=windows:line-desktop&platform=line" });
+
+    const item = (await screen.findAllByTestId("chat-item"))[0]!;
+    expect(item).toHaveTextContent("Missed audio call");
+    expect(item).not.toHaveTextContent(sys);
+
+    const log = await screen.findByRole("log", { name: "Messages" });
+    const rows = await within(log).findAllByTestId("call-row");
+    expect(rows.map((r) => r.textContent)).toEqual(["Video call · 2:35", "Cancelled video call", "Missed audio call"]);
+    expect(rows.map((r) => r.getAttribute("data-call-kind"))).toEqual(["video", "video", "audio"]);
+    expect(rows.every((r) => r.querySelector("svg path"))).toBe(true);
+    expect(within(log).queryByText(sys)).toBeNull();
+    expect(within(log).getByText("plain text")).toBeInTheDocument();
+    const bubbles = within(log).getAllByTestId("message");
+    expect(bubbles.map((b) => b.getAttribute("data-mine"))).toEqual(["true", "true", "false", "false"]);
   });
 });
