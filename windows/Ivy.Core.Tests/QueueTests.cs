@@ -253,15 +253,17 @@ public class UploaderTests : IDisposable
         var blob = sink.EnqueueBlob(new MemoryStream(new byte[5000]), PayloadKinds.Screenshot, "screenshots");
         var rec = sink.Enqueue(Kind.UsageEvent, "up/usg", """{"v":1,"kind":"usage_event","deviceId":"dev-1","eventTime":"t","captureTime":"t","app":"a","startedAt":"t","endedAt":"t"}""", "usage");
 
-        var uploader = new Uploader(p.Queue, new FakeUpClient(server), activity: p.Activity);
+        // concurrency 1 for a deterministic order; the usage record is in the fast lane and the screenshot
+        // blob in the meta lane, so the record uploads first, then the blob's manifest and its chunks in order.
+        var uploader = new Uploader(p.Queue, new FakeUpClient(server), new UploaderOptions { Concurrency = 1 }, activity: p.Activity);
         var events = new List<UploadProgress>();
         uploader.Progress += (_, e) => { lock (events) events.Add(e); };
         Assert.Equal(7, await uploader.DrainAsync());
 
         var puts = server.Calls.Select(c => c.Split(' ')[1]).ToList();
-        Assert.Equal(blob.ManifestKey, puts[0]);
-        Assert.Equal(Enumerable.Range(0, 5).Select(i => ObjectKeys.BlobChunk(blob.Oid, i)), puts.Skip(1).Take(5));
-        Assert.Equal(rec.ObjectKey, puts[6]);
+        Assert.Equal(rec.ObjectKey, puts[0]);
+        Assert.Equal(blob.ManifestKey, puts[1]);
+        Assert.Equal(Enumerable.Range(0, 5).Select(i => ObjectKeys.BlobChunk(blob.Oid, i)), puts.Skip(2).Take(5));
         Assert.Empty(p.Queue.All());
         Assert.Empty(Directory.GetFiles(p.Queue.QueueDirectory));
         Assert.Equal(7, events.Count(e => e.Phase == UploadPhase.Completed));

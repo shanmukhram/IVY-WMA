@@ -51,8 +51,13 @@ public sealed class BackoffPolicy
 public sealed class UploadQueue
 {
     public const string PartExtension = ".ivy";
-    public const int NormalLane = 0;
-    public const int BulkLane = 1;
+    // Upload priority lanes (lower drains first). The point is that the UI-critical records — messages,
+    // the LINE account, avatars, notifications — never wait behind a big file listing. A full-PC catalogue
+    // can be hundreds of thousands of tiny file records; those go in the meta lane so conversations stay fast.
+    public const int FastLane = 0;   // messages, line_account, calls, notifications, status, pairing, avatars
+    public const int MetaLane = 1;   // file listings (file_meta incl. catalog), thumbnails, screenshots
+    public const int BulkLane = 2;   // media-policy originals (large)
+    public const int NormalLane = FastLane; // back-compat alias
     private const string TempExtension = ".tmp";
     private readonly VaultDb _db;
     private readonly TimeProvider _time;
@@ -109,7 +114,7 @@ public sealed class UploadQueue
     /// <summary>Insert rows for already-written part files, in list order, in one transaction.</summary>
     public IReadOnlyList<string> Enqueue(IReadOnlyList<PartFile> files, string? groupKey = null, string? collector = null, int lane = NormalLane)
     {
-        if (lane is not (NormalLane or BulkLane)) throw new ArgumentOutOfRangeException(nameof(lane));
+        if (lane is not (FastLane or MetaLane or BulkLane)) throw new ArgumentOutOfRangeException(nameof(lane));
         var ids = new List<string>(files.Count);
         var now = IvyTime.Now(_time);
         using (IvyUiThread.Write("UploadQueue.Enqueue"))
@@ -151,8 +156,8 @@ public sealed class UploadQueue
     }
 
     /// <summary>Write and enqueue a single ciphertext object.</summary>
-    public string EnqueueCiphertext(string objectKey, Kind kind, ReadOnlySpan<byte> ciphertext, string? collector = null, string? groupKey = null) =>
-        Enqueue(new[] { WritePartFile(objectKey, kind, ciphertext) }, groupKey, collector)[0];
+    public string EnqueueCiphertext(string objectKey, Kind kind, ReadOnlySpan<byte> ciphertext, string? collector = null, string? groupKey = null, int lane = NormalLane) =>
+        Enqueue(new[] { WritePartFile(objectKey, kind, ciphertext) }, groupKey, collector, lane)[0];
 
     public string FullPathOf(QueueItem item) => Path.Combine(QueueDirectory, item.PartPath);
 

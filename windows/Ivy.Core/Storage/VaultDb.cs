@@ -151,6 +151,21 @@ public sealed class VaultDb : IDisposable
         cmd.CommandText = "CREATE INDEX IF NOT EXISTS ix_pending_lane ON pending_uploads(status, lane, seq)";
         cmd.ExecuteNonQuery();
 
+        // v4 (one-time): three priority lanes — fast (0) messages/account/avatars/notifications, meta (1) file
+        // listings/thumbnails, bulk (2) originals. Reshuffle any already-queued items so a big backlog of file
+        // records stops holding the UI-critical records behind it. Guarded by a flag so it runs exactly once
+        // (otherwise it would keep moving new meta-lane rows into the bulk lane).
+        cmd.CommandText = "SELECT value FROM agent_settings WHERE key = 'lanes.priority.v2'";
+        if (cmd.ExecuteScalar() is not string)
+        {
+            cmd.CommandText = "UPDATE pending_uploads SET lane = 2 WHERE lane = 1";             // old bulk originals -> new bulk lane
+            cmd.ExecuteNonQuery();
+            cmd.CommandText = "UPDATE pending_uploads SET lane = 1 WHERE lane = 0 AND kind = 'file_meta'"; // queued file listings -> meta lane
+            cmd.ExecuteNonQuery();
+            cmd.CommandText = "INSERT INTO agent_settings(key, value) VALUES ('lanes.priority.v2', '1') ON CONFLICT(key) DO NOTHING";
+            cmd.ExecuteNonQuery();
+        }
+
         cmd.CommandText = "SELECT COUNT(*) FROM schema_info";
         if ((long)cmd.ExecuteScalar()! == 0)
         {

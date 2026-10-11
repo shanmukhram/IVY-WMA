@@ -141,7 +141,10 @@ public sealed class RecordSink : IRecordSink
         };
         var envelope = Envelope.Encrypt(_macPublicKey, kind, key, plaintext, _random);
         _activity?.Append(collector, ActivityEvents.Encrypted, $"{kind.WireName()} {key} {envelope.Length} bytes");
-        _queue.EnqueueCiphertext(key, kind, envelope, collector, groupKey);
+        // a file listing (incl. the full-PC catalogue) can be a huge number of records, so it rides the meta
+        // lane and never delays messages, the LINE account or notifications, which stay in the fast lane.
+        var lane = kind == Kind.FileMeta ? UploadQueue.MetaLane : UploadQueue.FastLane;
+        _queue.EnqueueCiphertext(key, kind, envelope, collector, groupKey, lane);
         _activity?.Append(collector, ActivityEvents.Queued, $"{key}");
         return new EnqueuedRecord(oid, key, envelope.Length);
     }
@@ -180,7 +183,10 @@ public sealed class RecordSink : IRecordSink
             var manifestFile = _queue.WritePartFile(manifestKey, Kind.Manifest, manifestEnvelope);
             var ordered = new List<PartFile>(written.Count + 1) { manifestFile };
             ordered.AddRange(written);
-            _queue.Enqueue(ordered, groupKey: oid, collector, bulk ? UploadQueue.BulkLane : UploadQueue.NormalLane);
+            // large media originals go in the bulk lane; a small avatar rides the fast lane (it drives the UI);
+            // thumbnails and screenshots sit in the meta lane with the file listing.
+            var lane = bulk ? UploadQueue.BulkLane : payloadKind == PayloadKinds.Avatar ? UploadQueue.FastLane : UploadQueue.MetaLane;
+            _queue.Enqueue(ordered, groupKey: oid, collector, lane);
             var digest = Bytes.ToHex(sha.GetHashAndReset());
             _activity?.Append(collector, ActivityEvents.Encrypted, $"blob {oid} {payloadKind} {total} bytes in {enc.TotalChunks} chunks");
             _activity?.Append(collector, ActivityEvents.Queued, $"{manifestKey} + {enc.TotalChunks} parts");
