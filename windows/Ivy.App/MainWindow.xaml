@@ -136,10 +136,8 @@
                         IsTitleBarAutoPaddingEnabled="False"
                         AlwaysShowHeader="False"
                         SelectionChanged="NavView_SelectionChanged"
-                        PaneClosing="NavView_PaneClosing"
                         Expanding="NavView_Expanding"
-                        Collapsed="NavView_Collapsed"
-                        ItemInvoked="NavView_ItemInvoked">
+                        Collapsed="NavView_Collapsed">
             <NavigationView.MenuItems>
                 <NavigationViewItem Content="Overview" Tag="overview" AccessKey="O" Visibility="{x:Bind ViewModel.ShowMain, Mode=OneWay}">
                     <NavigationViewItem.Icon>
@@ -196,16 +194,6 @@
             </NavigationView.MenuItems>
 
             <NavigationView.FooterMenuItems>
-                <!-- Locked window: the only entry. Plain "IVY", no icon. Each activation counts toward the unlock gesture (see ItemInvoked). -->
-                <NavigationViewItem x:Name="LockNavItem" Tag="lock" SelectsOnInvoked="False"
-                                    AutomationProperties.Name="IVY"
-                                    Visibility="{x:Bind ViewModel.ShowLocked, Mode=OneWay}">
-                    <StackPanel>
-                        <TextBlock Text="IVY" />
-                        <TextBlock Text="&#x2026;" Opacity="0.5" Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                   Visibility="{x:Bind ViewModel.Lock.ShowHint, Mode=OneWay}" />
-                    </StackPanel>
-                </NavigationViewItem>
                 <NavigationViewItem Content="Activity" Tag="activity" AccessKey="A" Visibility="{x:Bind ViewModel.ShowMain, Mode=OneWay}">
                     <NavigationViewItem.Icon>
                         <FontIcon Glyph="&#xE81C;" />
@@ -213,9 +201,28 @@
                 </NavigationViewItem>
             </NavigationView.FooterMenuItems>
 
-            <!-- Run state at the bottom of the pane: always visible, one line. -->
+            <!-- Bottom of the pane. Unlocked: run state, one line. Locked: a plain "IVY" button that fits the 48 px compact rail
+                 (PaneFooter is rendered in compact mode); each press counts toward the unlock gesture. -->
             <NavigationView.PaneFooter>
-                <TextBlock Margin="16,4,16,12" Style="{StaticResource SecondaryTextStyle}" TextTrimming="CharacterEllipsis" Visibility="{x:Bind ViewModel.ShowMain, Mode=OneWay}"><Run Text="{x:Bind ViewModel.RunStateText, Mode=OneWay}" /><Run Text="  ·  " /><Run Text="{x:Bind ViewModel.PendingObjectsText, Mode=OneWay}" /><Run Text=" queued" /></TextBlock>
+                <StackPanel>
+                    <TextBlock Margin="16,4,16,12" Style="{StaticResource SecondaryTextStyle}" TextTrimming="CharacterEllipsis" Visibility="{x:Bind ViewModel.ShowMain, Mode=OneWay}"><Run Text="{x:Bind ViewModel.RunStateText, Mode=OneWay}" /><Run Text="  ·  " /><Run Text="{x:Bind ViewModel.PendingObjectsText, Mode=OneWay}" /><Run Text=" queued" /></TextBlock>
+                    <Button x:Name="LockButton" Width="48" Margin="0,4,0,8" Padding="0" BorderThickness="0"
+                            Background="Transparent" HorizontalAlignment="Center"
+                            AutomationProperties.Name="IVY"
+                            Visibility="{x:Bind ViewModel.ShowLocked, Mode=OneWay}"
+                            Click="LockButton_Click">
+                        <Button.Resources>
+                            <SolidColorBrush x:Key="ButtonBackgroundPointerOver" Color="Transparent" />
+                            <SolidColorBrush x:Key="ButtonBackgroundPressed" Color="Transparent" />
+                        </Button.Resources>
+                        <StackPanel>
+                            <TextBlock Text="IVY" HorizontalAlignment="Center" />
+                            <TextBlock Text="&#x2026;" Opacity="0.5" HorizontalAlignment="Center"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                       Visibility="{x:Bind ViewModel.Lock.ShowHint, Mode=OneWay}" />
+                        </StackPanel>
+                    </Button>
+                </StackPanel>
             </NavigationView.PaneFooter>
 
             <Frame x:Name="ContentFrame" CacheSize="12" />

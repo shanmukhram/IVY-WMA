@@ -41,10 +41,6 @@ public sealed partial class MainWindow : Window
     /// </summary>
     private static readonly Type CoverSurfaceType = typeof(CoverPage);
 
-    /// <summary>Open pane width when unlocked (matches OpenPaneLength in MainWindow.xaml) and the narrow strip used while locked.</summary>
-    private const double NormalPaneLength = 264;
-    private const double LockedPaneLength = 112;
-
     /// <summary>True while a passphrase dialog is open, so two are never shown at once.</summary>
     private bool _promptOpen;
 
@@ -96,11 +92,8 @@ public sealed partial class MainWindow : Window
         if (args.SelectedItemContainer?.Tag is string tag) ViewModel.Navigation.Select(tag);
     }
 
-    /// <summary>Pressing the plain "IVY" entry while locked. ItemInvoked fires once per mouse click or Enter/Space, so each activation counts once.</summary>
-    private void NavView_ItemInvoked(NavigationView sender, NavigationViewItemInvokedEventArgs args)
-    {
-        if (ReferenceEquals(args.InvokedItemContainer, LockNavItem)) ViewModel.Lock.Press();
-    }
+    /// <summary>Pressing the plain "IVY" button while locked. Click fires once per mouse click or Enter/Space, so each activation counts once.</summary>
+    private void LockButton_Click(object sender, RoutedEventArgs e) => ViewModel.Lock.Press();
 
     // ---------------------------------------------------------------- window lock
 
@@ -110,30 +103,16 @@ public sealed partial class MainWindow : Window
         if (e.PropertyName is nameof(MainViewModel.ShowLocked) or nameof(MainViewModel.ShowMain)) ApplyPaneMode();
     }
 
-    /// <summary>Locked: the pane cannot be collapsed by the user (also blocks programmatic/keyboard closing).</summary>
-    private void NavView_PaneClosing(NavigationView sender, NavigationViewPaneClosingEventArgs args)
-    {
-        if (ViewModel.ShowLocked) args.Cancel = true;
-    }
-
-    /// <summary>Locked: a narrow, always-open pane that still shows item text. Otherwise the normal full-width open left pane.</summary>
+    /// <summary>Locked: the standard 48 px compact rail, closed, with the "IVY" button in the pane footer. Otherwise the full open left pane.</summary>
     private void ApplyPaneMode()
     {
         _syncing = true;
         try
         {
-            NavView.PaneDisplayMode = NavigationViewPaneDisplayMode.Left;
-            if (ViewModel.ShowLocked)
-            {
-                NavView.IsPaneToggleButtonVisible = false;
-                NavView.OpenPaneLength = LockedPaneLength;
-            }
-            else
-            {
-                NavView.IsPaneToggleButtonVisible = true;
-                NavView.OpenPaneLength = NormalPaneLength;
-            }
-            NavView.IsPaneOpen = true;
+            var locked = ViewModel.ShowLocked;
+            NavView.PaneDisplayMode = locked ? NavigationViewPaneDisplayMode.LeftCompact : NavigationViewPaneDisplayMode.Left;
+            NavView.IsPaneOpen = !locked;
+            NavView.IsPaneToggleButtonVisible = true;
         }
         finally
         {
