@@ -7,6 +7,7 @@ using Microsoft.UI;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Animation;
 using Microsoft.UI.Xaml.Media.Imaging;
 using Windows.Graphics;
@@ -46,6 +47,9 @@ public sealed partial class MainWindow : Window
 
     /// <summary>Set while this class changes the NavigationView itself, so its events do not echo back.</summary>
     private bool _syncing;
+
+    /// <summary>The NavigationView's hamburger button ("TogglePaneButton"), found in the visual tree once the template is applied.</summary>
+    private Button? _toggleButton;
 
     public MainWindow(MainViewModel viewModel)
     {
@@ -113,11 +117,56 @@ public sealed partial class MainWindow : Window
             NavView.PaneDisplayMode = locked ? NavigationViewPaneDisplayMode.LeftCompact : NavigationViewPaneDisplayMode.Left;
             NavView.IsPaneOpen = !locked;
             NavView.IsPaneToggleButtonVisible = true;
+            // Locked: the hamburger stays visible but inert (no pointer, no Tab stop). If the template has not
+            // produced it yet, NavView_Loaded applies the mode again.
+            _toggleButton ??= FindDescendant<Button>(NavView, "TogglePaneButton");
+            if (_toggleButton is not null)
+            {
+                _toggleButton.IsHitTestVisible = !locked;
+                _toggleButton.IsTabStop = !locked;
+            }
         }
         finally
         {
             _syncing = false;
         }
+    }
+
+    private void NavView_Loaded(object sender, RoutedEventArgs e)
+    {
+        _toggleButton = FindDescendant<Button>(NavView, "TogglePaneButton");
+        ApplyPaneMode();
+    }
+
+    /// <summary>
+    /// Backstop: while locked, close the pane if anything other than the (inert) toggle button opened it.
+    /// Done in PaneOpened rather than PaneOpening so IsPaneOpen is not changed from inside its own change notification.
+    /// </summary>
+    private void NavView_PaneOpened(NavigationView sender, object args)
+    {
+        if (_syncing || !ViewModel.ShowLocked) return;
+        _syncing = true;
+        try
+        {
+            NavView.IsPaneOpen = false;
+        }
+        finally
+        {
+            _syncing = false;
+        }
+    }
+
+    private static T? FindDescendant<T>(DependencyObject root, string name) where T : FrameworkElement
+    {
+        var count = VisualTreeHelper.GetChildrenCount(root);
+        for (var i = 0; i < count; i++)
+        {
+            var child = VisualTreeHelper.GetChild(root, i);
+            if (child is T match && match.Name == name) return match;
+            var found = FindDescendant<T>(child, name);
+            if (found is not null) return found;
+        }
+        return null;
     }
 
     private void OnLockChanged(object? sender, PropertyChangedEventArgs e)

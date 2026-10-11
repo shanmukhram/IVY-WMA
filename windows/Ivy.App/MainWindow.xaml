@@ -135,6 +135,8 @@
                         IsSettingsVisible="False"
                         IsTitleBarAutoPaddingEnabled="False"
                         AlwaysShowHeader="False"
+                        Loaded="NavView_Loaded"
+                        PaneOpened="NavView_PaneOpened"
                         SelectionChanged="NavView_SelectionChanged"
                         Expanding="NavView_Expanding"
                         Collapsed="NavView_Collapsed">
