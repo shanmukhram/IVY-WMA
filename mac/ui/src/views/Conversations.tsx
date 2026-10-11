@@ -19,8 +19,9 @@
  * The current shapes (snake_case message fields, `lastMessage`, `messages`/`firstMessageAt`, …) are
  * still read, so this merges cleanly whichever lands first.
  */
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useApi, useDebounced, useEvents, useLoad } from "../ctx.tsx";
+import type { ServiceEvent } from "../events.ts";
 import { href, navigate, useLocation } from "../router.ts";
 import { COVERAGE_LABEL, dayKey, dayLabel, fmtTime, friendlyTime, hm, platformLabel, shortWhen, sourceLabel } from "../format.ts";
 import { Avatar } from "../components/Avatar.tsx";
@@ -68,6 +69,54 @@ const mPreview = (m: Msg) => m.previewOnly ?? m.text_quality === "preview";
 const mDeleted = (m: Msg) => m.deletedAtSource != null || m.source_status === "deleted_at_source";
 
 /** Telegram blue / LINE green, applied around the open conversation only. */
+/** The service clamps the thread's before/after counts to this. */
+const MAX_WINDOW = 200;
+
+/** True when a scroll box is at, or within `slack` px of, its bottom; a live refresh then keeps it pinned there. */
+export function isNearBottom(el: { scrollTop: number; scrollHeight: number; clientHeight: number }, slack = 80): boolean {
+  return el.scrollHeight - el.scrollTop - el.clientHeight <= slack;
+}
+
+/**
+ * Whether an `ingest.committed` event may have changed conversation `id`: a message batch for that
+ * conversation, or a message batch whose event does not say which conversation it was for.
+ */
+export function commitTouches(ev: ServiceEvent, id: string): boolean {
+  if (ev.data?.kind !== "message_batch") return false;
+  const c = ev.data.conversationId;
+  return typeof c !== "string" || c === id;
+}
+
+/**
+ * The thread window to fetch after `grow` new messages arrived, or null when a plain reload is enough.
+ * Without `around` the route returns the newest message plus `before` older ones, so `before` grows to
+ * keep the older messages on screen. With `around` it returns `before` older messages, the pivot and up
+ * to `after` newer ones; when the shown window already reaches the newest message (fewer than after+1
+ * from the pivot on), `after` grows so the new ones fit. Both are capped at the service's limit.
+ */
+export function liveWindow(o: { around: string | null; ids: string[]; before: number; after: number; grow: number }): { before: number; after: number } | null {
+  if (o.grow <= 0) return null;
+  if (!o.around) {
+    const before = Math.min(MAX_WINDOW, o.before + o.grow);
+    return before !== o.before ? { before, after: o.after } : null;
+  }
+  const i = o.ids.indexOf(o.around);
+  const newer = i < 0 ? 1 : o.ids.length - i; // the pivot and everything after it
+  if (newer > o.after) return null; // reading further back than the newest messages: nothing new would show
+  const after = Math.min(MAX_WINDOW, Math.max(o.after, newer - 1 + o.grow));
+  return after !== o.after ? { before: o.before, after } : null;
+}
+
+/** The first message bubble visible in the scroll box and its offset from the box's top edge. */
+function firstVisible(el: HTMLElement): { id: string; top: number } | null {
+  const box = el.getBoundingClientRect();
+  for (const m of el.querySelectorAll<HTMLElement>("[data-mid]")) {
+    const r = m.getBoundingClientRect();
+    if (r.bottom > box.top) return { id: m.dataset.mid!, top: r.top - box.top };
+  }
+  return null;
+}
+
 const platformTheme = (platform: string | undefined) => {
   const p = (platform ?? "").toLowerCase();
   return p === "telegram" || p === "line" ? ` conv-${p}` : "";
@@ -190,6 +239,41 @@ function Thread({ id, around, hintAvatar, onOpenProfile }: { id: string; around:
     setScrolled(true);
   }, [msgs.length, around, scrolled]);
 
+  // Live updates: when the service commits a message batch for this chat (or one it cannot attribute),
+  // refetch the window after a short debounce, growing it so new messages fit (see liveWindow); edits
+  // alone, or a window far back in history, get a plain reload of what is shown.
+  const pendingNew = useRef(0);
+  const live = useRef<{ atBottom: boolean; anchor: { id: string; top: number } | null } | null>(null);
+  const refresh = useDebounced(() => {
+    const grow = pendingNew.current;
+    pendingNew.current = 0;
+    const el = scroller.current;
+    live.current = { atBottom: el ? isNearBottom(el) : true, anchor: el ? firstVisible(el) : null };
+    const w = liveWindow({ around, ids: msgs.map((m) => m.id), before, after, grow });
+    if (w) { setBefore(w.before); setAfter(w.after); } else r.reload();
+  }, 500);
+  useEvents((ev) => {
+    if (!commitTouches(ev, id)) return;
+    const n = ev.data.inserted;
+    pendingNew.current += typeof n === "number" ? Math.max(0, n) : 1; // an event without a count: assume one new message
+    refresh();
+  }, ["ingest.committed"]);
+  // When a live refresh lands: stay pinned to the bottom if the reader was there, else keep the
+  // message they were looking at in the same place.
+  useLayoutEffect(() => {
+    const s = live.current, el = scroller.current;
+    if (!s || r.loading || !el) return;
+    live.current = null;
+    if (s.atBottom) { el.scrollTop = el.scrollHeight; return; }
+    if (!s.anchor) return;
+    for (const m of el.querySelectorAll<HTMLElement>("[data-mid]")) {
+      if (m.dataset.mid !== s.anchor.id) continue;
+      const delta = m.getBoundingClientRect().top - el.getBoundingClientRect().top - s.anchor.top;
+      if (delta) el.scrollTop += delta;
+      break;
+    }
+  }, [r.data, r.loading]);
+
   const byId = useMemo(() => new Map(msgs.map((m) => [m.id, m])), [msgs]);
   const account = conv?.account ?? "";
   const group = conv?.kind === "group";
@@ -241,7 +325,7 @@ function Thread({ id, around, hintAvatar, onOpenProfile }: { id: string; around:
           return (
             <div key={m.id} style={{ display: "contents" }}>
               {sep}
-              <div className={`msg ${mine ? "mine" : "theirs"}${m.id === around ? " hit" : ""}${deleted ? " deleted" : ""}`} data-testid={m.id === around ? "thread-hit" : "message"} data-mine={mine ? "true" : "false"}>
+              <div className={`msg ${mine ? "mine" : "theirs"}${m.id === around ? " hit" : ""}${deleted ? " deleted" : ""}`} data-testid={m.id === around ? "thread-hit" : "message"} data-mid={m.id} data-mine={mine ? "true" : "false"}>
                 {showAvatar && (showSender
                   ? <Avatar name={senderLabel} size={26} colorKey={`${conv?.platform}:${m.sender}`} src={m.senderAvatarUrl} />
                   : <span className="msg-ava-gap" aria-hidden="true" />)}
