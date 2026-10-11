@@ -151,6 +151,30 @@ public class TelegramCollectorTests : IDisposable
         Assert.Empty(Batches());
     }
 
+    [Fact]
+    public async Task Resync_rewalks_completed_history()
+    {
+        WriteFixture();
+        var fake = new FakeTelegramClient();
+        var dm = fake.AddDm("user:1", "Bob", "Bob");
+        for (var i = 1; i <= 3; i++) fake.AddMessage(dm.ConvKey, Msg(i, "u1", $"m{i}", i));
+
+        var tg = NewCollector(fake, new TelegramSettings { TdataPath = Tdata, HistoryPageSize = 10, HistoryPagesPerTick = 5 });
+        await tg.StartAsync(default);
+        await tg.TickAsync(default);                       // backfill all 3, history complete
+        Assert.True(tg.Store.GetChat("user:1")!.HistoryComplete);
+
+        _env.Sink.Clear();
+        await tg.TickAsync(default);                       // a plain tick re-emits nothing
+        Assert.Empty(Batches());
+
+        tg.RequestResync();                                // the one-time re-sync
+        await tg.TickAsync(default);                       // re-walks the completed chat
+        var ids = Batches().SelectMany(MessagesOf).Select(m => m.GetProperty("msgId").GetString()).OrderBy(x => int.Parse(x!)).ToArray();
+        Assert.Equal(new[] { "1", "2", "3" }, ids);        // every message re-emitted (Mac merges by msgId)
+        Assert.True(tg.Store.GetChat("user:1")!.HistoryComplete); // complete again after the re-walk
+    }
+
     // ---------------------------------------------------------------- incremental
 
     [Fact]

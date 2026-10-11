@@ -145,6 +145,22 @@ public sealed class TelegramStore
         cmd.ExecuteNonQuery();
     }
 
+    /// <summary>
+    /// Clear every chat's backfill progress so the next tick re-walks all history from the latest message.
+    /// Used by the one-time re-sync: existing chats were captured before message sides, sender names and
+    /// avatars existed, and those ride on freshly emitted records. The Mac merges by platform message id, so
+    /// re-emitting updates each message in place rather than duplicating it. newest_seen_id is left alone so
+    /// incremental dedupe is unaffected. Returns the number of chats reset.
+    /// </summary>
+    public int ResetHistory()
+    {
+        using var c = _db.Open();
+        using var cmd = c.CreateCommand();
+        cmd.CommandText = "UPDATE tg_chat_state SET history_complete = 0, oldest_fetched_id = NULL, messages_seen = 0, updated_at = $u";
+        cmd.Parameters.AddWithValue("$u", DateTimeOffset.UtcNow.ToString("O"));
+        return cmd.ExecuteNonQuery();
+    }
+
     // ---- attachments ----
 
     public sealed record AttachmentRow(string AttRef, string ConvKey, long MsgId, string Kind, string Filename, long Size, string? OriginHash, string? BlobOid, string Status);

@@ -52,6 +52,13 @@ public sealed class TelegramCollector : Collector<TelegramSettings>
     private bool _connected;
     private DateTimeOffset? _floodUntil;
     private IReadOnlyList<TgDialog> _dialogs = Array.Empty<TgDialog>();
+    private volatile bool _resyncRequested;
+
+    /// <summary>
+    /// Ask the collector to re-walk all history on its next tick (the one-time re-sync). Existing chats then
+    /// re-emit with message sides, sender names and avatars; the Mac merges by platform message id.
+    /// </summary>
+    public void RequestResync() => _resyncRequested = true;
 
     public TelegramCollector(
         CollectorContext context,
@@ -147,6 +154,13 @@ public sealed class TelegramCollector : Collector<TelegramSettings>
         try
         {
             await RefreshDialogsAsync(ct).ConfigureAwait(false);
+            if (_resyncRequested)
+            {
+                _resyncRequested = false;
+                var n = _store.ResetHistory();
+                _avatarCaptured.Clear(); // in-memory; cleared so avatars re-download on the re-walk
+                Activity(CollectorActivity.ScanStarted, $"re-sync: re-walking all history for {n} chats");
+            }
             var budget = new TickBudget(Settings.HistoryPagesPerTick, Settings.OriginalsBytesPerTick);
             await BackfillAsync(sink, budget, ct).ConfigureAwait(false);
             await IncrementalAsync(sink, budget, ct).ConfigureAwait(false);

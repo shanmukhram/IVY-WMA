@@ -41,6 +41,13 @@ public sealed class LineDesktopCollector : Collector<LineSettings>
     private readonly string _tempRoot;
 
     private Dictionary<string, long> _cursors = new(StringComparer.Ordinal);
+    private volatile bool _resyncRequested;
+
+    /// <summary>
+    /// Ask the collector to re-read all chats, Keep and the account snapshot on its next tick (the one-time
+    /// re-sync), so existing messages re-emit with sides and sender names. The Mac merges by platform message id.
+    /// </summary>
+    public void RequestResync() => _resyncRequested = true;
     private string? _verifiedVersion;
 
     private readonly ILineKeyStore? _keyStore;
@@ -191,6 +198,16 @@ public sealed class LineDesktopCollector : Collector<LineSettings>
         _verifiedVersion = version;
         var sink = Sink;
         if (sink is null) return Task.CompletedTask; // not paired yet; verified, nothing to emit
+
+        if (_resyncRequested)
+        {
+            _resyncRequested = false;
+            _cursors.Clear();   // re-read every chat from the start
+            SaveCursors();
+            _lastKeepHash = null;    // re-emit Keep and the account snapshot too
+            _lastAccountHash = null;
+            Activity(CollectorActivity.ScanStarted, "re-sync: re-reading all LINE chats, Keep and the account snapshot");
+        }
 
         var chats = store.Chats();
         var newMessages = 0;
