@@ -133,6 +133,7 @@ public sealed class LineDesktopCollector : Collector<LineSettings>
     {
         _cursors = LoadCursors();
         _verifiedVersion = null;
+        MigratePollSeconds();
         return Task.CompletedTask;
     }
 
@@ -445,6 +446,22 @@ public sealed class LineDesktopCollector : Collector<LineSettings>
         var node = new JsonObject();
         foreach (var (k, v) in _cursors) node[k] = JsonValue.Create(v);
         Context.Settings.SaveJson(Name, "cursors", node);
+    }
+
+    /// <summary>
+    /// One-time: installs that saved the old 300 s default keep it forever (saved settings are merged over the
+    /// code defaults), so move exactly that value to 5 s. Any other user-chosen value is left alone.
+    /// </summary>
+    private void MigratePollSeconds()
+    {
+        if (Context.Settings.LoadJson(Name, "pollMigratedV1") is not null) return;
+        if (Settings.PollSeconds == 300)
+        {
+            ApplySettings(Merge(GetSettingsJson(), new JsonObject { ["pollSeconds"] = 5 }));
+            Context.Settings.SaveSettings(Name, GetSettingsJson());
+            Activity(CollectorActivity.Config, "poll interval moved from 300 s to 5 s so new messages show up at once");
+        }
+        Context.Settings.SaveJson(Name, "pollMigratedV1", JsonValue.Create(true));
     }
 
     private void ClearRunProbe()

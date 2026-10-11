@@ -416,6 +416,38 @@ public class LineCollectorTests : IDisposable
     [Fact]
     public void Poll_cadence_defaults_to_five_seconds() => Assert.Equal(5, new LineSettings().PollSeconds);
 
+    private LineDesktopCollector CollectorWithSavedPoll(int seconds)
+    {
+        // The host merges saved settings over the defaults before StartAsync; mirror that here.
+        var line = NewCollector();
+        line.ApplySettings(Ivy.Collectors.Host.CollectorHost.Merge(line.GetSettingsJson(), new System.Text.Json.Nodes.JsonObject { ["pollSeconds"] = seconds }));
+        return line;
+    }
+
+    [Fact]
+    public async Task Saved_300_second_poll_is_migrated_to_5_once()
+    {
+        var line = CollectorWithSavedPoll(300);
+        await line.StartAsync(default);
+        Assert.Equal(TimeSpan.FromSeconds(5), line.Interval);
+        Assert.Equal(5, (int)_env.Context.Settings.LoadSettings(CollectorNames.Line)!["pollSeconds"]!);
+
+        // the user sets 300 again and restarts: not migrated a second time
+        line.ApplySettings(Ivy.Collectors.Host.CollectorHost.Merge(line.GetSettingsJson(), new System.Text.Json.Nodes.JsonObject { ["pollSeconds"] = 300 }));
+        var again = NewCollector();
+        again.ApplySettings(line.GetSettingsJson());
+        await again.StartAsync(default);
+        Assert.Equal(TimeSpan.FromSeconds(300), again.Interval);
+    }
+
+    [Fact]
+    public async Task Saved_custom_poll_is_left_alone()
+    {
+        var line = CollectorWithSavedPoll(60);
+        await line.StartAsync(default);
+        Assert.Equal(TimeSpan.FromSeconds(60), line.Interval);
+    }
+
     [Fact]
     public async Task Not_installed_when_no_data_folder_exists()
     {
