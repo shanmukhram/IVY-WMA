@@ -232,6 +232,13 @@ A full app window plus a tray icon, in the family's Supabase-style dark look: ne
 
 No search, no timeline, no archive browser, no settings beyond capture and network. Everything else lives in the Mac dashboard.
 
+Window privacy lock (owner's own screen, see docs/CONTEXT.md). Because this window shows which of the owner's own accounts are backed up, the app can keep its window behind a passphrase — the ordinary app-lock / screen-lock idea, to stop a bystander glancing at the owner's screen from seeing the owner's own backup. It protects only the owner's own view on hardware the owner controls; it deceives no one and is not a substitute for the encryption that protects the data.
+- On every launch the window opens locked: the existing sidebar and app background stay, but the sidebar collapses to a single plain entry placed where the Activity item is now, and the main area is a neutral placeholder in the app's normal background. Nothing else — no collector rows, no status — is shown.
+- Repeating a quiet gesture on that entry (about 20 presses) opens an "enter passphrase" prompt. On first use it instead asks the owner to set one. The passphrase is separate from the Mac vault passphrase and is stored only as a salted hash, protected with DPAPI; never in plaintext, never logged.
+- The correct passphrase reveals the full normal UI for that session. A wrong one leaves the window locked, with no hint. The window re-locks on close and on relaunch; unlock is per-session and never remembered.
+- Capture is independent of the lock: all collectors, the uploader, pairing, and sync keep running whether the window is locked or revealed. The tray stays a bare neutral icon with no status or revealing menu.
+- The neutral placeholder is built as a swappable cover surface so a later phase can put a real, useful accessibility/utility feature in its place without changing the lock or reveal logic.
+
 ## Success metrics
 
 | Metric | Target | How measured |

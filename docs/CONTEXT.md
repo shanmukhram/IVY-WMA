@@ -11,6 +11,9 @@ How it works, plainly:
 - Every record is encrypted on the device to the Mac's public key before it leaves, uploaded to the user's own Cloudflare R2 storage, then fetched and decrypted on the Mac. The cloud only ever holds ciphertext.
 - Search, timelines, and AI questions all run against the Mac's local copy.
 
+A privacy lock on the owner's own window:
+- Because a companion's own window shows which of the owner's accounts are being backed up, the companion can keep that window behind a simple passphrase — the same idea as a phone's app-lock or a screen lock. Until the owner enters their own passphrase, the window shows a neutral screen and none of the backup details; the sidebar collapses to a single plain entry. This only keeps someone glancing at the owner's screen from seeing the owner's own backup; it is an ordinary UI privacy lock, not a substitute for the encryption that actually protects the data, and it changes nothing about what is captured. Backup keeps running while the window is locked. There is no deception of anyone else — it protects the owner's own view on hardware the owner controls.
+
 What IVY does not do:
 - It observes no one but the owner, on hardware the owner controls.
 - It has no server-side compute, no plaintext outside device memory, and no third-party access.
