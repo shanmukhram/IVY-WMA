@@ -77,6 +77,7 @@ public sealed partial class MainWindow : Window
         ViewModel.Lock.PropertyChanged += OnLockChanged;
         SyncExpanded();
         SyncSelection();
+        ApplyPaneMode();
     }
 
     public MainViewModel ViewModel { get; }
@@ -102,6 +103,32 @@ public sealed partial class MainWindow : Window
     private void OnViewModelChanged(object? sender, PropertyChangedEventArgs e)
     {
         if (e.PropertyName == nameof(MainViewModel.ShowLocked)) SyncSelection();
+        if (e.PropertyName is nameof(MainViewModel.ShowLocked) or nameof(MainViewModel.ShowMain)) ApplyPaneMode();
+    }
+
+    /// <summary>Locked: the pane stays compact and cannot be expanded. Otherwise the normal open left pane.</summary>
+    private void ApplyPaneMode()
+    {
+        _syncing = true;
+        try
+        {
+            if (ViewModel.ShowLocked)
+            {
+                NavView.PaneDisplayMode = NavigationViewPaneDisplayMode.LeftCompact;
+                NavView.IsPaneOpen = false;
+                NavView.IsPaneToggleButtonVisible = false;
+            }
+            else
+            {
+                NavView.PaneDisplayMode = NavigationViewPaneDisplayMode.Left;
+                NavView.IsPaneToggleButtonVisible = true;
+                NavView.IsPaneOpen = true;
+            }
+        }
+        finally
+        {
+            _syncing = false;
+        }
     }
 
     private void OnLockChanged(object? sender, PropertyChangedEventArgs e)
