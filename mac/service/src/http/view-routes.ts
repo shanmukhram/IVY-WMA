@@ -29,6 +29,7 @@ import type { Service } from "../service.ts";
 import { enrich, itemView, type BaseItem } from "../query/details.ts";
 import { ITEM_TYPES, TYPE_DEFS, filterSql, selectList, type ItemType } from "../query/types.ts";
 import { coverageView } from "../query/sources.ts";
+import { callView, type CallCols } from "../util/call.ts";
 
 const int = (v: unknown, dflt: number, min: number, max: number): number => {
   const n = v === undefined || v === "" ? NaN : Number(v);
@@ -64,19 +65,6 @@ export function attachmentStatusSql(a = "a"): string {
       AND EXISTS (SELECT 1 FROM message_sources ps WHERE ps.message_id = ${a}.message_id AND ps.source_session = '${LINE_WINDOWS_SOURCE}')
       AND NOT EXISTS (SELECT 1 FROM message_sources ps WHERE ps.message_id = ${a}.message_id AND ps.source_session <> '${LINE_WINDOWS_SOURCE}')
     THEN 'phone_only' ELSE ${a}.status END`;
-}
-
-/** The stored call columns of a message (all null for an ordinary message). */
-type CallCols = { call_kind: string | null; call_outcome: string | null; call_duration_s: number | null; call_direction: string | null };
-
-/** The message's `call` object as the UI reads it (PROTOCOL.md §6), or null when the message is not a call. */
-export function callView(r: CallCols): { kind: string; outcome: string; durationSec?: number; direction?: string } | null {
-  if (r.call_kind == null) return null;
-  return {
-    kind: r.call_kind, outcome: r.call_outcome ?? "unknown",
-    ...(r.call_duration_s != null ? { durationSec: r.call_duration_s } : {}),
-    ...(r.call_direction != null ? { direction: r.call_direction } : {}),
-  };
 }
 
 export function registerViewRoutes(app: FastifyInstance, svc: Service): void {

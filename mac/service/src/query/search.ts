@@ -299,14 +299,19 @@ export async function search(ctx: Ctx, params: SearchParams, semantic?: Semantic
     ...fuzzyPage.map((h) => ({ r: h.row, match: "fuzzy" as const, dist: h.dist })),
   ];
   const enriched = enrich(ctx, pageRows.map((p) => p.r));
-  const items = pageRows.map((p, i) => ({
-    ...itemView(enriched[i]!),
-    match: p.match,
-    typos: p.dist,
-    score: p.r.score,
-    snippet: plainSnippet(p.r.snippet) ?? (p.r.body ?? "").slice(0, 160),
-    snippetHtml: snippetHtml(p.r.snippet) ?? snippetHtml((p.r.body ?? "").slice(0, 160)),
-  }));
+  const items = pageRows.map((p, i) => {
+    const e = enriched[i]!;
+    // a call message's snippet is its label (the stored text is the platform's system text, with no highlight)
+    const snip = e.call ? null : p.r.snippet;
+    return {
+      ...itemView(e),
+      match: p.match,
+      typos: p.dist,
+      score: p.r.score,
+      snippet: plainSnippet(snip) ?? (e.body ?? "").slice(0, 160),
+      snippetHtml: snippetHtml(snip) ?? snippetHtml((e.body ?? "").slice(0, 160)),
+    };
+  });
 
   const groups: Array<{ type: string; items: typeof items }> = [];
   for (const it of items) {

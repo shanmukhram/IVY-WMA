@@ -54,6 +54,18 @@ describe("search", () => {
     await waitFor(() => expect(api.calls.filter((c) => c.path === "/api/search").at(-1)!.arg.page).toBe(2));
   });
 
+  it("shows a call message as the call row with its label, not the stored system text", async () => {
+    const call = { kind: "video", outcome: "completed", durationSec: 155, direction: "incoming" };
+    const r = result(1);
+    r.items = [item({ type: "message", id: "m7", app: "line", title: "Aki", person: "Aki", body: "Video call · 2:35", snippet: "Video call · 2:35", snippetHtml: "Video call · 2:35",
+      call, detail: { conversationId: "c1", platform: "line", account: "bunny@line", attachments: 0 } })] as never;
+    renderWith(<SearchView />, mockApi({ "GET /api/facets": facets, "GET /api/search": () => r }), { path: "/?q=millisecs" });
+    const row = await screen.findByTestId("call-row");
+    expect(row).toHaveTextContent("Video call · 2:35");
+    expect(row).toHaveAttribute("data-call-kind", "video");
+    expect(row.querySelector("svg path")).not.toBeNull();
+  });
+
   it("shows the labeled semantic section only when the API reports semantic support", async () => {
     renderWith(<SearchView />, mockApi({ "GET /api/facets": facets, "GET /api/search": () => result(1, true) }), { path: "/?q=collab" });
     const sem = await screen.findByRole("region", { name: "Semantic matches" });

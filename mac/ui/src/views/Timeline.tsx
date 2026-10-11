@@ -10,6 +10,7 @@ import { TYPE_LABEL, TYPE_PLURAL, hm, localDate, longDate, platformLabel, roleLa
 import { Icon } from "../components/Icon.tsx";
 import { Link } from "../components/Controls.tsx";
 import { Badge, Empty, ErrorLine, Notice, Pager, Time } from "../components/Feedback.tsx";
+import { CallRow } from "../components/CallRow.tsx";
 import { RecordIcon, recordHref, titleOf, type Item } from "./records.tsx";
 import { AiDrawer } from "./Ai.tsx";
 
@@ -58,7 +59,7 @@ function Event({ it }: { it: Item }) {
       <RecordIcon it={it} small />
       <div className="ev-body">
         <span className="ev-title">{titleOf(it)}</span>
-        {text && <span className="ev-text">{text}</span>}
+        {it.call ? <span className="ev-text"><CallRow call={it.call} /></span> : text && <span className="ev-text">{text}</span>}
         {isMedia && to && <Link to={to} aria-label={`Open ${it.type} in Media`}><img className="ev-thumb" src={d.thumbUrl} alt={`${it.type} ${it.title ?? ""}`} loading="lazy" /></Link>}
         <span className="ev-meta">
           <span>{TYPE_LABEL[it.type] ?? it.type}</span>

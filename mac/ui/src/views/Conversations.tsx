@@ -27,6 +27,9 @@ import { COVERAGE_LABEL, dayKey, dayLabel, fmtTime, friendlyTime, hm, platformLa
 import { Avatar } from "../components/Avatar.tsx";
 import { AppIcon } from "../components/AppIcon.tsx";
 import { Icon } from "../components/Icon.tsx";
+import { CallRow, callDuration, callLabel, type MsgCall } from "../components/CallRow.tsx";
+
+export { callDuration, callLabel, type MsgCall };
 import { SearchField } from "../components/Controls.tsx";
 import { Badge, Empty, ErrorLine } from "../components/Feedback.tsx";
 import { SlideOver } from "../components/Overlay.tsx";
@@ -42,8 +45,6 @@ export interface Chat {
   messageCount: number; firstMessageAt?: string | null; lastMessageAt: string | null;
   lastMessage?: { id: string; sender: string; senderName?: string | null; fromMe?: boolean; sentAt: string; text: string; mediaKind?: string | null; sourceStatus?: string; call?: MsgCall | null } | null;
 }
-/** A call event carried as a message (PROTOCOL.md §6); shown instead of the platform's system text. */
-export interface MsgCall { kind: string; outcome: string; durationSec?: number; direction?: string }
 export interface Msg {
   id: string; msg_key: string; sender: string; senderName?: string | null; senderAvatarUrl?: string | null; fromMe?: boolean;
   sent_at: string; sentAt?: string; captured_at: string; capturedAt?: string; text: string; text_quality?: string; previewOnly?: boolean;
@@ -74,37 +75,6 @@ const mForwarded = (m: Msg) => m.forwardedFrom ?? m.forwarded_from ?? null;
 const mMediaKind = (m: Msg) => m.mediaKind ?? m.media_kind ?? null;
 const mPreview = (m: Msg) => m.previewOnly ?? m.text_quality === "preview";
 const mDeleted = (m: Msg) => m.deletedAtSource != null || m.source_status === "deleted_at_source";
-
-/** A call's length: m:ss, or h:mm:ss from an hour up. */
-export function callDuration(sec: number): string {
-  const s = Math.max(0, Math.round(sec));
-  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), r = s % 60;
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return h > 0 ? `${h}:${pad(m)}:${pad(r)}` : `${m}:${pad(r)}`;
-}
-
-/** The short label for a call ("Audio call · 2:35", "Missed audio call", ...), used in the bubble and the chat list. */
-export function callLabel(c: MsgCall): string {
-  const noun = c.kind === "audio" ? "audio call" : c.kind === "video" ? "video call" : "call";
-  const Noun = noun[0]!.toUpperCase() + noun.slice(1);
-  switch (c.outcome) {
-    case "completed": return c.durationSec != null ? `${Noun} · ${callDuration(c.durationSec)}` : Noun;
-    case "missed": return `Missed ${noun}`;
-    case "declined": return `Declined ${noun}`;
-    case "cancelled": return `Cancelled ${noun}`;
-    default: return Noun;
-  }
-}
-
-/** The call row shown in a bubble in place of the text: a handset or camera icon, then the label. */
-function CallRow({ call }: { call: MsgCall }) {
-  return (
-    <span className="call-row" data-testid="call-row" data-call-kind={call.kind} style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-      <Icon name={call.kind === "video" ? "video" : "call"} size={14} />
-      <span>{callLabel(call)}</span>
-    </span>
-  );
-}
 
 /** Telegram blue / LINE green, applied around the open conversation only. */
 /** The service clamps the thread's before/after counts to this. */

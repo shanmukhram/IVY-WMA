@@ -28,6 +28,17 @@ function result() {
 }
 
 describe("timeline", () => {
+  it("shows a call message as the call row with its label", async () => {
+    const call = { type: "message", id: "mc", deviceId: WIN, app: "line", eventTime: at(10, 0), timeField: "sent_at", capturedAt: at(23, 0), title: "Aki", body: "Missed audio call", person: "Aki",
+      call: { kind: "audio", outcome: "missed", direction: "incoming" }, detail: { conversationId: "c1", platform: "line", account: "bunny" } };
+    const r = { ...result(), items: [call], total: 1, counts: { message: 1 }, hours: [{ index: 10, from: at(10), to: at(11), count: 1 }] };
+    renderWith(<TimelineView />, mockApi({ "GET /api/timeline": r }), { path: `/timeline?date=2026-09-24` });
+    const row = await screen.findByTestId("call-row");
+    expect(row).toHaveTextContent("Missed audio call");
+    expect(row).toHaveAttribute("data-call-kind", "audio");
+    expect(row.querySelector("svg path")).not.toBeNull();
+  });
+
   it("places gaps on the axis as shaded bands with one label per window", async () => {
     const api = mockApi({ "GET /api/timeline": result() });
     renderWith(<TimelineView />, api, { path: `/timeline?date=2026-09-24` });

@@ -5,6 +5,7 @@
 import type { Ctx } from "../context.ts";
 import type { ItemType } from "./types.ts";
 import { messageSources } from "./sources.ts";
+import { callLabel, callView, type CallView } from "../util/call.ts";
 
 export interface BaseItem {
   type: ItemType; rid: number; id: string; device_id: string | null; app: string | null; event_time: string | null;
@@ -20,10 +21,13 @@ function fileAvailability(f: { status: string; local_path: string | null; thumb_
 
 function inClause(n: number) { return Array.from({ length: n }, () => "?").join(","); }
 
-export function enrich(ctx: Ctx, items: BaseItem[]): Array<BaseItem & { detail: Record<string, unknown> }> {
+export type Enriched = BaseItem & { detail: Record<string, unknown>; call: CallView | null };
+
+export function enrich(ctx: Ctx, items: BaseItem[]): Enriched[] {
   const byType = new Map<ItemType, string[]>();
   for (const it of items) byType.set(it.type, [...(byType.get(it.type) ?? []), it.id]);
   const details = new Map<string, Record<string, unknown>>();
+  const calls = new Map<string, CallView>();
   const db = ctx.db;
   for (const [type, ids] of byType) {
     if (!ids.length) continue;
@@ -32,8 +36,11 @@ export function enrich(ctx: Ctx, items: BaseItem[]): Array<BaseItem & { detail: 
       const prov = messageSources(db, ids);
       for (const r of db.prepare(`SELECT x.id, x.conversation_id, c.platform, c.account, c.peer, c.kind AS conv_kind, c.coverage, x.sent_at,
                                          x.edited_at, x.reply_to, x.source_status, x.msg_key,
-                                         (SELECT COUNT(*) FROM attachments a WHERE a.message_id = x.id AND a.deleted_at IS NULL) AS attachments
+                                         (SELECT COUNT(*) FROM attachments a WHERE a.message_id = x.id AND a.deleted_at IS NULL) AS attachments,
+                                         x.call_kind, x.call_outcome, x.call_duration_s, x.call_direction
                                   FROM messages x JOIN conversations c ON c.id = x.conversation_id WHERE x.id IN (${q})`).all(...ids) as Array<Record<string, unknown>>) {
+        const call = callView(r as never);
+        if (call) calls.set(String(r.id), call);
         details.set(String(r.id), {
           conversationId: r.conversation_id, platform: r.platform, account: r.account, peer: r.peer, conversationKind: r.conv_kind,
           coverage: r.coverage, sentAt: r.sent_at, editedAt: r.edited_at, replyTo: r.reply_to, sourceStatus: r.source_status,
@@ -82,14 +89,19 @@ export function enrich(ctx: Ctx, items: BaseItem[]): Array<BaseItem & { detail: 
       }
     }
   }
-  return items.map((it) => ({ ...it, detail: details.get(it.id) ?? {} }));
+  return items.map((it) => {
+    const call = it.type === "message" ? calls.get(it.id) ?? null : null;
+    // a call message shows the same label as the conversation view, not LINE's system text
+    return { ...it, body: call ? callLabel(call) : it.body, detail: details.get(it.id) ?? {}, call };
+  });
 }
 
 /** API shape of an item. */
-export function itemView(it: BaseItem & { detail: Record<string, unknown> }) {
+export function itemView(it: Enriched) {
   return {
     type: it.type, id: it.id, deviceId: it.device_id, app: it.app,
     eventTime: it.event_time, timeField: it.time_field, capturedAt: it.captured_at,
     title: it.title, body: it.body, person: it.person, detail: it.detail,
+    ...(it.call ? { call: it.call } : {}),
   };
 }

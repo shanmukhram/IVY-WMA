@@ -8,6 +8,7 @@ import { href } from "../router.ts";
 import { Icon, TYPE_ICON } from "../components/Icon.tsx";
 import { AppIcon } from "../components/AppIcon.tsx";
 import { Link } from "../components/Controls.tsx";
+import { CallRow, type MsgCall } from "../components/CallRow.tsx";
 import { Badge, Time } from "../components/Feedback.tsx";
 import { Sheet } from "../components/Overlay.tsx";
 import { TYPE_LABEL, bytes, hm, platformLabel, roleLabel, shortId } from "../format.ts";
@@ -19,6 +20,8 @@ export interface Item {
   detail: Record<string, any>;
   match?: "exact" | "fuzzy"; typos?: number; snippet?: string | null; snippetHtml?: string | null;
   ocrText?: string | null;
+  /** set on a message that is a call event; body is then already the call label */
+  call?: MsgCall | null;
 }
 export interface DeviceLite { id: string; role: string }
 
@@ -128,7 +131,8 @@ export function RecordCard({ it, devices, onBin, inList }: { it: Item; devices?:
           <span className="rec-title" title={titleOf(it)}>{titleOf(it)}</span>
           <span className="rec-time"><Time at={it.eventTime} field={it.timeField} captured={it.capturedAt} imported={d.importedAt} /></span>
         </div>
-        {it.snippetHtml != null
+        {it.call ? <p className="rec-snippet"><CallRow call={it.call} /></p>
+          : it.snippetHtml != null
           ? <p className="rec-snippet" dangerouslySetInnerHTML={{ __html: it.snippetHtml }} />
           : it.body ? <p className="rec-snippet">{it.body}</p> : null}
         <div className="rec-meta"><Badges it={it} devices={devices} hideType={inList} /></div>
