@@ -30,7 +30,7 @@ import { Icon } from "../components/Icon.tsx";
 import { CallRow, callDuration, callLabel, type MsgCall } from "../components/CallRow.tsx";
 
 export { callDuration, callLabel, type MsgCall };
-import { SearchField } from "../components/Controls.tsx";
+import { SearchField, Segmented } from "../components/Controls.tsx";
 import { Badge, Empty, ErrorLine } from "../components/Feedback.tsx";
 import { SlideOver } from "../components/Overlay.tsx";
 import { chatSourceLabel } from "../components/Sidebar.tsx";
@@ -40,6 +40,8 @@ type SourceClaim = { source: string; coverage: string };
 export interface Chat {
   id: string; platform: string; account: string; convKey: string; peer: string | null; kind: string; coverage: string;
   chatTitle?: string | null; chatType?: string | null; participantCount?: number | null;
+  /** where the owner's own app lists the chat: normal, archived (Telegram) or hidden (LINE); null/absent when unknown */
+  listing?: "normal" | "archived" | "hidden" | null;
   coverageSources?: SourceClaim[]; coverageText?: string;
   title?: string | null; avatarUrl?: string | null; source?: string; lastText?: string | null; lastAt?: string | null;
   messageCount: number; firstMessageAt?: string | null; lastMessageAt: string | null;
@@ -136,6 +138,35 @@ export function CoverageBadge({ coverage, sources }: { coverage: string; sources
   return <Badge tone={covTone(coverage)} title={text || undefined}>{COVERAGE_LABEL[coverage] ?? coverage}</Badge>;
 }
 
+/** A small badge for a chat the owner archived (Telegram) or hid (LINE) in their own app; nothing for a normal chat. */
+export function ListingBadge({ listing, platform }: { listing?: string | null; platform?: string }) {
+  if (listing !== "archived" && listing !== "hidden") return null;
+  const word = listing === "archived" ? "Archived" : "Hidden";
+  return (
+    <span className="listing-badge" data-testid="listing-badge" style={{ flex: "none", fontSize: "var(--text-xs)" }}>
+      <Badge title={`${word} in ${platformLabel(platform ?? "")}`}>{word}</Badge>
+    </span>
+  );
+}
+
+export type ListingFilter = "all" | "normal" | "archived" | "hidden";
+export const LISTING_FILTERS: Array<[ListingFilter, string]> = [["all", "All"], ["normal", "Normal"], ["archived", "Archived"], ["hidden", "Hidden"]];
+const LISTING_KEY = "ivy.chats.listing";
+/** The chat list filter, remembered for this browser session (sessionStorage may be unavailable: then it is just not remembered). */
+function useListingFilter(): [ListingFilter, (v: ListingFilter) => void] {
+  const [value, setValue] = useState<ListingFilter>(() => {
+    try {
+      const v = sessionStorage.getItem(LISTING_KEY);
+      return LISTING_FILTERS.some(([k]) => k === v) ? (v as ListingFilter) : "all";
+    } catch { return "all"; }
+  });
+  const set = (v: ListingFilter) => {
+    setValue(v);
+    try { sessionStorage.setItem(LISTING_KEY, v); } catch { /* not remembered */ }
+  };
+  return [value, set];
+}
+
 export interface ChatsScope { source?: string; role?: string; platform?: string; title?: string; embedded?: boolean; emptyText?: string }
 
 export function ConversationsView(scope: ChatsScope = {}) {
@@ -149,7 +180,9 @@ export function ConversationsView(scope: ChatsScope = {}) {
   const [q, setQ] = useState("");
   const [profileOpen, setProfileOpen] = useState(false);
   const [lineOpen, setLineOpen] = useState<null | "hidden" | "blocked" | "settings">(null);
-  const list = useLoad<any>((a) => a.get("/api/views/chats", { source, role, platform, q: q.trim() || undefined }), [source, role, platform, q]);
+  const [listing, setListing] = useListingFilter();
+  const list = useLoad<any>((a) => a.get("/api/views/chats", { source, role, platform, q: q.trim() || undefined, listing: listing === "all" ? undefined : listing }),
+    [source, role, platform, q, listing]);
   const reload = useDebounced(list.reload, 1500);
   useEvents(() => reload(), ["ingest.committed"]);
   const chats = (list.data?.items ?? []) as Chat[];
@@ -172,13 +205,14 @@ export function ConversationsView(scope: ChatsScope = {}) {
         <div className="pane-head" style={{ flexDirection: "column", alignItems: "stretch", gap: 8 }}>
           <div className="row">{(platform || source) && <AppIcon app={platform ?? ""} size={20} />}<h1 className="ellipsis">{title}</h1><span className="spacer" />{list.data && <span className="small faint">{list.data.total}</span>}</div>
           <SearchField aria-label="Search chats" placeholder="Search chats" value={q} onChange={(e) => setQ(e.target.value)} />
+          <Segmented label="Show chats" value={listing} options={LISTING_FILTERS} onChange={setListing} />
           {isLine && <LineToolbar counts={lineAccount.data?.counts} onHidden={() => setLineOpen("hidden")} onBlocked={() => setLineOpen("blocked")} onSettings={() => setLineOpen("settings")} />}
         </div>
         <div className="pane-scroll" style={{ padding: 6 }}>
           <ErrorLine error={list.error} />
           {list.data && chats.length === 0 && (
-            <Empty icon="chat" title={q ? "No chats match" : "No conversations yet"}>
-              {q ? "Try another name." : scope.emptyText ?? "Conversation history comes from the Windows app (Telegram Desktop session, LINE for Windows) and the Android companion's database reads. Notification previews are under Notifications."}
+            <Empty icon="chat" title={q ? "No chats match" : listing !== "all" ? `No ${listing} chats` : "No conversations yet"}>
+              {q ? "Try another name." : listing !== "all" ? "Choose All to see every chat." : scope.emptyText ?? "Conversation history comes from the Windows app (Telegram Desktop session, LINE for Windows) and the Android companion's database reads. Notification previews are under Notifications."}
             </Empty>
           )}
           {chats.map((c) => {
@@ -192,7 +226,7 @@ export function ConversationsView(scope: ChatsScope = {}) {
               <button key={c.id} className="chat-item" aria-current={c.id === selected ? "true" : undefined} onClick={() => open(c.id)} data-testid="chat-item">
                 <Avatar name={name} size={40} colorKey={`${c.platform}:${c.convKey}`} src={c.avatarUrl} />
                 <span className="ci-main">
-                  <span className="ci-top"><span className="ci-name" title={name}>{name}</span><span className="ci-time">{shortWhen(c.lastAt ?? c.lastMessageAt)}</span></span>
+                  <span className="ci-top"><span className="ci-name" title={name}>{name}</span><ListingBadge listing={c.listing} platform={c.platform} /><span className="ci-time">{shortWhen(c.lastAt ?? c.lastMessageAt)}</span></span>
                   <span className="ci-preview">{preview}</span>
                 </span>
               </button>
@@ -406,6 +440,7 @@ function Thread({ id, around, hintAvatar, onOpenProfile, onJumpLatest }: { id: s
           </button>
         )}
         <span className="spacer" />
+        {conv && <ListingBadge listing={conv.listing} platform={conv.platform} />}
         {conv && <span data-testid="coverage-sources" title={conv.coverageText}><CoverageBadge coverage={conv.coverage} sources={conv.coverageSources} /></span>}
       </div>
       <div className="msgs" ref={scroller} role="log" aria-label="Messages">

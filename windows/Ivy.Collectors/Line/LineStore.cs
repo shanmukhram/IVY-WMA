@@ -144,6 +144,24 @@ public sealed class LineStore : IDisposable
         return chats;
     }
 
+    /// <summary>
+    /// The ids of the chats the owner hid in LINE (<c>_chatOption._hidden</c> non-zero), or null when the store
+    /// has no <c>_chatOption._hidden</c> column, so hidden state is unknown. One small query, cheap per tick.
+    /// </summary>
+    public IReadOnlySet<string>? HiddenChatIds()
+    {
+        if (!TableNames().Contains("_chatOption")) return null;
+        var cols = Columns("_chatOption");
+        if (!cols.Contains("_id") || !cols.Contains("_hidden")) return null;
+        var ids = new HashSet<string>(StringComparer.Ordinal);
+        using var cmd = _c.CreateCommand();
+        cmd.CommandText = $"SELECT {Q("_id")} FROM {Q("_chatOption")} WHERE {Q("_id")} IS NOT NULL AND {Q("_hidden")} IS NOT NULL AND {Q("_hidden")} != 0";
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+            if (Convert.ToString(r.GetValue(0), CultureInfo.InvariantCulture) is { Length: > 0 } id) ids.Add(id);
+        return ids;
+    }
+
     /// <summary>A page of messages for <paramref name="chatId"/> with <c>rowid &gt; afterRowId</c> (the per-chat cursor).</summary>
     public LineMessagePage ReadMessages(LineChat chat, long afterRowId, int limit)
     {

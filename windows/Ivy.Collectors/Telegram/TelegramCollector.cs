@@ -160,7 +160,7 @@ public sealed class TelegramCollector : Collector<TelegramSettings>
             // The dialog list is a full network call plus a store write per chat, so at a 5 s tick it is
             // refreshed only when needed: first load, every 60 s, on re-sync, or after a diff saw a new chat.
             if (_dialogsRefreshedAt is null || _dialogsStale || _resyncRequested || Now - _dialogsRefreshedAt >= DialogRefreshEvery)
-                await RefreshDialogsAsync(ct).ConfigureAwait(false);
+                await RefreshDialogsAsync(sink, ct).ConfigureAwait(false);
             if (_resyncRequested)
             {
                 _resyncRequested = false;
@@ -246,10 +246,30 @@ public sealed class TelegramCollector : Collector<TelegramSettings>
 
     // ------------------------------------------------------------------ dialogs
 
-    private async Task RefreshDialogsAsync(CancellationToken ct)
+    private async Task RefreshDialogsAsync(IRecordSink sink, CancellationToken ct)
     {
         _dialogs = await _client!.GetDialogsAsync(Settings.IncludeChannels, ct).ConfigureAwait(false);
-        foreach (var d in _dialogs) _store.UpsertDialog(_account0, d);
+        foreach (var d in _dialogs)
+        {
+            var known = _store.GetChat(d.ConvKey);
+            _store.UpsertDialog(_account0, d);
+            // A chat already sent to the Mac whose archive state changed gets a metadata-only batch now, so the
+            // change shows without waiting for a new message. A chat not yet captured gets its listing on its
+            // first backfill batch. A chat captured before listings were tracked (none stored) is sent only when
+            // archived: the Mac already shows an unknown listing as normal.
+            if (known is null || (known.OldestFetchedId is null && !known.HistoryComplete && known.NewestSeenId == 0)) continue;
+            var sent = _store.GetSentListing(d.ConvKey);
+            var listing = ListingOf(d);
+            if (sent == listing) continue;
+            if (sent is null && listing == ChatListing.Normal)
+            {
+                _store.SetSentListing(d.ConvKey, listing);
+                continue;
+            }
+            var cursor = known.NewestSeenId.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            await EmitBatchAsync(sink, d, Array.Empty<TgMessage>(), MessageCoverage.Complete, cursor, new TickBudget(0, 0), ct)
+                .ConfigureAwait(false);
+        }
         foreach (var secret in _client.SecretChats) _store.MarkPhoneOnly(secret, "secret chat — phone-only (not in the cloud)");
         _dialogsRefreshedAt = Now;
         _dialogsStale = false;
@@ -305,6 +325,7 @@ public sealed class TelegramCollector : Collector<TelegramSettings>
             ct.ThrowIfCancellationRequested();
             var diff = await _client!.GetDifferenceAsync(stateToken, ct).ConfigureAwait(false);
             budget.Pages--;
+            if (diff.DialogsChanged) _dialogsStale = true; // archive/unarchive: re-list on the next tick
             foreach (var group in diff.Updates.GroupBy(u => u.ConvKey))
             {
                 var dialog = _dialogs.FirstOrDefault(d => d.ConvKey == group.Key);
@@ -399,6 +420,7 @@ public sealed class TelegramCollector : Collector<TelegramSettings>
                 ParticipantCount = dialog.Meta.ParticipantCount,
                 ChatType = dialog.Meta.ChatType,
                 AvatarBlobOid = avatarOid,
+                Listing = ListingOf(dialog),
             },
             Messages = chatMessages,
             Cursor = cursor,
@@ -406,8 +428,11 @@ public sealed class TelegramCollector : Collector<TelegramSettings>
 
         // Typed record path: the sink validates MessageBatchRecord (PROTOCOL.md §6) and encrypts it.
         Emit(sink, batch);
+        if (dialog is not null) _store.SetSentListing(dialog.ConvKey, ListingOf(dialog));
         Activity(CollectorActivity.Captured, $"{Kind.MessageBatch.WireName()} {convKey} ({chatMessages.Count} msgs)");
     }
+
+    private static string ListingOf(TgDialog d) => d.Archived ? ChatListing.Archived : ChatListing.Normal;
 
     // ------------------------------------------------------------------ attachments / media policy
 

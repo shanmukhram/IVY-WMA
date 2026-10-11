@@ -11,7 +11,8 @@ public sealed record TgChatMeta(string? Title, int? ParticipantCount, string Cha
 /// <summary>
 /// One dialog (chat/contact/group/channel) the user is in. <see cref="ConvKey"/> is stable across runs and
 /// across sources, so the Mac can merge copies (WX1); it is the platform's peer identity, e.g.
-/// <c>user:123</c>, <c>chat:456</c>, <c>channel:789</c>.
+/// <c>user:123</c>, <c>chat:456</c>, <c>channel:789</c>. <see cref="Archived"/> is true when the owner moved
+/// the chat to Telegram's Archive folder (the dialog's <c>folder_id</c> is 1).
 /// </summary>
 public sealed record TgDialog(
     string ConvKey,
@@ -20,7 +21,8 @@ public sealed record TgDialog(
     TgChatMeta Meta,
     long TopMessageId,
     bool IsChannel,
-    string? AvatarRef = null);
+    string? AvatarRef = null,
+    bool Archived = false);
 
 public enum TgAttachmentKind { Image, Video, Audio, Doc }
 
@@ -66,8 +68,10 @@ public sealed record TgMessageUpdate(string ConvKey, TgChange Change, TgMessage 
 /// <summary>
 /// The result of <c>updates.getDifference</c>: the changes since the last state token and a new token.
 /// <see cref="More"/> is true when the server has more to give immediately (the collector pages again).
+/// <see cref="DialogsChanged"/> is true when a chat moved into or out of a folder (archive/unarchive), so the
+/// collector re-lists dialogs on its next tick.
 /// </summary>
-public sealed record TgDifference(IReadOnlyList<TgMessageUpdate> Updates, string NewState, bool More);
+public sealed record TgDifference(IReadOnlyList<TgMessageUpdate> Updates, string NewState, bool More, bool DialogsChanged = false);
 
 /// <summary>Thrown on Telegram's <c>FLOOD_WAIT_X</c>: the caller must wait <see cref="Seconds"/> before retrying.</summary>
 public sealed class FloodWaitException : Exception

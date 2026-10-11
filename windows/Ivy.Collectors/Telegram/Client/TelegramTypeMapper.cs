@@ -20,6 +20,17 @@ public static class TelegramTypeMapper
 
     public static TgConvKind ConvKindOf(Peer peer) => peer is PeerUser ? TgConvKind.Dm : TgConvKind.Group;
 
+    /// <summary>Telegram's folder id for the Archive (<c>dialog.folder_id == 1</c>).</summary>
+    public const int ArchiveFolderId = 1;
+
+    /// <summary>
+    /// Map one row of <c>messages.getDialogs</c>, or return null for a row that is not a chat: a
+    /// <see cref="DialogFolder"/> is the collapsed "Archived chats" entry itself, and its chats come as their
+    /// own <see cref="Dialog"/> rows with <c>folder_id</c> set.
+    /// </summary>
+    public static TgDialog? TryMapDialog(DialogBase dialogBase, IReadOnlyDictionary<long, User> users, IReadOnlyDictionary<long, ChatBase> chats) =>
+        dialogBase is Dialog ? MapDialog(dialogBase, users, chats) : null;
+
     /// <summary>Map a dialog plus the peers that came with it into a domain <see cref="TgDialog"/>.</summary>
     public static TgDialog MapDialog(DialogBase dialogBase, IReadOnlyDictionary<long, User> users, IReadOnlyDictionary<long, ChatBase> chats)
     {
@@ -52,7 +63,9 @@ public static class TelegramTypeMapper
 
         var meta = new TgChatMeta(title, participants, chatType ?? (kind == TgConvKind.Dm ? "private" : "group"));
         var avatarRef = AvatarRefOf(convKey, peer, users, chats);
-        return new TgDialog(convKey, kind, peerName, meta, dialogBase.TopMessage, isChannel, avatarRef);
+        // folder_id is 0 when unset; 1 is the Archive folder.
+        var archived = dialogBase is Dialog dialog && dialog.folder_id == ArchiveFolderId;
+        return new TgDialog(convKey, kind, peerName, meta, dialogBase.TopMessage, isChannel, avatarRef, archived);
     }
 
     // A profile-photo handle the adapter can resolve: convKey, the photo id, and its dc. Null when there is no photo.

@@ -101,6 +101,22 @@ describe("record schemas", () => {
     expect(() => validateRecord({ ...rec, chatMeta: { participantCount: -1 } })).toThrow();
   });
 
+  it("chatMeta.listing accepts normal/archived/hidden, rejects other values, and allows an empty messages batch", () => {
+    const rec = {
+      ...common, kind: "message_batch", platform: "telegram", account: "@bunny", convKey: "-100123", convKind: "group",
+      sourceSession: "windows:telegram-desktop", coverage: "complete", cursor: "7781", messages: [],
+    };
+    for (const listing of ["normal", "archived", "hidden"]) {
+      const ok = validateRecordKind("message_batch", { ...rec, chatMeta: { title: "Lab", listing } });
+      expect(ok.chatMeta).toEqual({ title: "Lab", listing });
+      expect(ok.messages).toEqual([]);
+    }
+    expect(validateRecordKind("message_batch", { ...rec, chatMeta: { title: "Lab" } }).chatMeta?.listing).toBeUndefined();
+    expect(() => validateRecord({ ...rec, chatMeta: { listing: "muted" } })).toThrow();
+    expect(() => validateRecord({ ...rec, chatMeta: { listing: "" } })).toThrow();
+    expect(() => validateRecord({ ...rec, chatMeta: { listing: "Archived" } })).toThrow();
+  });
+
   it("message_batch accepts an optional call object and rejects bad call values", () => {
     const msg = { msgId: "c1", sender: "u1", sentAt: "2026-10-09T10:00:00.000Z", text: "system text", sourceStatus: "live", attachments: [], mediaKind: "call" };
     const rec = {

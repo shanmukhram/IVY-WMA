@@ -198,6 +198,128 @@ public class TelegramCollectorTests : IDisposable
         Assert.True(tg.Store.GetChat("user:1")!.HistoryComplete); // complete again after the re-walk
     }
 
+    // ---------------------------------------------------------------- listing (archive)
+
+    private static string? ListingOf(CapturedRecord b) =>
+        b.Root.TryGetProperty("chatMeta", out var cm) && cm.TryGetProperty("listing", out var l) ? l.GetString() : null;
+
+    [Fact]
+    public async Task Every_batch_carries_listing_archived_or_normal()
+    {
+        WriteFixture();
+        var fake = new FakeTelegramClient();
+        var dm = fake.AddDm("user:20", "Alice", "Alice");
+        fake.Dialogs[^1] = dm with { Archived = true };
+        fake.AddMessage(dm.ConvKey, Msg(5, "u20", "hi", 3));
+        var g = fake.AddGroup("chat:10", "Lab", 3);
+        fake.AddMessage(g.ConvKey, Msg(6, "u1", "yo", 4));
+
+        var tg = NewCollector(fake);
+        await tg.StartAsync(default);
+        await tg.TickAsync(default);
+
+        Assert.Equal("archived", ListingOf(Batches().Single(b => b.Str("convKey") == "user:20")));
+        Assert.Equal("normal", ListingOf(Batches().Single(b => b.Str("convKey") == "chat:10")));
+    }
+
+    [Fact]
+    public async Task Archive_change_with_no_new_messages_emits_one_metadata_only_batch()
+    {
+        WriteFixture();
+        var fake = new FakeTelegramClient();
+        var dm = fake.AddDm("user:20", "Alice", "Alice");
+        fake.AddMessage(dm.ConvKey, Msg(5, "u20", "hi", 3));
+        var g = fake.AddGroup("chat:10", "Lab", 3);
+        fake.AddMessage(g.ConvKey, Msg(6, "u1", "yo", 4));
+
+        var tg = NewCollector(fake);
+        await tg.StartAsync(default);
+        await tg.TickAsync(default);                      // backfill: both normal
+        _env.Sink.Clear();
+
+        // no change: the next dialog refresh sends nothing
+        _env.Time.Advance(TimeSpan.FromSeconds(61));
+        await tg.TickAsync(default);
+        Assert.Empty(Batches());
+
+        // the owner archives the DM in Telegram; the next refresh sends exactly one metadata-only batch
+        var i = fake.Dialogs.FindIndex(d => d.ConvKey == "user:20");
+        fake.Dialogs[i] = fake.Dialogs[i] with { Archived = true };
+        _env.Time.Advance(TimeSpan.FromSeconds(61));
+        await tg.TickAsync(default);
+        var meta = Assert.Single(Batches());
+        Assert.Equal("user:20", meta.Str("convKey"));
+        Assert.Equal("dm", meta.Str("convKind"));
+        Assert.Equal("complete", meta.Str("coverage"));
+        Assert.Equal("5", meta.Str("cursor"));
+        Assert.Empty(MessagesOf(meta));
+        Assert.Equal("archived", ListingOf(meta));
+        Assert.Equal("Alice", meta.Root.GetProperty("chatMeta").GetProperty("title").GetString());
+        _env.Sink.Clear();
+
+        // unchanged again: nothing; then unarchive: one batch with listing normal
+        _env.Time.Advance(TimeSpan.FromSeconds(61));
+        await tg.TickAsync(default);
+        Assert.Empty(Batches());
+        fake.Dialogs[i] = fake.Dialogs[i] with { Archived = false };
+        _env.Time.Advance(TimeSpan.FromSeconds(61));
+        await tg.TickAsync(default);
+        Assert.Equal("normal", ListingOf(Assert.Single(Batches())));
+    }
+
+    [Fact]
+    public async Task Chats_captured_before_listing_existed_send_only_the_archived_ones_once()
+    {
+        WriteFixture();
+        var fake = new FakeTelegramClient();
+        var dm = fake.AddDm("user:20", "Alice", "Alice");
+        fake.AddMessage(dm.ConvKey, Msg(5, "u20", "hi", 3));
+        var g = fake.AddGroup("chat:10", "Lab", 3);
+        fake.AddMessage(g.ConvKey, Msg(6, "u1", "yo", 4));
+        var tg = NewCollector(fake);
+        await tg.StartAsync(default);
+        await tg.TickAsync(default);
+        _env.Sink.Clear();
+
+        // simulate an install that captured these chats before listings were stored
+        using (var c = _env.Context.Db.Open())
+        using (var cmd = c.CreateCommand())
+        {
+            cmd.CommandText = "UPDATE tg_chat_state SET listing = NULL";
+            cmd.ExecuteNonQuery();
+        }
+        fake.Dialogs[fake.Dialogs.FindIndex(d => d.ConvKey == "user:20")] = fake.Dialogs.First(d => d.ConvKey == "user:20") with { Archived = true };
+        _env.Time.Advance(TimeSpan.FromSeconds(61));
+        await tg.TickAsync(default);
+        var meta = Assert.Single(Batches());              // the archived DM only; the normal group is just recorded
+        Assert.Equal("user:20", meta.Str("convKey"));
+        Assert.Equal("archived", ListingOf(meta));
+        Assert.Equal("normal", tg.Store.GetSentListing("chat:10"));
+    }
+
+    [Fact]
+    public async Task A_folder_update_in_the_difference_re_lists_dialogs_on_the_next_tick()
+    {
+        WriteFixture();
+        var fake = new FakeTelegramClient();
+        var dm = fake.AddDm("user:20", "Alice", "Alice");
+        fake.AddMessage(dm.ConvKey, Msg(5, "u20", "hi", 3));
+        var tg = NewCollector(fake);
+        await tg.StartAsync(default);
+        await tg.TickAsync(default);
+        _env.Sink.Clear();
+        Assert.Equal(1, fake.GetDialogsCalls);
+
+        fake.Dialogs[0] = fake.Dialogs[0] with { Archived = true };
+        fake.Differences.Enqueue(new TgDifference(Array.Empty<TgMessageUpdate>(), "state1", false, DialogsChanged: true));
+        _env.Time.Advance(TimeSpan.FromSeconds(5));
+        await tg.TickAsync(default);                      // sees the folder update
+        _env.Time.Advance(TimeSpan.FromSeconds(5));
+        await tg.TickAsync(default);                      // re-lists well before the 60 s refresh
+        Assert.Equal(2, fake.GetDialogsCalls);
+        Assert.Equal("archived", ListingOf(Assert.Single(Batches())));
+    }
+
     // ---------------------------------------------------------------- incremental
 
     [Fact]

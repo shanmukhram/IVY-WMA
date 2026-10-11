@@ -54,6 +54,9 @@ public sealed class LineDesktopCollector : Collector<LineSettings>
     // Per-chat cursors of the store that is open now (_storeKey). Each LINE account has its own store, saved
     // under "cursors:<storeKey>", so switching accounts never reuses another account's cursors.
     private Dictionary<string, long> _cursors = new(StringComparer.Ordinal);
+    // Per-chat chatMeta.listing (hidden | normal) last sent for the open store, saved under "listings:<storeKey>"
+    // next to the cursors, so a hide/unhide with no new messages is sent as a metadata-only batch.
+    private Dictionary<string, string> _listings = new(StringComparer.Ordinal);
     private string? _storeKey;   // the open store's identity: its own mid, else the qw<hex> file name
     private string? _account;    // the label put on records: Settings.Account if set by the user, else _storeKey
     private volatile bool _resyncRequested;
@@ -63,6 +66,7 @@ public sealed class LineDesktopCollector : Collector<LineSettings>
     private const string LegacyAccountHashKey = "accountHash";
     private const string ResyncEpochKey = "resyncEpoch";
     private static string CursorsKey(string storeKey) => "cursors:" + storeKey;
+    private static string ListingsKey(string storeKey) => "listings:" + storeKey;
     private static string AccountHashKey(string storeKey) => "accountHash:" + storeKey;
     private static string EpochKey(string storeKey) => "resyncEpoch:" + storeKey;
 
@@ -227,6 +231,7 @@ public sealed class LineDesktopCollector : Collector<LineSettings>
         // Cursors and the account-snapshot hash are per account; they load when the first tick opens a store
         // and learns which account it belongs to (SwitchAccount).
         _cursors = new Dictionary<string, long>(StringComparer.Ordinal);
+        _listings = new Dictionary<string, string>(StringComparer.Ordinal);
         _storeKey = null;
         _account = null;
         _lastAccountHash = null;
@@ -483,6 +488,8 @@ public sealed class LineDesktopCollector : Collector<LineSettings>
             resyncing = true;
             _cursors.Clear();   // re-read every chat from the start
             SaveCursors();
+            _listings.Clear();
+            SaveListings();
             // Other accounts' stores are not open now; bumping the epoch makes each of them re-read from the
             // start too the next time it is opened (SwitchAccount compares its saved epoch).
             var epoch = LoadLong(ResyncEpochKey) + 1;
@@ -497,6 +504,7 @@ public sealed class LineDesktopCollector : Collector<LineSettings>
         // No content check here: every page read is emitted, so after a re-sync has cleared the cursors every
         // chat is sent again in full even if nothing changed since the last send.
         var chats = store.Chats();
+        var hiddenIds = store.HiddenChatIds();   // null: the store does not say, so listing is left unknown
         var newMessages = 0;
         var batchesEmitted = 0;
         var chatsEmitted = 0;
@@ -504,13 +512,14 @@ public sealed class LineDesktopCollector : Collector<LineSettings>
         {
             if (ct.IsCancellationRequested) break;
             var cursor = _cursors.GetValueOrDefault(chat.ChatId, 0L);
+            var listing = hiddenIds is null ? null : hiddenIds.Contains(chat.ChatId) ? ChatListing.Hidden : ChatListing.Normal;
             var chatBatches = 0;
             while (true)
             {
                 var page = store.ReadMessages(chat, cursor, Settings.BatchSize);
                 if (page.Messages.Count > 0)
                 {
-                    EmitBatch(sink, account, chat, page);
+                    EmitBatch(sink, account, chat, page.Messages, page.MaxRowId, listing);
                     newMessages += page.Messages.Count;
                     chatBatches++;
                 }
@@ -521,6 +530,20 @@ public sealed class LineDesktopCollector : Collector<LineSettings>
                     SaveCursors();
                 }
                 if (!page.HasMore) break;
+            }
+            // Hidden or unhidden since the last send, with no new messages: send the chat's metadata alone. A chat
+            // never sent (cursor 0) gets its listing on its first batch instead. A chat sent before listings were
+            // tracked (no saved listing) is sent only when hidden: the Mac already shows an unknown listing as normal.
+            var sent = _listings.GetValueOrDefault(chat.ChatId);
+            if (listing is not null && chatBatches == 0 && cursor > 0 && sent != listing && (sent is not null || listing != ChatListing.Normal))
+            {
+                EmitBatch(sink, account, chat, Array.Empty<ChatMessage>(), cursor, listing);
+                chatBatches++;
+            }
+            if (listing is not null && (chatBatches > 0 || cursor > 0) && sent != listing)
+            {
+                _listings[chat.ChatId] = listing;
+                SaveListings();
             }
             batchesEmitted += chatBatches;
             if (chatBatches > 0) chatsEmitted++;
@@ -638,6 +661,7 @@ public sealed class LineDesktopCollector : Collector<LineSettings>
         var previous = _storeKey;
         _storeKey = storeKey;
         _cursors = LoadCursors(CursorsKey(storeKey));
+        _listings = LoadListings(ListingsKey(storeKey));
 
         // One-time: cursors saved before accounts were told apart are a single blob. They were written by the
         // account open at the time, so they move to the account open now (once), and the blob is removed.
@@ -659,6 +683,8 @@ public sealed class LineDesktopCollector : Collector<LineSettings>
             _epochResyncApplied = true;   // the tick reports it like any re-sync
             _cursors.Clear();
             SaveCursors();
+            _listings.Clear();
+            SaveListings();
             Context.Settings.SaveJson(Name, AccountHashKey(storeKey), JsonValue.Create(""));
             Context.Settings.SaveJson(Name, EpochKey(storeKey), JsonValue.Create(epoch));
         }
@@ -808,13 +834,16 @@ public sealed class LineDesktopCollector : Collector<LineSettings>
         Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
             System.Text.Encoding.UTF8.GetBytes(Ivy.Core.Protocol.IvyJson.Serialize(record))));
 
-    private void EmitBatch(IRecordSink sink, string account, LineChat chat, LineMessagePage page)
+    /// <summary>
+    /// Emit one batch for <paramref name="chat"/>. An empty <paramref name="messages"/> is a metadata-only batch
+    /// (the chat's listing changed with no new messages), dated now.
+    /// </summary>
+    private void EmitBatch(IRecordSink sink, string account, LineChat chat, IReadOnlyList<ChatMessage> messages, long maxRowId, string? listing)
     {
-        var last = page.Messages[^1];
         var batch = new MessageBatchRecord
         {
             DeviceId = DeviceId(sink),
-            EventTime = last.SentAt,
+            EventTime = messages.Count > 0 ? messages[^1].SentAt : IvyTime.Format(Now),
             CaptureTime = IvyTime.Format(Now),
             Platform = MessagePlatforms.Line,
             Account = account,
@@ -823,9 +852,9 @@ public sealed class LineDesktopCollector : Collector<LineSettings>
             ConvKind = chat.ConvKind,
             SourceSession = SourceSessions.WindowsLineDesktop,
             Coverage = MessageCoverage.Partial, // WL2: never above partial from Windows, whatever the store holds
-            ChatMeta = new ChatMeta { Title = chat.Title, ChatType = chat.ChatType },
-            Messages = page.Messages,
-            Cursor = page.MaxRowId.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            ChatMeta = new ChatMeta { Title = chat.Title, ChatType = chat.ChatType, Listing = listing },
+            Messages = messages,
+            Cursor = maxRowId.ToString(System.Globalization.CultureInfo.InvariantCulture),
         };
         Emit(sink, batch);
     }
@@ -888,6 +917,22 @@ public sealed class LineDesktopCollector : Collector<LineSettings>
         var node = new JsonObject();
         foreach (var (k, v) in _cursors) node[k] = JsonValue.Create(v);
         Context.Settings.SaveJson(Name, CursorsKey(_storeKey!), node);
+    }
+
+    private Dictionary<string, string> LoadListings(string key)
+    {
+        var map = new Dictionary<string, string>(StringComparer.Ordinal);
+        if (Context.Settings.LoadJson(Name, key) is not JsonObject node) return map;
+        foreach (var (k, v) in node)
+            if (v is JsonValue jv && jv.TryGetValue<string>(out var s) && ChatListing.IsValid(s)) map[k] = s;
+        return map;
+    }
+
+    private void SaveListings()
+    {
+        var node = new JsonObject();
+        foreach (var (k, v) in _listings) node[k] = JsonValue.Create(v);
+        Context.Settings.SaveJson(Name, ListingsKey(_storeKey!), node);
     }
 
     /// <summary>

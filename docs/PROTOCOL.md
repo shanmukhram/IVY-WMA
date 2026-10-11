@@ -416,9 +416,20 @@ attachments[]`. Each attachment:
 - `deletedAtSource?` — when the source observed the deletion; only valid with
   `sourceStatus: deleted_at_source` (a deletion without it is dated by
   `captureTime`).
-- `chatMeta?` — `{ title?, participantCount?, chatType? }`, as the platform
-  reports them (`chatType` in the platform's own words: `private`, `group`,
-  `supergroup`, `channel`, `secret`, …).
+- `chatMeta?` — `{ title?, participantCount?, chatType?, avatarBlobOid?, listing? }`,
+  as the platform reports them (`chatType` in the platform's own words: `private`,
+  `group`, `supergroup`, `channel`, `secret`, …). `avatarBlobOid` is the oid of a
+  chunked blob (§2.2, payloadKind `avatar`) holding the chat's or peer's profile
+  image. `listing` is where the owner's own app lists the chat: `normal`,
+  `archived` (Telegram's Archive folder) or `hidden` (LINE's hidden chats); no
+  other value is valid. A sender sets it explicitly whenever it knows it, so an
+  unarchive or unhide arrives as `normal`; an absent `listing` means unknown and
+  never clears the value the Mac stored. Each stored `chatMeta` field is replaced
+  by a present value and kept when absent.
+- A batch MAY carry an empty `messages[]` (a metadata-only batch), sent when the
+  chat's metadata, such as `listing`, changed without new messages. The Mac
+  updates the conversation's metadata and the source's coverage claim and stores
+  no message.
 
 **manifest** — see §2.2 (`objectId, payloadKind, totalSize, chunkSize,
 totalChunks, cek, chunks[], commandId?, committedParts?`).

@@ -1113,6 +1113,80 @@ public class LineCollectorTests : IDisposable
         Assert.DoesNotContain(_env.Activity.Recent(), e => e.Event == CollectorActivity.ScanStarted && e.Collector == CollectorNames.Line);
     }
 
+    private static string? ListingOf(CapturedRecord b) =>
+        b.Root.TryGetProperty("chatMeta", out var cm) && cm.TryGetProperty("listing", out var l) ? l.GetString() : null;
+
+    // Hide or unhide a chat the way LINE does (its _chatOption row), and move the store's mtime so the tick is not idle.
+    private void SetHidden(string chatId, bool hidden)
+    {
+        Seed(c => LineFixture.Exec(c, $"INSERT OR REPLACE INTO _chatOption(_id,_hidden,_notification,_pinnedTime) VALUES('{chatId}',{(hidden ? 1 : 0)},1,0)"));
+        File.SetLastWriteTimeUtc(_dbPath, File.GetLastWriteTimeUtc(_dbPath).AddSeconds(2));
+    }
+
+    [Fact]
+    public async Task Hidden_chat_batches_carry_listing_hidden_and_others_normal()
+    {
+        Seed(c =>
+        {
+            LineFixture.Chat(c, "uBOB");
+            LineFixture.Chat(c, "uCAROL");
+            LineFixture.ChatOption(c, "uBOB", hidden: true);
+            LineFixture.Message(c, "m1", "uBOB", "uBOB", 1_760_000_000_000, "one");
+            LineFixture.Message(c, "m2", "uCAROL", "uCAROL", 1_760_000_100_000, "two");
+        });
+        var line = NewCollector();
+        await line.StartAsync(default);
+        await line.TickAsync(default);
+
+        Assert.Equal("hidden", ListingOf(Batches().Single(b => b.Str("convKey") == "uBOB")));
+        Assert.Equal("normal", ListingOf(Batches().Single(b => b.Str("convKey") == "uCAROL"))); // no _chatOption row: normal
+    }
+
+    [Fact]
+    public async Task Hide_and_unhide_between_ticks_emit_one_metadata_only_batch_each()
+    {
+        Seed(c =>
+        {
+            LineFixture.Chat(c, "uBOB");
+            LineFixture.Chat(c, "uCAROL");
+            LineFixture.Message(c, "m1", "uBOB", "uBOB", 1_760_000_000_000, "one");
+            LineFixture.Message(c, "m2", "uCAROL", "uCAROL", 1_760_000_100_000, "two");
+        });
+        var line = NewCollector();
+        await line.StartAsync(default);
+        await line.TickAsync(default);
+        Assert.All(Batches(), b => Assert.Equal("normal", ListingOf(b)));
+        _env.Sink.Clear();
+
+        SetHidden("uBOB", true);
+        _env.Time.Advance(TimeSpan.FromSeconds(5));
+        await line.TickAsync(default);
+        var meta = Assert.Single(Batches());
+        Assert.Equal("uBOB", meta.Str("convKey"));
+        Assert.Equal("partial", meta.Str("coverage"));
+        Assert.Equal(0, meta.Root.GetProperty("messages").GetArrayLength());
+        Assert.Equal("hidden", ListingOf(meta));
+        Assert.False(string.IsNullOrEmpty(meta.Str("cursor")));
+        _env.Sink.Clear();
+
+        // a tick with the store changed but the listing not: nothing more for uBOB
+        SetHidden("uCAROL", false);
+        _env.Time.Advance(TimeSpan.FromSeconds(5));
+        await line.TickAsync(default);
+        Assert.Empty(Batches());
+
+        // the listing survives a restart, so an unchanged hidden chat is not re-sent
+        var restarted = NewCollector();
+        await restarted.StartAsync(default);
+        await restarted.TickAsync(default);
+        Assert.Empty(Batches());
+
+        SetHidden("uBOB", false);
+        _env.Time.Advance(TimeSpan.FromSeconds(5));
+        await restarted.TickAsync(default);
+        Assert.Equal("normal", ListingOf(Assert.Single(Batches())));
+    }
+
     [Fact]
     public async Task Resync_emits_every_chat_even_when_the_store_stamp_is_unchanged()
     {

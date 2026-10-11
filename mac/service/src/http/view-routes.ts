@@ -7,9 +7,11 @@
  *   GET /api/views/sources
  *       capture sources of conversations (message_sources.source_session, e.g.
  *       windows:telegram-desktop), per platform: conversations, messages, last message
- *   GET /api/views/chats?source=&role=&platform=&q=&page=&pageSize=
+ *   GET /api/views/chats?source=&role=&platform=&q=&listing=&page=&pageSize=
  *       conversations seen by a source (or by any source of a role), newest first,
- *       with the last message preview, counts, first/last message time and coverage
+ *       with the last message preview, counts, first/last message time, coverage and
+ *       listing (normal | archived | hidden | null when no source has said);
+ *       listing=normal|archived|hidden|all filters (default all; normal includes null)
  *   GET /api/views/chats/:id/profile
  *       profile pane: counts, first/last message, coverage and counts per source,
  *       top senders, edited / deleted-at-source / attachment counts
@@ -38,6 +40,7 @@ const int = (v: unknown, dflt: number, min: number, max: number): number => {
 
 const SOURCE_RE = /^(windows|android):[a-z0-9][a-z0-9._-]*$/;
 const ROLE_RE = /^(windows|android)$/;
+const LISTINGS = ["all", "normal", "archived", "hidden"] as const;
 
 /** Device filter shared by the routes: a role matches every device of that role. */
 function deviceWhere(col: string, device: string | undefined): { sql: string; args: unknown[] } | null {
@@ -103,7 +106,7 @@ export function registerViewRoutes(app: FastifyInstance, svc: Service): void {
   });
 
   app.get("/api/views/chats", async (req, reply) => {
-    const q = req.query as { source?: string; role?: string; platform?: string; q?: string; page?: string; pageSize?: string };
+    const q = req.query as { source?: string; role?: string; platform?: string; q?: string; listing?: string; page?: string; pageSize?: string };
     const pageSize = int(q.pageSize, 200, 1, 500), page = int(q.page, 1, 1, 1e9);
     const where = ["c.deleted_at IS NULL"]; const args: unknown[] = [];
     if (q.source) {
@@ -119,6 +122,11 @@ export function registerViewRoutes(app: FastifyInstance, svc: Service): void {
       args.push(q.role);
     }
     if (q.platform) { where.push("lower(c.platform) = lower(?)"); args.push(q.platform); }
+    const listing = q.listing || "all";
+    if (!(LISTINGS as readonly string[]).includes(listing)) return reply.status(400).send({ error: "bad_listing", message: "listing must be normal, archived, hidden or all" });
+    // a conversation no source has given a listing for is shown as normal
+    if (listing === "normal") where.push("(c.listing IS NULL OR c.listing = 'normal')");
+    else if (listing !== "all") { where.push("c.listing = ?"); args.push(listing); }
     if (q.q?.trim()) {
       where.push("(instr(lower(COALESCE(c.peer, '')), lower(?)) > 0 OR instr(lower(COALESCE(c.chat_title, '')), lower(?)) > 0 OR instr(lower(c.conv_key), lower(?)) > 0)");
       args.push(q.q.trim(), q.q.trim(), q.q.trim());
@@ -127,7 +135,7 @@ export function registerViewRoutes(app: FastifyInstance, svc: Service): void {
     const total = (db().prepare(`SELECT COUNT(*) AS n FROM conversations c WHERE ${w}`).get(...args) as { n: number }).n;
     const rows = db().prepare(`
       SELECT c.id, c.device_id AS deviceId, c.platform, c.account, c.conv_key AS convKey, c.peer, c.kind, c.coverage, c.coverage_by_source,
-             c.chat_title AS chatTitle, c.participant_count AS participantCount, c.chat_type AS chatType, c.avatar_local_path AS avatarLocalPath,
+             c.chat_title AS chatTitle, c.participant_count AS participantCount, c.chat_type AS chatType, c.avatar_local_path AS avatarLocalPath, c.listing,
              (SELECT COUNT(*) FROM messages m WHERE m.conversation_id = c.id AND m.deleted_at IS NULL) AS messageCount,
              (SELECT MIN(m.sent_at) FROM messages m WHERE m.conversation_id = c.id AND m.deleted_at IS NULL) AS firstMessageAt,
              (SELECT MAX(m.sent_at) FROM messages m WHERE m.conversation_id = c.id AND m.deleted_at IS NULL) AS lastMessageAt
@@ -158,7 +166,7 @@ export function registerViewRoutes(app: FastifyInstance, svc: Service): void {
     const id = (req.params as { id: string }).id;
     const c = db().prepare(`SELECT id, device_id AS deviceId, platform, account, conv_key AS convKey, peer, kind, coverage, coverage_by_source,
                                    chat_title AS chatTitle, participant_count AS participantCount, chat_type AS chatType, created_at AS createdAt,
-                                   avatar_local_path AS avatarLocalPath
+                                   avatar_local_path AS avatarLocalPath, listing
                             FROM conversations WHERE id = ? AND deleted_at IS NULL`).get(id) as (Record<string, unknown> & { coverage_by_source: string; avatarLocalPath: string | null; kind: string }) | undefined;
     if (!c) return reply.status(404).send({ error: "not_found", message: "no such conversation" });
     const { coverage_by_source, avatarLocalPath, ...conv } = c;
@@ -205,7 +213,7 @@ export function registerViewRoutes(app: FastifyInstance, svc: Service): void {
     const id = (req.params as { id: string }).id;
     const q = req.query as { around?: string; before?: string; after?: string };
     const c = db().prepare(`SELECT id, platform, account, conv_key AS convKey, peer, kind, coverage, coverage_by_source,
-                                   chat_title AS chatTitle, participant_count AS participantCount, chat_type AS chatType, avatar_local_path AS avatarLocalPath
+                                   chat_title AS chatTitle, participant_count AS participantCount, chat_type AS chatType, avatar_local_path AS avatarLocalPath, listing
                             FROM conversations WHERE id = ? AND deleted_at IS NULL`).get(id) as (Record<string, unknown> & { coverage_by_source: string; avatarLocalPath: string | null }) | undefined;
     if (!c) return reply.status(404).send({ error: "not_found", message: "no such conversation" });
     const { coverage_by_source, avatarLocalPath, ...convCols } = c;

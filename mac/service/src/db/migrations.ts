@@ -786,6 +786,12 @@ const v11 = `
 CREATE INDEX blobs_pending ON blobs(status, updated_at);
 `;
 
+// v12: where the owner's own app lists the chat (chatMeta.listing): normal | archived (Telegram's Archive
+// folder) | hidden (LINE's hidden chats). NULL means no source has said; the UI treats it as normal.
+const v12 = `
+ALTER TABLE conversations ADD COLUMN listing TEXT;
+`;
+
 export const MIGRATIONS: Migration[] = [
   { version: 1, name: "initial vault schema", sql: v1 },
   { version: 2, name: "import progress, manifest commandId, transferring commands", sql: v2 },
@@ -798,4 +804,5 @@ export const MIGRATIONS: Migration[] = [
   { version: 9, name: "catalog entries: browse-and-fetch-on-demand (files.catalog, status 'catalog')", sql: v9 },
   { version: 10, name: "call events on messages (call_kind, call_outcome, call_duration_s, call_direction)", sql: v10 },
   { version: 11, name: "index for the stale-blob sweep (blobs by status and last progress)", sql: v11 },
+  { version: 12, name: "conversation listing (normal | archived | hidden) from chatMeta.listing", sql: v12 },
 ];

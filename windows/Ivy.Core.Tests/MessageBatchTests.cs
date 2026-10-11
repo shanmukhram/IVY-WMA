@@ -87,6 +87,27 @@ public class MessageBatchTests
     }
 
     [Fact]
+    public void ChatMeta_listing_round_trips_rejects_other_values_and_allows_an_empty_batch()
+    {
+        foreach (var listing in new[] { ChatListing.Normal, ChatListing.Archived, ChatListing.Hidden })
+        {
+            var r = Batch() with { ChatMeta = new ChatMeta { Title = "Lab", AvatarBlobOid = "oid1", Listing = listing } };
+            r.Validate(); // a metadata-only batch (no messages) is valid
+            var json = IvyJson.Serialize(r);
+            var o = JsonNode.Parse(json)!.AsObject();
+            Assert.Equal($$"""{"title":"Lab","avatarBlobOid":"oid1","listing":"{{listing}}"}""", o["chatMeta"]!.ToJsonString());
+            Assert.Equal("[]", o["messages"]!.ToJsonString());
+            var back = RecordJson.Parse<MessageBatchRecord>(Bytes.Utf8.GetBytes(json));
+            Assert.Equal(listing, back.ChatMeta!.Listing);
+            Assert.Equal(json, IvyJson.Serialize(back));
+        }
+        // absent listing is omitted (unknown), not sent as null
+        Assert.DoesNotContain("listing", IvyJson.Serialize(Batch(Msg()) with { ChatMeta = new ChatMeta { Title = "Lab" } }));
+        foreach (var bad in new[] { "muted", "", "Archived" })
+            Assert.Throws<RecordValidationException>(() => (Batch(Msg()) with { ChatMeta = new ChatMeta { Listing = bad } }).Validate());
+    }
+
+    [Fact]
     public void Validation_matches_the_reference()
     {
         Assert.Throws<RecordValidationException>(() => (Batch(Msg()) with { SourceSession = "telegram" }).Validate());

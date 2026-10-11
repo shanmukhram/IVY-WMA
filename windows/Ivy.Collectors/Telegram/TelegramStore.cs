@@ -63,6 +63,38 @@ public sealed class TelegramStore
             );
             """;
         cmd.ExecuteNonQuery();
+
+        // Added later: the chatMeta.listing (normal | archived) last sent to the Mac for this chat, so a change
+        // with no new messages can be sent as a metadata-only batch. Null until a batch carried it.
+        using var cols = c.CreateCommand();
+        cols.CommandText = "SELECT COUNT(*) FROM pragma_table_info('tg_chat_state') WHERE name = 'listing'";
+        if ((long)cols.ExecuteScalar()! == 0)
+        {
+            using var alter = c.CreateCommand();
+            alter.CommandText = "ALTER TABLE tg_chat_state ADD COLUMN listing TEXT";
+            alter.ExecuteNonQuery();
+        }
+    }
+
+    /// <summary>The chatMeta.listing last sent for <paramref name="convKey"/>, or null if none was sent yet.</summary>
+    public string? GetSentListing(string convKey)
+    {
+        using var c = _db.Open();
+        using var cmd = c.CreateCommand();
+        cmd.CommandText = "SELECT listing FROM tg_chat_state WHERE conv_key = $k";
+        cmd.Parameters.AddWithValue("$k", convKey);
+        return cmd.ExecuteScalar() as string;
+    }
+
+    /// <summary>Record the chatMeta.listing just sent for <paramref name="convKey"/>.</summary>
+    public void SetSentListing(string convKey, string listing)
+    {
+        using var c = _db.Open();
+        using var cmd = c.CreateCommand();
+        cmd.CommandText = "UPDATE tg_chat_state SET listing = $l WHERE conv_key = $k";
+        cmd.Parameters.AddWithValue("$l", listing);
+        cmd.Parameters.AddWithValue("$k", convKey);
+        cmd.ExecuteNonQuery();
     }
 
     public sealed record ChatState(

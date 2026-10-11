@@ -106,8 +106,9 @@ public sealed class WTelegramClientAdapter : ITelegramClient
         var result = new List<TgDialog>(dialogs.dialogs.Length);
         foreach (var d in dialogs.dialogs)
         {
-            var mapped = TelegramTypeMapper.MapDialog(d, users, chats);
-            if (mapped.ConvKey == "unknown") continue;
+            // DialogFolder rows (the collapsed Archive entry) are skipped; archived chats arrive as their own rows.
+            var mapped = TelegramTypeMapper.TryMapDialog(d, users, chats);
+            if (mapped is null || mapped.ConvKey == "unknown") continue;
             var input = InputPeerFor(d.Peer, users, chats);
             if (input is null) continue;
             _peers[mapped.ConvKey] = input;
@@ -166,6 +167,7 @@ public sealed class WTelegramClientAdapter : ITelegramClient
     private static TgDifference BuildDifference(MessageBase[] newMessages, Update[] otherUpdates, DiffState newState, bool more)
     {
         var updates = new List<TgMessageUpdate>();
+        var dialogsChanged = false;
         foreach (var mb in newMessages)
             if (TelegramTypeMapper.MapMessage(mb) is { } m)
                 updates.Add(new TgMessageUpdate(TelegramTypeMapper.ConvKey(mb.Peer), TgChange.Added, m));
@@ -185,11 +187,14 @@ public sealed class WTelegramClientAdapter : ITelegramClient
                         updates.Add(new TgMessageUpdate("channel:" + del.channel_id.ToString(CultureInfo.InvariantCulture),
                             TgChange.Deleted, DeletedStub(id)));
                     break;
+                case UpdateFolderPeers:
+                    dialogsChanged = true; // a chat was archived or unarchived: re-list dialogs next tick
+                    break;
                 // Plain UpdateDeleteMessages carries no conversation id (global pts); the daily Mac-side
                 // reconciliation detects those gaps. We only emit deletions we can attribute to a chat.
             }
         }
-        return new TgDifference(updates, newState.Encode(), more);
+        return new TgDifference(updates, newState.Encode(), more, dialogsChanged);
     }
 
     private static TgMessage DeletedStub(int msgId) =>

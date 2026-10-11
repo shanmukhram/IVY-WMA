@@ -337,6 +337,22 @@ public sealed record ChatMeta
     [JsonPropertyName("chatType")] public string? ChatType { get; init; }
     /// <summary>The chat/peer profile image, uploaded as a chunked blob (payloadKind <c>avatar</c>).</summary>
     [JsonPropertyName("avatarBlobOid")] public string? AvatarBlobOid { get; init; }
+    /// <summary>
+    /// Where the owner's own app lists the chat (<see cref="ChatListing"/>): <c>normal</c>, <c>archived</c>
+    /// (Telegram's Archive folder) or <c>hidden</c> (LINE's hidden chats). Null means unknown; the Mac keeps
+    /// the value it stored before.
+    /// </summary>
+    [JsonPropertyName("listing")] public string? Listing { get; init; }
+}
+
+/// <summary>Wire values for <c>chatMeta.listing</c>.</summary>
+public static class ChatListing
+{
+    public const string Normal = "normal";
+    public const string Archived = "archived";
+    public const string Hidden = "hidden";
+
+    public static bool IsValid(string s) => s is Normal or Archived or Hidden;
 }
 
 /// <summary><c>message_batch</c> (C1-C10, WT1-WT4, WL1-WL3, WX1): messages of one conversation from one capture source.</summary>
@@ -367,6 +383,8 @@ public sealed record MessageBatchRecord() : IvyRecord(Protocol.Kind.MessageBatch
         if (!MessageCoverage.IsValid(Coverage)) throw new RecordValidationException($"invalid coverage '{Coverage}'");
         if (ChatMeta is { ParticipantCount: < 0 }) throw new RecordValidationException("chatMeta.participantCount must be non-negative");
         if (ChatMeta is not null) Optional(ChatMeta.ChatType, "chatMeta.chatType");
+        if (ChatMeta is { Listing: { } listing } && !ChatListing.IsValid(listing))
+            throw new RecordValidationException($"invalid chatMeta.listing '{listing}'");
         if (Messages is null) throw new RecordValidationException("messages is required");
         foreach (var m in Messages)
         {

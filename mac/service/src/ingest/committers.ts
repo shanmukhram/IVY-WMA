@@ -351,15 +351,18 @@ export function commitMessageBatch(db: DB, r: MessageBatchRecordT): CommitResult
   if (conv) {
     db.prepare(`UPDATE conversations SET peer = COALESCE(?, peer), kind = ?, coverage = ?, coverage_by_source = ?, cursor = ?, device_id = COALESCE(device_id, ?),
                   chat_title = COALESCE(?, chat_title), participant_count = COALESCE(?, participant_count), chat_type = COALESCE(?, chat_type),
-                  avatar_blob_oid = COALESCE(?, avatar_blob_oid), updated_at = ? WHERE id = ?`)
-      .run(r.peer ?? null, r.convKind, bestCoverage(by), stableJson(by), r.cursor, r.deviceId, meta.title ?? null, meta.participantCount ?? null, meta.chatType ?? null, meta.avatarBlobOid ?? null, now, conv.id);
+                  avatar_blob_oid = COALESCE(?, avatar_blob_oid), listing = COALESCE(?, listing), updated_at = ? WHERE id = ?`)
+      .run(r.peer ?? null, r.convKind, bestCoverage(by), stableJson(by), r.cursor, r.deviceId, meta.title ?? null, meta.participantCount ?? null, meta.chatType ?? null,
+        meta.avatarBlobOid ?? null, meta.listing ?? null, now, conv.id);
   } else {
     conv = { id: randomUUID(), coverage_by_source: "" };
-    db.prepare(`INSERT INTO conversations(id, device_id, platform, account, conv_key, peer, kind, coverage, coverage_by_source, cursor, chat_title, participant_count, chat_type, avatar_blob_oid, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    db.prepare(`INSERT INTO conversations(id, device_id, platform, account, conv_key, peer, kind, coverage, coverage_by_source, cursor, chat_title, participant_count, chat_type, avatar_blob_oid, listing, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
       .run(conv.id, r.deviceId, r.platform, r.account, r.convKey, r.peer ?? null, r.convKind, bestCoverage(by), stableJson(by), r.cursor,
-        meta.title ?? null, meta.participantCount ?? null, meta.chatType ?? null, meta.avatarBlobOid ?? null, now, now);
+        meta.title ?? null, meta.participantCount ?? null, meta.chatType ?? null, meta.avatarBlobOid ?? null, meta.listing ?? null, now, now);
   }
+  // A metadata-only batch (empty messages: e.g. the chat was archived or hidden with no new messages) stops
+  // here in effect: the loop below stores nothing and the summary reports inserted 0.
   const captured = normTs(r.captureTime)!;
   const blobs: string[] = [];
   let inserted = 0, edited = 0, upgraded = 0, linked = 0;

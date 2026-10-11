@@ -30,6 +30,24 @@ public class WTelegramMappingTests
     }
 
     [Fact]
+    public void MapDialog_folder_id_1_is_archived_and_DialogFolder_rows_are_skipped()
+    {
+        var users = Users(new User { id = 5, first_name = "Al", access_hash = 9 });
+        var archived = new Dialog { peer = new PeerUser { user_id = 5 }, flags = Dialog.Flags.has_folder_id, folder_id = 1 };
+        var normal = new Dialog { peer = new PeerUser { user_id = 5 } };
+        var otherFolder = new Dialog { peer = new PeerUser { user_id = 5 }, flags = Dialog.Flags.has_folder_id, folder_id = 0 };
+
+        Assert.True(TelegramTypeMapper.MapDialog(archived, users, Chats()).Archived);
+        Assert.True(TelegramTypeMapper.TryMapDialog(archived, users, Chats())!.Archived);
+        Assert.False(TelegramTypeMapper.MapDialog(normal, users, Chats()).Archived);
+        Assert.False(TelegramTypeMapper.MapDialog(otherFolder, users, Chats()).Archived);
+
+        // the collapsed "Archived chats" entry is not a chat
+        var folderRow = new DialogFolder { folder = new Folder { id = 1, title = "Archived Chats" }, peer = new PeerChannel { channel_id = 99 } };
+        Assert.Null(TelegramTypeMapper.TryMapDialog(folderRow, users, Chats()));
+    }
+
+    [Fact]
     public void MapDialog_group_and_channel_and_supergroup()
     {
         var chat = new Chat { id = 11, title = "Group", participants_count = 3 };

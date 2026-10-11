@@ -192,6 +192,11 @@ export const ChatMeta = z.object({
   chatType: z.string().min(1).optional(),
   /** the chat/peer profile image, uploaded as a chunked blob with payloadKind "avatar" */
   avatarBlobOid: z.string().min(1).optional(),
+  /**
+   * where the owner's own app lists the chat: "normal", "archived" (Telegram's Archive folder) or "hidden"
+   * (LINE's hidden chats). Absent means the sender does not know; the Mac keeps what it stored before.
+   */
+  listing: z.enum(["normal", "archived", "hidden"]).optional(),
 });
 
 
