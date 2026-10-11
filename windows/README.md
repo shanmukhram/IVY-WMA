@@ -87,6 +87,8 @@ windows/
   - bucket reachability from `Poller.LastPollAt` / `LastPollError` and the uploader's `Failed` events
 - **Collector rows**: `Collectors.All()` and `Collectors.SetEnabled`.
 
+**Window privacy lock.** Once paired, the app window opens locked on every launch: the sidebar shows one plain "IVY" entry and the main area is a neutral cover, with no backup details. About 20 presses on that entry opens the passphrase prompt (the first use sets the passphrase). The passphrase is stored only as a salted hash under DPAPI, and unlock lasts for the session. Capture keeps running while the window is locked, and the tray is a bare icon with Open and Quit. This is a screen-glance privacy layer, not encryption.
+
 ## Collectors: `Ivy.Collectors` (task 1.7)
 
 `Ivy.Collectors` targets `net8.0;net8.0-windows10.0.19041.0`. The platform-independent logic builds and is tested on macOS: diffing, hashing, record building, cursors, coalescing, debounce, exclusion matching, toast parsing and the notification-db snapshot. The Win32 code lives in `Ivy.Collectors/Windows/`, under `#if WINDOWS` and `[SupportedOSPlatform("windows")]`, and is compiled only into the Windows target: the USN journal and the foreground window probe. `EnableWindowsTargeting` lets macOS compile that target. `Ivy.Collectors.Tests` (xunit, `net8.0`) covers the rest.
