@@ -2,17 +2,25 @@
  * The ingest loop (PRD S1-S5).
  *
  * Per pass, for each configured up-bucket:
- *   1. list `up/` once, keeping per record prefix only keys after
- *      (marker - lookback), and `pair/` while a pairing is open; a full listing of
- *      the bucket runs hourly, on demand and after an absence, and catches
- *      unrecognised keys (about one ListObjectsV2 per bucket per poll);
+ *   1. list what is new. Each record prefix has its own position (setting
+ *      `pos:<bucket>:<prefix>`, an oid). An idle pass is two ListObjectsV2 calls
+ *      whatever the archive size: `up/anotif/` from its position, and `up/`
+ *      starting just after the `up/blob/` position, which returns the blobs after
+ *      it plus every prefix that sorts after `up/blob/`. Media originals stay in
+ *      `up/blob/` for good (PLAN decision 11), so starting there is what keeps the
+ *      listing from growing with the archive. `pair/` is listed while a pairing is
+ *      open. See listBucket. A full listing of the bucket runs on start and unlock,
+ *      hourly, on demand, after an absence and after a device comes back; it also
+ *      catches unrecognised keys;
  *   2. per object: check the ledger first; a key already committed or
  *      quarantined whose listing shows the same object the ledger recorded
  *      (same size, not rewritten since) is settled as a replay without a GET.
  *      Otherwise fetch, decrypt with the in-memory key, validate with the
  *      protocol schemas, commit records + ledger row in ONE SQLite transaction,
- *      then delete the object from R2 (media originals stay, PLAN decision 6);
- *   3. advance the bucket's marker (highest committed oid).
+ *      then delete the object from R2 (media originals stay, PLAN decision 11);
+ *   3. advance each prefix's position over what this pass settled (see
+ *      advancePositions): a record prefix only past an unbroken run of settled
+ *      oids, `up/blob/` only up to just below the oldest blob still assembling.
  * Any per-object failure quarantines that object and moves on (S4). Network
  * failures leave the object in place for the next pass.
  *
@@ -22,7 +30,9 @@
  *
  * Crash safety: the ledger row is written in the commit transaction, before the
  * R2 delete. A crash between them leaves an object that the next pass finds in
- * the ledger and only deletes (PROTOCOL §8 "Rollback").
+ * the ledger and only deletes (PROTOCOL §8 "Rollback"). Positions are written
+ * last, after the commits and the delete flush, so a crash can only make the
+ * next pass list a little more than it needs to.
  */
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
@@ -51,7 +61,25 @@ import { deleteCommandObject, maintainCommands, sendQueued } from "../commands/c
 
 /** Record prefixes listed incrementally (PROTOCOL §5). */
 const RECORD_PREFIXES = ["file", "fcat", "scr", "usg", "wnotif", "anotif", "call", "msg", "lineacct", "cstat", "status", "blob"];
-const RECORD_PREFIX_PATHS = RECORD_PREFIXES.map((p) => `up/${p}/`);
+const BLOB_PATH = "up/blob/";
+// Record prefixes that sort before `up/blob/` (today only `up/anotif/`) get a listing call of their own; all the
+// others sort after it and come back in the same `up/` listing that starts at the blob position.
+const BEFORE_BLOB = RECORD_PREFIXES.filter((p) => `up/${p}/` < BLOB_PATH);
+const AFTER_BLOB = RECORD_PREFIXES.filter((p) => `up/${p}/` > BLOB_PATH);
+// Keys the `up/` listing may return in one pass (R2 pages hold 1,000). A pass ingests at most ingestBulkBudget
+// file records or blob parts, and a blob costs a manifest key on top of its parts, so a backlog of one-part photos
+// needs about two listed keys per unit of budget; the margin leaves room for the small records listed with them.
+// The margin can stay small because any prefix the capped listing did not reach gets its own call (FOLLOW_CAP).
+const LIST_MARGIN = 100;
+const listCap = (budget: number) => 2 * Math.max(1, budget) + LIST_MARGIN;
+// One page: the cap for the `up/anotif/` call and for a call to a prefix the capped `up/` listing did not reach.
+const FOLLOW_CAP = 1000;
+// While a device of the bucket's role still reports a non-empty upload queue, the blob listing also starts no later
+// than this far back. A device can upload a newer small blob (an avatar) before an older large one whose manifest
+// has not reached R2 yet; once the newer blob settles the position passes the older oid, and this look-back is what
+// still finds it. With an empty queue nothing is in flight and the listing starts at the position itself.
+const BLOB_RECENT_MS = 10 * 60_000;
+const ZERO_RANDOM = new Uint8Array(10);
 // A ledger replay is settled from the listing alone when R2 last wrote the object at least this long
 // before the Mac ingested it. The margin covers LastModified's one-second precision and clock drift
 // between R2 and the Mac; inside it the object is fetched and its hash compared (see unchangedSinceLedger).
@@ -141,6 +169,10 @@ export class Ingester {
   // listing at the end of every bucket pass, so it never outgrows one listing.
   private readonly seen = new Map<string, Map<string, string>>();
   private lastFull = new Map<string, number>();
+  // buckets whose next pass lists in full because a device came back (see noteDeviceReport)
+  private readonly fullNext = new Set<string>();
+  // devices that came back with a queue still draining: one more full listing once a report shows it empty
+  private readonly draining = new Set<string>();
   private stopped = false;
   private pausedUntil: number | null = null;
   last: PollResult | null = null;
@@ -246,11 +278,15 @@ export class Ingester {
       // full listing: on demand, on the first pass after start / unlock (lastFull empty), hourly, and
       // whenever the last successful poll is older than the marker window (the Mac was away)
       const lastOkMs = msOf(this.lastOk(name));
-      const full = !!opts.full
+      // a device that came back asks for one full listing; taken here, so a report seen during this pass asks
+      // for the pass after it
+      const deviceBack = this.fullNext.delete(name);
+      const full = !!opts.full || deviceBack
         || Date.now() - (this.lastFull.get(name) ?? 0) >= this.ctx.config.fullSweepEveryMs
         || lastOkMs === null || Date.now() - lastOkMs > this.ctx.config.listLookbackMs;
       const res = await this.pollBucket({ bucket: up, bucketName: name, role }, full);
       if (full && !res.error) this.lastFull.set(name, Date.now());
+      if (deviceBack && res.error) this.fullNext.add(name);
       results.push(res);
       setSetting(this.ctx.db, `poll:${name}`, JSON.stringify({
         at, ok: !res.error, error: res.error ?? null, lastOkAt: res.error ? this.lastOk(name) : at,
@@ -273,36 +309,97 @@ export class Ingester {
     return raw ? (JSON.parse(raw) as { lastOkAt: string | null }).lastOkAt : null;
   }
 
+  /** The bucket's highest listing position (the newest oid any prefix has settled), or null. */
   marker(bucket: string): string | null {
-    return getSetting(this.ctx.db, `marker:${bucket}`) ?? null;
+    return highest(this.positions(bucket));
+  }
+
+  /**
+   * Listing positions per record prefix: settings `pos:<bucket>:<prefix>`, each an oid. An install from before
+   * per-prefix positions has only `marker:<bucket>` (the highest oid committed in any prefix); the first read
+   * copies it to every prefix. The first pass after a start lists in full anyway, and an unsettled blob below
+   * the copied position pulls the blob position back down (advancePositions).
+   */
+  private positions(bucket: string): Map<string, string> {
+    const m = new Map<string, string>();
+    for (const p of RECORD_PREFIXES) {
+      const v = getSetting(this.ctx.db, `pos:${bucket}:${p}`);
+      if (v) m.set(p, v);
+    }
+    if (m.size === 0) {
+      const old = getSetting(this.ctx.db, `marker:${bucket}`);
+      if (old && validOid(old)) {
+        for (const p of RECORD_PREFIXES) { setSetting(this.ctx.db, `pos:${bucket}:${p}`, old); m.set(p, old); }
+      }
+    }
+    return m;
   }
 
   // ------------------------------------------------------------------ listing
 
   /**
-   * One ListObjectsV2 pass per bucket and poll (R2 bills lists as Class A operations):
-   * a full listing, or a single `up/` listing with the marker window applied per
-   * record prefix (oids are time-ordered within a prefix, not across prefixes), plus
-   * `pair/` only while a pairing for this role is open. Keys under `up/` with an
-   * unknown prefix are left to the full listing, as before.
+   * What to ingest this pass. R2 bills each ListObjectsV2 page as a Class A operation and the poll runs every
+   * 5 s, so the incremental listing must not grow with the archive. Media originals stay under `up/blob/` for
+   * good (PLAN decision 11); every other prefix is deleted after commit and is near empty when idle. So:
+   *
+   *   - one call per record prefix that sorts before `up/blob/` (only `up/anotif/`), from its position minus
+   *     listLookbackMs (cheap: those objects are deleted after commit);
+   *   - one `up/` call starting just after the blob position, capped at listCap keys. It returns the blobs
+   *     after the position, then every prefix that sorts after `up/blob/` (call, cstat, fcat, file, lineacct,
+   *     msg, scr, status, usg, wnotif). Keys of those prefixes at or below (position - listLookbackMs) are
+   *     dropped, as before;
+   *   - only when that call hit its cap: one capped call per record prefix that sorts after its last key, so
+   *     a flood of file listings or media never hides a status report or a message;
+   *   - `pair/` while a pairing for this role is open.
+   *
+   * Idle that is two calls per bucket. A flood adds a handful of small calls and never pages the whole backlog.
+   * Keys under `up/` with an unknown prefix are left to the full listing. `blobCut` is the oid of the last blob
+   * the capped `up/` call returned when it stopped inside `up/blob/`; that blob may be only partly listed.
    */
-  private async listBucket(src: Source, full: boolean): Promise<ObjectEntry[]> {
+  private async listBucket(src: Source, full: boolean, pos: Map<string, string>): Promise<{ listing: ObjectEntry[]; blobCut: string | null }> {
     const b = src.bucket!;
-    if (full) return b.list();
+    if (full) return { listing: await b.list(), blobCut: null };
     const out: ObjectEntry[] = [];
     if (this.pairingOpen(src.role)) out.push(...(await b.list("pair/")));
-    const marker = this.marker(src.bucketName);
-    let startOid: string | undefined;
-    const ms = marker ? oidTime(marker) : null;
-    if (ms !== null) startOid = makeOid(Math.max(0, ms - this.ctx.config.listLookbackMs), new Uint8Array(10));
-    for (const o of await b.list("up/")) {
-      const p = RECORD_PREFIX_PATHS.find((x) => o.key.startsWith(x));
+    // start of a record prefix's listing: (position - lookback), as an oid with a zero random part
+    const lookbackKey = (p: string): string | undefined => {
+      const ms = oidTime(pos.get(p) ?? "");
+      return ms === null ? undefined : `up/${p}/${makeOid(Math.max(0, ms - this.ctx.config.listLookbackMs), ZERO_RANDOM)}`;
+    };
+    for (const p of BEFORE_BLOB) out.push(...(await b.list(`up/${p}/`, lookbackKey(p), FOLLOW_CAP)));
+
+    const cap = listCap(this.ctx.config.ingestBulkBudget);
+    const main = await b.list("up/", this.blobStartAfter(src, pos.get("blob")), cap);
+    for (const o of main) {
+      const p = prefixOf(o.key);
       if (!p) continue;
-      // same rule the old per-prefix StartAfter applied: strictly after up/<prefix>/<marker - window>
-      if (startOid && o.key <= p + startOid) continue;
+      if (p !== "blob") { const lk = lookbackKey(p); if (lk && o.key <= lk) continue; }
       out.push(o);
     }
-    return out;
+    let blobCut: string | null = null;
+    const last = main.length >= cap ? main[main.length - 1]!.key : null;
+    if (last) {
+      if (last.startsWith(BLOB_PATH)) blobCut = last.slice(BLOB_PATH.length).split("/")[0] ?? null;
+      for (const p of AFTER_BLOB) {
+        if (`up/${p}/` > last) out.push(...(await b.list(`up/${p}/`, lookbackKey(p), FOLLOW_CAP)));
+      }
+    }
+    return { listing: out, blobCut };
+  }
+
+  /**
+   * StartAfter for the `up/` listing. Every key under a blob's folder is `manifest` or `p/<index>`, both below
+   * "~", so `up/blob/<position>/~` skips the blob at the position and everything before it. With no position
+   * yet the listing starts at `up/blob/`. While a device of this role reports a non-empty upload queue, the
+   * start is moved back to at most BLOB_RECENT_MS ago.
+   */
+  private blobStartAfter(src: Source, blobPos: string | undefined): string {
+    if (!blobPos) return BLOB_PATH;
+    const at = `${BLOB_PATH}${blobPos}/~`;
+    const queued = this.ctx.db.prepare("SELECT 1 FROM devices WHERE role = ? AND queue_depth_total > 0 LIMIT 1").get(src.role);
+    if (!queued) return at;
+    const recent = `${BLOB_PATH}${makeOid(Math.max(0, Date.now() - BLOB_RECENT_MS), ZERO_RANDOM)}`;
+    return recent < at ? recent : at;
   }
 
   /**
@@ -316,12 +413,14 @@ export class Ingester {
   }
 
   private async pollBucket(src: Source, full: boolean): Promise<BucketPassResult> {
+    const pos = this.positions(src.bucketName);
     const res: BucketPassResult = {
       bucket: src.bucketName, role: src.role, listed: 0, committed: 0, quarantined: 0, replayed: 0, waiting: 0, errors: 0,
-      marker: this.marker(src.bucketName), full,
+      marker: highest(pos), full,
     };
     let listing: ObjectEntry[];
-    try { listing = await this.listBucket(src, full); }
+    let blobCut: string | null;
+    try { ({ listing, blobCut } = await this.listBucket(src, full, pos)); }
     catch (e) { res.error = `list failed: ${(e as Error).message || (e as Error).name}`; return res; }
     res.listed = listing.length;
 
@@ -348,10 +447,9 @@ export class Ingester {
       else if (o === "waiting") res.waiting++;
       else res.errors++;
     };
-    let maxOid = res.marker ?? "";
-    const seeOid = (oid: string) => { if (oid > maxOid) maxOid = oid; };
     const seen = this.seenFor(src.bucketName);
     const note = (o: ObjectEntry, out: Outcome) => { if (out === "committed" || out === "replayed") seen.set(o.key, stampOf(o)); };
+    const singleOutcome = new Map<string, Outcome>(); // per single record key processed this pass, for its prefix position
 
     for (const o of invalid) tally(await this.quarantine(src, o.key, "unknown", "unrecognised object key", await this.fetchQuiet(src, o.key)));
     for (const o of pairs) {
@@ -377,8 +475,7 @@ export class Ingester {
       let committed = 0;
       for (const { o, bytes } of fetched) {
         const out = await this.guard(src, o.key, o.kind, () => this.ingestSingle(src, o.key, o.kind, bytes, false, o));
-        tally(out); note(o, out);
-        if (out === "committed" || out === "replayed") seeOid(o.oid);
+        tally(out); note(o, out); singleOutcome.set(o.key, out);
         if (out === "committed") committed++;
       }
       await this.flushDeletes(src.bucketName);
@@ -395,8 +492,7 @@ export class Ingester {
     const blobEntries = [...blobs.entries()].filter(([oid, g]) => {
       void g;
       const known = getBlob(this.ctx, src.bucketName, oid);
-      if (known && known.status === "complete" && archivesPayload(this.ctx, known.payload_kind)) { seeOid(oid); return false; }
-      return true;
+      return !(known && known.status === "complete" && archivesPayload(this.ctx, known.payload_kind));
     });
     // Phase 1: ingest every manifest first (they are tiny), which records each blob's payload kind so the
     // chunks can then be fetched avatars-first. A blob whose parts arrived before its manifest waits as before.
@@ -431,8 +527,6 @@ export class Ingester {
         }
         await this.flushDeletes(src.bucketName);
       }
-      const row = getBlob(this.ctx, src.bucketName, oid);
-      if (row?.status === "complete") seeOid(oid);
     }
     // finish blobs whose last part was committed just before a crash
     for (const row of this.ctx.db.prepare("SELECT oid FROM blobs WHERE bucket = ? AND status = 'assembling'").all(src.bucketName) as Array<{ oid: string }>) {
@@ -446,11 +540,72 @@ export class Ingester {
     const listed = new Set(listing.map((o) => o.key));
     for (const k of seen.keys()) if (!listed.has(k)) seen.delete(k);
 
-    if (maxOid && maxOid !== (res.marker ?? "")) {
-      setSetting(this.ctx.db, `marker:${src.bucketName}`, maxOid);
-      res.marker = maxOid;
-    }
+    // positions last: after the commits and the delete flush above (crash safety)
+    this.advancePositions(src, pos, singles, singleOutcome, [...blobs.keys()], blobCut);
+    res.marker = highest(pos);
+    // kept for the coverage view, which shows it per bucket
+    if (res.marker && res.marker !== getSetting(this.ctx.db, `marker:${src.bucketName}`)) setSetting(this.ctx.db, `marker:${src.bucketName}`, res.marker);
     return res;
+  }
+
+  /**
+   * Move each prefix's listing position over what this pass settled, and write the ones that changed.
+   *
+   * A record prefix moves past an unbroken run of its listed oids, oldest first, that were committed, replayed
+   * or quarantined. It stops at the first one left in R2 (a network error, or file listings beyond this pass's
+   * bulk budget), so the position never passes an object that was listed but not processed.
+   *
+   * `up/blob/` moves only up to just below the oldest blob still unsettled: a blob listed but not finished, or
+   * a `blobs` row for this bucket still assembling or awaiting its manifest. So a large upload whose parts are
+   * still arriving is never skipped because a newer avatar committed first. A blob unsettled for longer than
+   * one full-sweep interval (fullSweepEveryMs) no longer holds the position back: the hourly full listing sees
+   * every blob whatever the position, so it keeps picking up that blob's late parts, and the orphan policy
+   * (parts with no manifest quarantined after orphanPartMs) is unchanged. Complete, kept and quarantined blobs
+   * are settled. The position also stays below a blob the capped listing returned only in part (`blobCut`). It
+   * can move down: when a blob below it is unsettled.
+   */
+  private advancePositions(src: Source, pos: Map<string, string>, singles: Array<ObjectEntry & { oid: string }>,
+    outcome: Map<string, Outcome>, blobOids: string[], blobCut: string | null): void {
+    const set = (p: string, v: string) => {
+      if (pos.get(p) === v) return;
+      pos.set(p, v);
+      setSetting(this.ctx.db, `pos:${src.bucketName}:${p}`, v);
+    };
+    const settled = (o: Outcome | undefined) => o === "committed" || o === "replayed" || o === "quarantined";
+
+    const byPrefix = new Map<string, Array<ObjectEntry & { oid: string }>>();
+    for (const o of singles) {
+      const p = prefixOf(o.key);
+      if (!p || p === "blob") continue;
+      const a = byPrefix.get(p) ?? [];
+      a.push(o);
+      byPrefix.set(p, a);
+    }
+    for (const [p, list] of byPrefix) {
+      const from = pos.get(p) ?? "";
+      let to = from;
+      for (const o of list.filter((x) => x.oid > from).sort((x, y) => (x.oid < y.oid ? -1 : 1))) {
+        if (!settled(outcome.get(o.key))) break;
+        to = o.oid;
+      }
+      if (to) set(p, to);
+    }
+
+    const cutoff = new Date(Date.now() - this.ctx.config.fullSweepEveryMs).toISOString();
+    const pinned = (row: { status: string; first_seen_at: string } | undefined) =>
+      !row || ((row.status === "assembling" || row.status === "awaiting_manifest") && row.first_seen_at >= cutoff);
+    let lowest = (this.ctx.db.prepare(`SELECT MIN(oid) AS oid FROM blobs
+                                        WHERE bucket = ? AND status IN ('assembling', 'awaiting_manifest') AND first_seen_at >= ?`)
+      .get(src.bucketName, cutoff) as { oid: string | null }).oid;
+    for (const oid of blobOids) {
+      if ((!lowest || oid < lowest) && pinned(getBlob(this.ctx, src.bucketName, oid))) lowest = oid;
+    }
+    const old = pos.get("blob") ?? "";
+    // how far this pass saw: to the end of up/blob/, or to just below a blob the capped listing cut through
+    let to = blobCut ? (validOid(blobCut) ? oidBefore(blobCut) ?? old : old) : [old, ...blobOids].reduce((a, b) => (b > a ? b : a), "");
+    if (to < old) to = old;
+    if (lowest) { const below = oidBefore(lowest); if (below !== null && below < to) to = below; }
+    if (to) set("blob", to);
   }
 
   /** Never let one object stall the pass: unexpected errors become quarantine; network errors wait. */
@@ -669,7 +824,7 @@ export class Ingester {
     const d = this.decrypt(key, kind, bytes);
     if ("error" in d) return this.quarantine(src, key, kind, d.error, bytes);
     const rec = d.record as { deviceId: string; kind: Kind };
-    const dev = this.ctx.db.prepare("SELECT role FROM devices WHERE id = ?").get(rec.deviceId) as { role: Role } | undefined;
+    const dev = this.ctx.db.prepare("SELECT role, last_seen FROM devices WHERE id = ?").get(rec.deviceId) as { role: Role; last_seen: string | null } | undefined;
     if (!dev) return this.quarantine(src, key, kind, `record from unknown or revoked device ${rec.deviceId}`, bytes, rec.deviceId);
     if (dev.role !== src.role) return this.quarantine(src, key, kind, `device ${rec.deviceId} is ${dev.role} but wrote to the ${src.role} bucket`, bytes, rec.deviceId);
     if (kind === "message_batch") {
@@ -686,11 +841,29 @@ export class Ingester {
       this.ctx.db.prepare("UPDATE devices SET last_seen = ? WHERE id = ?").run(nowIso(), rec.deviceId);
     })();
     await this.remove(src, key);
+    if (kind === "device_report") this.noteDeviceReport(src, rec.deviceId, dev.last_seen, (rec as unknown as { queueDepthTotal: number }).queueDepthTotal);
     for (const c of result!.deleteCommands ?? []) await deleteCommandObject(this.ctx, c.commandId);
     for (const oid of result!.blobs ?? []) placeAndLink(this.ctx, oid);
     this.ctx.events.emit(kind === "command_status" ? "command.status" : "ingest.committed", { bucket: src.bucketName, key, kind, deviceId: rec.deviceId, ...result!.summary });
     if (result!.coverageChanged) this.ctx.events.emit("coverage.changed", { deviceId: rec.deviceId });
     return "committed";
+  }
+
+  /**
+   * A device that comes back after a gap may upload records from its offline queue whose oids are older than
+   * the listing positions. When a device_report arrives and the Mac had committed nothing from that device for
+   * longer than deviceReturnFullMs (measured on the Mac's clock, from the device's last_seen before this
+   * record), the next pass lists the bucket in full. If that report still shows a queue, the first later report
+   * showing it empty asks for one more full listing, for whatever drained in between.
+   */
+  private noteDeviceReport(src: Source, deviceId: string, lastSeen: string | null, queueDepthTotal: number): void {
+    const seenMs = msOf(lastSeen);
+    if (seenMs !== null && Date.now() - seenMs > this.ctx.config.deviceReturnFullMs) {
+      this.fullNext.add(src.bucketName);
+      if (queueDepthTotal > 0) this.draining.add(deviceId);
+    } else if (queueDepthTotal === 0 && this.draining.delete(deviceId)) {
+      this.fullNext.add(src.bucketName);
+    }
   }
 
   // ------------------------------------------------------------------ blobs
@@ -840,6 +1013,30 @@ function stampOf(o: ObjectEntry): string {
 
 function transferOf(p: ReturnType<typeof blobProgress>) {
   return { resultOid: p.oid, committedParts: p.committedParts, totalChunks: p.totalChunks, committedBytes: p.committedBytes, totalSize: p.totalSize };
+}
+
+/** The record prefix (e.g. "msg", "blob") a key under `up/` belongs to, or undefined. */
+function prefixOf(key: string): string | undefined {
+  return RECORD_PREFIXES.find((p) => key.startsWith(`up/${p}/`));
+}
+
+/** The highest of a bucket's positions, or null when it has none. */
+function highest(pos: Map<string, string>): string | null {
+  let h: string | null = null;
+  for (const v of pos.values()) if (h === null || v > h) h = v;
+  return h;
+}
+
+const CROCKFORD = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+/** The oid just below `oid` in sort order (no oid lies between them), or null for the lowest. */
+function oidBefore(oid: string): string | null {
+  const c = oid.split("");
+  for (let i = c.length - 1; i >= 0; i--) {
+    const k = CROCKFORD.indexOf(c[i]!);
+    if (k > 0) { c[i] = CROCKFORD[k - 1]!; return c.join(""); }
+    c[i] = CROCKFORD[CROCKFORD.length - 1]!;
+  }
+  return null;
 }
 
 function validOid(oid: string): boolean {

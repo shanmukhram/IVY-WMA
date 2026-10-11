@@ -32,19 +32,26 @@ export interface ServiceConfig {
   /** a device object written up to this long after exp is still accepted (clock skew) */
   pairingGraceMs: number;
   /**
-   * Listing starts at (marker - lookback) rather than at the marker itself: devices
-   * upload out of oid order (small records overtake bulk blobs, offline queues
-   * drain late), so a strict "after marker" listing would silently skip objects.
-   * Default 8 days. There is no lifecycle expiry on the up-buckets (PLAN decision 6),
-   * so objects can be older than this window: the ingester does a full listing on
-   * start, after unlock, hourly, and whenever the last successful poll is older
-   * than this window.
+   * How far back each record prefix other than `up/blob/` is listed, counted from that prefix's own
+   * position (the newest oid it has settled). Devices upload out of oid order (offline queues drain late),
+   * so listing strictly after the position would skip a late record. Those prefixes are deleted from R2
+   * after commit, so looking back costs nothing at idle. `up/blob/` keeps media originals (PLAN decision 11)
+   * and is listed from its own position without this look-back. Also: when the last successful poll is older
+   * than this, the next pass lists the bucket in full (the Mac was away). Default 8 days. There is no
+   * lifecycle expiry on the up-buckets (PLAN decision 6); a full listing also runs on start, after unlock,
+   * hourly, and after a device comes back (deviceReturnFullMs).
    */
   listLookbackMs: number;
   /** most file-listing / large-media objects ingested per pass; small high-priority records always flow */
   ingestBulkBudget: number;
   /** a full listing of the bucket (catches unrecognised keys) at most this often */
   fullSweepEveryMs: number;
+  /**
+   * A device_report from a device the Mac has heard nothing from for longer than this makes the next pass
+   * list that bucket in full: the device's offline queue may now upload records whose oids are older than
+   * the listing positions. Default 10 minutes (Windows reports every 30 s).
+   */
+  deviceReturnFullMs: number;
   /** chunk parts whose manifest never arrives are quarantined after this long (7 days) */
   orphanPartMs: number;
   /** refuse to buffer a single part bigger than this (bounded memory) */
@@ -121,6 +128,7 @@ export function loadConfig(overrides: Partial<ServiceConfig> = {}, cwd: string =
     listLookbackMs: envInt("IVY_LIST_LOOKBACK_MS") ?? 8 * DAY,
     ingestBulkBudget: envInt("IVY_INGEST_BULK_BUDGET") ?? 3000,
     fullSweepEveryMs: 60 * MIN,
+    deviceReturnFullMs: envInt("IVY_DEVICE_RETURN_FULL_MS") ?? 10 * MIN,
     orphanPartMs: 7 * DAY,
     maxPartBytes: 64 * 1024 * 1024,
     maxQuarantineBytes: 64 * 1024 * 1024,
