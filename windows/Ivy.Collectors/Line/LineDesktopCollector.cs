@@ -133,6 +133,9 @@ public sealed class LineDesktopCollector : Collector<LineSettings>
     {
         _cursors = LoadCursors();
         _verifiedVersion = null;
+        // The last uploaded account snapshot's content hash survives restarts, so an unchanged snapshot is not re-sent.
+        var savedHash = Context.Settings.LoadJson(Name, "accountHash") as JsonValue;
+        _lastAccountHash = savedHash is not null && savedHash.TryGetValue<string>(out var h) && !string.IsNullOrEmpty(h) ? h : null;
         MigratePollSeconds();
         return Task.CompletedTask;
     }
@@ -207,6 +210,7 @@ public sealed class LineDesktopCollector : Collector<LineSettings>
             SaveCursors();
             _lastKeepHash = null;    // re-emit Keep and the account snapshot too
             _lastAccountHash = null;
+            Context.Settings.SaveJson(Name, "accountHash", JsonValue.Create(""));
             Activity(CollectorActivity.ScanStarted, "re-sync: re-reading all LINE chats, Keep and the account snapshot");
         }
 
@@ -319,7 +323,8 @@ public sealed class LineDesktopCollector : Collector<LineSettings>
                 Messages = messages,
                 Cursor = $"keep={items.Count}",
             };
-            var hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(Ivy.Core.Protocol.IvyJson.Serialize(record))));
+            // Hash the content only: CaptureTime changes every tick and would defeat the change check.
+            var hash = ContentHash(record with { CaptureTime = "" });
             if (hash == _lastKeepHash) return;
             Emit(sink, record);
             _lastKeepHash = hash;
@@ -359,12 +364,17 @@ public sealed class LineDesktopCollector : Collector<LineSettings>
         };
 
         // Only upload when the snapshot changed, so it does not re-send every tick.
-        var json = Ivy.Core.Protocol.IvyJson.Serialize(record);
-        var hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(json)));
+        // The hash covers the content only (timestamps blanked), since EventTime/CaptureTime change every tick.
+        var hash = ContentHash(record with { EventTime = "", CaptureTime = "" });
         if (hash == _lastAccountHash) return;
         Emit(sink, record);
         _lastAccountHash = hash;
+        Context.Settings.SaveJson(Name, "accountHash", JsonValue.Create(hash));
     }
+
+    private static string ContentHash(IvyRecord record) =>
+        Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
+            System.Text.Encoding.UTF8.GetBytes(Ivy.Core.Protocol.IvyJson.Serialize(record))));
 
     private void EmitBatch(IRecordSink sink, LineStoreMap map, LineChat chat, LineMessagePage page)
     {

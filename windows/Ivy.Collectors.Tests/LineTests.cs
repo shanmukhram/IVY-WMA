@@ -664,6 +664,95 @@ public class LineCollectorTests : IDisposable
         Assert.Equal(2, keep.Root.GetProperty("messages").GetArrayLength());
     }
 
+    private void SeedAccount() => Seed(c =>
+    {
+        LineFixture.OwnProfile(c, "uME", "Me");
+        LineFixture.ContactFull(c, "uALICE", "Alice", status: "FRIEND", settings: 0);
+        LineFixture.Chat(c, "uALICE");
+    });
+
+    [Fact]
+    public async Task Unchanged_account_snapshot_is_emitted_once_across_ticks()
+    {
+        SeedAccount();
+        var line = NewCollector();
+        await line.StartAsync(default);
+        await line.TickAsync(default);
+        _env.Time.Advance(TimeSpan.FromSeconds(5));
+        await line.TickAsync(default);
+        _env.Time.Advance(TimeSpan.FromSeconds(5));
+        await line.TickAsync(default);
+
+        Assert.Single(_env.Sink.Of(Kind.LineAccount));
+    }
+
+    [Fact]
+    public async Task Changed_contact_name_emits_a_second_account_snapshot()
+    {
+        SeedAccount();
+        var line = NewCollector();
+        await line.StartAsync(default);
+        await line.TickAsync(default);
+        Seed(c =>
+        {
+            using var cmd = c.CreateCommand();
+            cmd.CommandText = "UPDATE _contact SET _displayName='Alice B' WHERE _mid='uALICE'";
+            cmd.ExecuteNonQuery();
+        });
+        _env.Time.Advance(TimeSpan.FromSeconds(5));
+        await line.TickAsync(default);
+
+        Assert.Equal(2, _env.Sink.Of(Kind.LineAccount).Count);
+    }
+
+    [Fact]
+    public async Task Persisted_account_hash_skips_the_snapshot_after_restart_until_resync()
+    {
+        SeedAccount();
+        var first = NewCollector();
+        await first.StartAsync(default);
+        await first.TickAsync(default);
+        Assert.Single(_env.Sink.Of(Kind.LineAccount));
+
+        _env.Time.Advance(TimeSpan.FromMinutes(1));
+        var restarted = NewCollector(ctx: _env.Restart());
+        await restarted.StartAsync(default);
+        await restarted.TickAsync(default);
+        Assert.Single(_env.Sink.Of(Kind.LineAccount));   // unchanged: not re-uploaded after a restart
+
+        restarted.RequestResync();
+        await restarted.TickAsync(default);
+        Assert.Equal(2, _env.Sink.Of(Kind.LineAccount).Count);
+    }
+
+    [Fact]
+    public async Task Unchanged_keep_is_emitted_once_across_ticks()
+    {
+        Seed(c => { LineFixture.OwnProfile(c, "uME", "Me"); LineFixture.Chat(c, "uX"); LineFixture.Message(c, "m", "uX", "uX", 1_760_000_000_000, "hi"); });
+        var key = System.Text.Encoding.ASCII.GetBytes("0123456789abcdef0123456789abcdef");
+        SqliteConnection.ClearAllPools();
+        var mplain = File.ReadAllBytes(_dbPath);
+        File.WriteAllBytes(_dbPath, LineWxCipher.Encrypt(mplain, LineWxCipher.DeriveKey(key), (mplain[16] << 8) | (mplain[17] << 16)));
+        var keepPlain = LineFixture.CreateKeep(_dataFolder);
+        using (var kc = LineFixture.Open(keepPlain))
+            LineFixture.Keep(kc, "k1", 1_760_000_000_000, "My note", "TEXT");
+        SqliteConnection.ClearAllPools();
+        var kplain = File.ReadAllBytes(keepPlain);
+        File.WriteAllBytes(keepPlain, LineWxCipher.Encrypt(kplain, LineWxCipher.DeriveKey(key), (kplain[16] << 8) | (kplain[17] << 16)));
+
+        var line = new LineDesktopCollector(_env.Context, new LineSettings(),
+            roots: new[] { new LineProbeRoot("test", _dataFolder) },
+            reportDir: _dir.Sub("rk2"), tempRoot: _dir.Sub("tk2"),
+            keyStore: new InMemoryLineKeyStore(key));
+        await line.StartAsync(default);
+        await line.TickAsync(default);
+        _env.Time.Advance(TimeSpan.FromSeconds(5));
+        await line.TickAsync(default);
+
+        Assert.Single(Batches(), b => b.Root.GetProperty("convKey").GetString() == "keep");
+        Assert.Single(_env.Sink.Of(Kind.LineAccount));
+    }
+
     // ---- WAL: rows LINE has committed to the -wal file but not yet checkpointed into the main file ----
 
     private const long T0 = 1_760_000_000_000;
