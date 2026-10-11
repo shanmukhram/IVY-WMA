@@ -346,6 +346,30 @@ public sealed class LineStore : IDisposable
         AddNames(n.SquareTable, n.SquareChatId, n.SquareName, "square", tables);
         AddNames(n.RoomTable, n.RoomChatId, null, "room", tables);
         AddContactNames(n, tables);
+        AddOwnName(n, tables);
+    }
+
+    /// <summary>
+    /// The account's own mid is not a contact, so LINE's chat with yourself (chat id = own mid) would show a raw
+    /// mid. Map the own mid to the own profile's <c>_displayName</c>, unless a contact row already names it.
+    /// </summary>
+    private void AddOwnName(LineNameTables n, HashSet<string> tables)
+    {
+        var mid = OwnMid();
+        if (string.IsNullOrEmpty(mid) || n.OwnProfileTable is not { } table || n.OwnProfileMid is not { } midCol) return;
+        if (_names!.TryGetValue(mid, out var existing) && !string.IsNullOrWhiteSpace(existing.Item1)) return;
+        const string nameCol = "_displayName";
+        if (!tables.Contains(table) || !Columns(table).Contains(nameCol)) return;
+        try
+        {
+            using var cmd = _c.CreateCommand();
+            cmd.CommandText = $"SELECT {Q(nameCol)} FROM {Q(table)} WHERE {Q(midCol)} = $m LIMIT 1";
+            cmd.Parameters.AddWithValue("$m", mid);
+            var v = cmd.ExecuteScalar();
+            var name = v is null or DBNull ? null : Convert.ToString(v, CultureInfo.InvariantCulture);
+            if (!string.IsNullOrWhiteSpace(name)) _names[mid] = (name, "private");
+        }
+        catch (SqliteException) { /* name resolution is best-effort */ }
     }
 
     /// <summary>

@@ -234,27 +234,71 @@ public sealed class LineDesktopCollector : Collector<LineSettings>
         _verifiedVersion = null;
         _idleStamp = null;
         _lastStore = null;
+        _epochResyncApplied = false;
         // Snapshot directories a killed process or a still-locked file left behind (file times are real time).
         LineSnapshot.SweepLeftovers(_tempRoot, LeftoverAge, DateTimeOffset.UtcNow);
         MigratePollSeconds();
-        MigrateNamesV2();
-        MigrateAccountKeyV1();
-        MigrateCallsV1();
+        // Decided from persisted state, not from memory: per-account cursors only load on the first tick
+        // (SwitchAccount), so _cursors is always empty here.
+        var captured = HasEverCaptured();
+        MigrateNamesV2(captured);
+        MigrateAccountKeyV1(captured);
+        MigrateCallsV1(captured);
         return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Whether this install has ever captured anything, from what is saved (never from memory): the legacy
+    /// single <c>cursors</c> blob with any entry, any per-account <c>cursors:&lt;id&gt;</c> with any entry, or a
+    /// saved <c>lastCaptured</c> time. Only an install with none of these is fresh; the one-time re-sends run
+    /// unconditionally on every other install.
+    /// </summary>
+    private bool HasEverCaptured()
+    {
+        if (LoadCursors(LegacyCursorsKey).Count > 0) return true;
+        if (Context.Settings.LoadJson(Name, LastCapturedKey) is not null) return true;
+        // Per-account cursors are saved under "cursors:<storeKey>"; the store keys are not known before a store
+        // is opened, so look for any such setting directly.
+        var prefix = CollectorSettingsStore.Key(Name, "cursors:");
+        try
+        {
+            using var c = Context.Db.Open();
+            using var cmd = c.CreateCommand();
+            cmd.CommandText = "SELECT value FROM agent_settings WHERE substr(key, 1, length($p)) = $p";
+            cmd.Parameters.AddWithValue("$p", prefix);
+            using var r = cmd.ExecuteReader();
+            while (r.Read())
+            {
+                if (r.IsDBNull(0)) continue;
+                try
+                {
+                    if (JsonNode.Parse(r.GetString(0)) is JsonObject o && o.Count > 0) return true;
+                }
+                catch (System.Text.Json.JsonException) { }
+            }
+        }
+        catch (Microsoft.Data.Sqlite.SqliteException e)
+        {
+            // Cannot tell: treat it as an existing install. An extra re-send is harmless (the Mac merges by
+            // platform message id); a skipped one is not.
+            Logger.LogWarning("{Collector}: could not read saved cursors, assuming an existing install: {Reason}", Name, e.Message);
+            return true;
+        }
+        return false;
     }
 
     /// <summary>
     /// One-time: records uploaded before accounts were told apart carry account "default", so a second LINE
     /// account used on this PC would merge into the first on the Mac (WX1 merges by platform + account +
     /// conversation + message id). Request one re-sync so every chat is re-sent under the account's own id.
-    /// Same pattern as <see cref="MigrateNamesV2"/>: a fresh install (no saved cursors) records the flag at once;
-    /// otherwise the flag is saved only after a tick has applied the re-sync. The Mac then holds those chats
+    /// Same pattern as <see cref="MigrateNamesV2"/>: a fresh install (<see cref="HasEverCaptured"/>) records the flag at once;
+    /// otherwise the flag is saved only after a tick has applied the re-sync and emitted every chat. The Mac then holds those chats
     /// twice (under "default" and under the account id) until it removes its "default" LINE records.
     /// </summary>
-    private void MigrateAccountKeyV1()
+    private void MigrateAccountKeyV1(bool captured)
     {
         if (Context.Settings.LoadJson(Name, "accountKeyV1") is not null) return;
-        if (LoadCursors(LegacyCursorsKey).Count == 0)
+        if (!captured)
         {
             Context.Settings.SaveJson(Name, "accountKeyV1", JsonValue.Create(true));
             return;
@@ -270,14 +314,14 @@ public sealed class LineDesktopCollector : Collector<LineSettings>
     /// One-time: LINE 26.x keeps contact names in a JSON column rather than <c>_displayName</c>, so messages
     /// uploaded before that was handled went out with raw mids as sender names and chat titles. Request one
     /// re-sync so every chat re-emits with names; the Mac merges by platform message id (WX1), so this updates
-    /// the existing rows rather than duplicating them. A fresh install (no saved cursors) has nothing to redo,
+    /// the existing rows rather than duplicating them. A fresh install (<see cref="HasEverCaptured"/>) has nothing to redo,
     /// so it records the flag at once. Otherwise the flag is saved only when a tick has actually applied the
-    /// re-sync (cursors cleared and saved), so quitting before that tick asks again on the next start.
+    /// re-sync (cursors cleared and every chat emitted), so quitting before that asks again on the next start.
     /// </summary>
-    private void MigrateNamesV2()
+    private void MigrateNamesV2(bool captured)
     {
         if (Context.Settings.LoadJson(Name, "namesV2") is not null) return;
-        if (LoadCursors(LegacyCursorsKey).Count == 0)
+        if (!captured)
         {
             Context.Settings.SaveJson(Name, "namesV2", JsonValue.Create(true));
             return;
@@ -294,12 +338,12 @@ public sealed class LineDesktopCollector : Collector<LineSettings>
     /// the Mac shows LINE's raw system text for them. Request one re-sync so they re-emit with <c>call</c>
     /// (kind, outcome, duration, direction); the Mac merges by platform message id and fills the call columns
     /// on the existing rows. Same pattern as <see cref="MigrateNamesV2"/>: a fresh install records the flag at
-    /// once; otherwise the flag is saved only after a tick has applied the re-sync.
+    /// once; otherwise the flag is saved only after a tick has applied the re-sync and emitted every chat.
     /// </summary>
-    private void MigrateCallsV1()
+    private void MigrateCallsV1(bool captured)
     {
         if (Context.Settings.LoadJson(Name, "callsV1") is not null) return;
-        if (LoadCursors(LegacyCursorsKey).Count == 0)
+        if (!captured)
         {
             Context.Settings.SaveJson(Name, "callsV1", JsonValue.Create(true));
             return;
@@ -310,6 +354,9 @@ public sealed class LineDesktopCollector : Collector<LineSettings>
     }
 
     private bool _callsMigrationPending;
+
+    // A one-time re-send that has not been applied yet always forces a full read (never an idle skip).
+    private bool MigrationPending => _namesMigrationPending || _accountKeyMigrationPending || _callsMigrationPending;
 
     public override Task TickAsync(CancellationToken ct)
     {
@@ -352,7 +399,7 @@ public sealed class LineDesktopCollector : Collector<LineSettings>
         // Cheap idle tick: nothing LINE writes has changed since the last tick that finished (a new message
         // always changes the -wal), so skip the snapshot and decrypt and keep the previous state and Detail.
         var stamp = IdleStamp(dataFolder, dbPath, version, running);
-        if (!probed && !_resyncRequested && stamp == _idleStamp) return Task.CompletedTask;
+        if (!probed && !_resyncRequested && !MigrationPending && stamp == _idleStamp) return Task.CompletedTask;
         _idleStamp = null;   // set again below only when this tick finishes without needing a retry
 
         SnapshotsTaken++;
@@ -427,9 +474,13 @@ public sealed class LineDesktopCollector : Collector<LineSettings>
         var sink = Sink;
         if (sink is null) return Task.CompletedTask; // not paired yet; verified, nothing to emit
 
+        // A re-sync applied by SwitchAccount (requested while another account was open) counts too.
+        var resyncing = _epochResyncApplied;
+        _epochResyncApplied = false;
         if (_resyncRequested)
         {
             _resyncRequested = false;
+            resyncing = true;
             _cursors.Clear();   // re-read every chat from the start
             SaveCursors();
             // Other accounts' stores are not open now; bumping the epoch makes each of them re-read from the
@@ -437,36 +488,23 @@ public sealed class LineDesktopCollector : Collector<LineSettings>
             var epoch = LoadLong(ResyncEpochKey) + 1;
             Context.Settings.SaveJson(Name, ResyncEpochKey, JsonValue.Create(epoch));
             Context.Settings.SaveJson(Name, EpochKey(_storeKey!), JsonValue.Create(epoch));
-            if (_namesMigrationPending)
-            {
-                // The names re-sync is now applied (cursors are cleared on disk), so it is never requested again.
-                Context.Settings.SaveJson(Name, "namesV2", JsonValue.Create(true));
-                _namesMigrationPending = false;
-            }
-            if (_accountKeyMigrationPending)
-            {
-                // Likewise for the re-send under the account's own id.
-                Context.Settings.SaveJson(Name, "accountKeyV1", JsonValue.Create(true));
-                _accountKeyMigrationPending = false;
-            }
-            if (_callsMigrationPending)
-            {
-                // Likewise for the re-send that adds the call field.
-                Context.Settings.SaveJson(Name, "callsV1", JsonValue.Create(true));
-                _callsMigrationPending = false;
-            }
             _lastKeepHash = null;    // re-emit Keep and the account snapshot too
             _lastAccountHash = null;
             Context.Settings.SaveJson(Name, AccountHashKey(_storeKey!), JsonValue.Create(""));
             Activity(CollectorActivity.ScanStarted, $"re-sync: re-reading all LINE chats, Keep and the account snapshot (account {account})");
         }
 
+        // No content check here: every page read is emitted, so after a re-sync has cleared the cursors every
+        // chat is sent again in full even if nothing changed since the last send.
         var chats = store.Chats();
         var newMessages = 0;
+        var batchesEmitted = 0;
+        var chatsEmitted = 0;
         foreach (var chat in chats)
         {
             if (ct.IsCancellationRequested) break;
             var cursor = _cursors.GetValueOrDefault(chat.ChatId, 0L);
+            var chatBatches = 0;
             while (true)
             {
                 var page = store.ReadMessages(chat, cursor, Settings.BatchSize);
@@ -474,6 +512,7 @@ public sealed class LineDesktopCollector : Collector<LineSettings>
                 {
                     EmitBatch(sink, account, chat, page);
                     newMessages += page.Messages.Count;
+                    chatBatches++;
                 }
                 if (page.MaxRowId > cursor)
                 {
@@ -483,10 +522,32 @@ public sealed class LineDesktopCollector : Collector<LineSettings>
                 }
                 if (!page.HasMore) break;
             }
+            batchesEmitted += chatBatches;
+            if (chatBatches > 0) chatsEmitted++;
         }
 
         EmitAccount(sink, store, account);
         EmitKeep(sink, account, dbPath);
+
+        if (resyncing)
+        {
+            if (ct.IsCancellationRequested)
+            {
+                // Stopped part-way: chats not reached still have cleared cursors on disk and are read from the
+                // start next time; the one-time flags stay unset, so the re-send is requested again on start.
+                Activity(CollectorActivity.ScanCompleted, $"re-sync interrupted: {chatsEmitted} chats, {batchesEmitted} batches sent before stopping (account {account})");
+            }
+            else
+            {
+                // The re-sync is applied (cursors cleared) and every chat was emitted: record the one-time flags
+                // that asked for it, so they are never requested again.
+                if (_namesMigrationPending) { Context.Settings.SaveJson(Name, "namesV2", JsonValue.Create(true)); _namesMigrationPending = false; }
+                if (_accountKeyMigrationPending) { Context.Settings.SaveJson(Name, "accountKeyV1", JsonValue.Create(true)); _accountKeyMigrationPending = false; }
+                if (_callsMigrationPending) { Context.Settings.SaveJson(Name, "callsV1", JsonValue.Create(true)); _callsMigrationPending = false; }
+                // The proof that the re-send happened, with what it actually emitted.
+                Activity(CollectorActivity.ScanCompleted, $"re-sync done: {chatsEmitted} chats, {batchesEmitted} batches (account {account})");
+            }
+        }
 
         Cursor = $"chats={chats.Count}";
         var capturedAt = Now;
@@ -595,6 +656,7 @@ public sealed class LineDesktopCollector : Collector<LineSettings>
         var epoch = LoadLong(ResyncEpochKey);
         if (LoadLong(EpochKey(storeKey)) < epoch)
         {
+            _epochResyncApplied = true;   // the tick reports it like any re-sync
             _cursors.Clear();
             SaveCursors();
             Context.Settings.SaveJson(Name, AccountHashKey(storeKey), JsonValue.Create(""));
@@ -609,6 +671,8 @@ public sealed class LineDesktopCollector : Collector<LineSettings>
         if (previous is not null)
             Activity(CollectorActivity.Config, $"LINE account changed ({previous} -> {storeKey}); using that account's own cursors");
     }
+
+    private bool _epochResyncApplied;
 
     private long LoadLong(string key) =>
         Context.Settings.LoadJson(Name, key) is JsonValue v && v.TryGetValue<long>(out var n) ? n : 0L;

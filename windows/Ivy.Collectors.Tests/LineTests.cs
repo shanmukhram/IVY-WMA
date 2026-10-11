@@ -1038,6 +1038,157 @@ public class LineCollectorTests : IDisposable
         Assert.NotNull(_env.Context.Settings.LoadJson(CollectorNames.Line, "callsV1"));
     }
 
+    private void MarkDone(params string[] flags)
+    {
+        foreach (var f in flags) _env.Context.Settings.SaveJson(CollectorNames.Line, f, System.Text.Json.Nodes.JsonValue.Create(true));
+    }
+
+    private IEnumerable<string> ResyncDoneLines() => _env.Activity.Recent()
+        .Where(e => e.Collector == CollectorNames.Line && e.Event == CollectorActivity.ScanCompleted && e.Detail != null && e.Detail.StartsWith("re-sync done:"))
+        .Select(e => e.Detail!);
+
+    [Fact]
+    public async Task CallsV1_resends_every_chat_when_cursors_exist_only_in_per_account_storage()
+    {
+        // The real upgrade path: since per-account cursors, nothing is in the legacy "cursors" blob and nothing is
+        // in memory at start; the only evidence of earlier capture is "cursors:<mid>" in persisted settings.
+        Seed(c =>
+        {
+            LineFixture.OwnProfile(c, "uME", "Sai");
+            LineFixture.Chat(c, "uBOB");
+            LineFixture.Chat(c, "uCAROL");
+            LineFixture.Message(c, "k1", "uBOB", "uBOB", 1_760_000_000_000, "call", contentType: 6,
+                meta: """{"TYPE":"A","RESULT":"NORMAL","DURATION":"6000"}""");
+            LineFixture.Message(c, "m2", "uCAROL", "uCAROL", 1_760_000_100_000, "hi");
+        });
+        _env.Context.Settings.SaveJson(CollectorNames.Line, "cursors:uME",
+            new System.Text.Json.Nodes.JsonObject { ["uBOB"] = 1_000_000, ["uCAROL"] = 1_000_000 });
+        MarkDone("namesV2", "accountKeyV1");   // callsV1 absent (e.g. deleted while the app was stopped)
+
+        var line = NewCollector();
+        await line.StartAsync(default);
+        Assert.Null(_env.Context.Settings.LoadJson(CollectorNames.Line, "callsV1"));   // not before the re-send
+        await line.TickAsync(default);
+
+        var batches = Batches();
+        Assert.Equal(new[] { "uBOB", "uCAROL" }, batches.Select(b => b.Root.GetProperty("convKey").GetString()).OrderBy(x => x));
+        Assert.Equal(6, batches.Single(b => b.Root.GetProperty("convKey").GetString() == "uBOB")
+            .Root.GetProperty("messages")[0].GetProperty("call").GetProperty("durationSec").GetInt64());
+        Assert.NotNull(_env.Context.Settings.LoadJson(CollectorNames.Line, "callsV1"));
+        Assert.Contains("re-sync done: 2 chats, 2 batches (account uME)", ResyncDoneLines());
+
+        _env.Sink.Clear();
+        var restarted = NewCollector(ctx: _env.Restart());
+        await restarted.StartAsync(default);
+        await restarted.TickAsync(default);
+        Assert.Empty(Batches());                                                  // only once
+    }
+
+    [Fact]
+    public async Task Saved_lastCaptured_alone_counts_as_an_existing_install()
+    {
+        Seed(c => { LineFixture.Chat(c, "uBOB"); LineFixture.Message(c, "m1", "uBOB", "uBOB", 1_760_000_000_000, "one"); });
+        _env.Context.Settings.SaveJson(CollectorNames.Line, "lastCaptured", System.Text.Json.Nodes.JsonValue.Create("2026-10-10T00:00:00Z"));
+        MarkDone("namesV2", "accountKeyV1");
+
+        var line = NewCollector();
+        await line.StartAsync(default);
+        Assert.Null(_env.Context.Settings.LoadJson(CollectorNames.Line, "callsV1"));
+        await line.TickAsync(default);
+        Assert.NotNull(_env.Context.Settings.LoadJson(CollectorNames.Line, "callsV1"));
+        Assert.Single(ResyncDoneLines());
+    }
+
+    [Fact]
+    public async Task Fresh_install_sets_every_one_time_flag_without_a_resync()
+    {
+        Seed(c => { LineFixture.Chat(c, "uBOB"); LineFixture.Message(c, "m1", "uBOB", "uBOB", 1_760_000_000_000, "one"); });
+        var line = NewCollector();
+        await line.StartAsync(default);
+        foreach (var f in new[] { "namesV2", "accountKeyV1", "callsV1" })
+            Assert.NotNull(_env.Context.Settings.LoadJson(CollectorNames.Line, f));
+        await line.TickAsync(default);
+        Assert.Equal(1, CountMessages(Batches()));                               // the ordinary first read
+        Assert.Empty(ResyncDoneLines());
+        Assert.DoesNotContain(_env.Activity.Recent(), e => e.Event == CollectorActivity.ScanStarted && e.Collector == CollectorNames.Line);
+    }
+
+    [Fact]
+    public async Task Resync_emits_every_chat_even_when_the_store_stamp_is_unchanged()
+    {
+        Seed(c =>
+        {
+            LineFixture.Chat(c, "uBOB");
+            LineFixture.Chat(c, "uCAROL");
+            LineFixture.Message(c, "m1", "uBOB", "uBOB", 1_760_000_000_000, "one");
+            LineFixture.Message(c, "m2", "uCAROL", "uCAROL", 1_760_000_100_000, "two");
+        });
+        var line = NewCollector();
+        await line.StartAsync(default);
+        await line.TickAsync(default);
+        Assert.Equal(2, Batches().Count);
+        var first = Batches().Select(b => b.Root.GetProperty("messages").GetRawText()).OrderBy(x => x).ToList();
+
+        _env.Sink.Clear();
+        _env.Time.Advance(TimeSpan.FromSeconds(5));
+        await line.TickAsync(default);                                           // identical tick: idle, nothing sent
+        Assert.Empty(Batches());
+        Assert.Equal(1, line.SnapshotsTaken);
+
+        line.RequestResync();
+        _env.Time.Advance(TimeSpan.FromSeconds(5));
+        await line.TickAsync(default);                                           // same stamp, but a re-sync is pending
+        Assert.Equal(2, line.SnapshotsTaken);
+        var again = Batches().Select(b => b.Root.GetProperty("messages").GetRawText()).OrderBy(x => x).ToList();
+        Assert.Equal(first, again);                                              // unchanged content still re-sent
+    }
+
+    [Fact]
+    public async Task Resync_done_activity_line_counts_chats_and_batches()
+    {
+        Seed(c =>
+        {
+            LineFixture.Chat(c, "uBOB");
+            LineFixture.Chat(c, "uCAROL");
+            LineFixture.Chat(c, "uEMPTY");                                       // no messages: not counted
+            LineFixture.Message(c, "m1", "uBOB", "uBOB", 1_760_000_000_000, "1");
+            LineFixture.Message(c, "m2", "uBOB", "uBOB", 1_760_000_001_000, "2");
+            LineFixture.Message(c, "m3", "uBOB", "uBOB", 1_760_000_002_000, "3");
+            LineFixture.Message(c, "m4", "uCAROL", "uCAROL", 1_760_000_003_000, "4");
+        });
+        var line = NewCollector(new LineSettings { BatchSize = 2 });
+        await line.StartAsync(default);
+        await line.TickAsync(default);
+        Assert.Empty(ResyncDoneLines());                                          // an ordinary read is not a re-sync
+
+        _env.Sink.Clear();
+        line.RequestResync();
+        await line.TickAsync(default);
+        Assert.Equal(3, Batches().Count);                                         // uBOB: 2 + 1, uCAROL: 1
+        Assert.Equal("re-sync done: 2 chats, 3 batches (account chat)", ResyncDoneLines().Single());
+    }
+
+    [Fact]
+    public async Task Chat_with_the_own_account_is_titled_with_the_profile_name()
+    {
+        Seed(c =>
+        {
+            LineFixture.OwnProfile(c, "uME", "Sai");
+            LineFixture.Chat(c, "uME");                                           // LINE's chat with yourself
+            LineFixture.Message(c, "m1", "uME", "uME", 1_760_000_000_000, "note to self");
+        });
+        var line = NewCollector();
+        await line.StartAsync(default);
+        await line.TickAsync(default);
+
+        var b = Batches().Single().Root;
+        Assert.Equal("uME", b.GetProperty("convKey").GetString());
+        Assert.Equal("dm", b.GetProperty("convKind").GetString());
+        Assert.Equal("Sai", b.GetProperty("peer").GetString());
+        Assert.Equal("Sai", b.GetProperty("chatMeta").GetProperty("title").GetString());
+        Assert.Equal("You", b.GetProperty("messages")[0].GetProperty("senderName").GetString());
+    }
+
     [Fact]
     public async Task Unchanged_keep_is_emitted_once_across_ticks()
     {
