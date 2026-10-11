@@ -175,9 +175,10 @@ public sealed class Uploader
         {
             if (!File.Exists(path))
             {
-                // Reconcile handles this at startup; at runtime treat as lost rather than spin.
-                _queue.Complete(item.Id);
-                _activity?.Append(item.Collector, ActivityEvents.Lost, $"{item.ObjectKey} part file missing");
+                // Reconcile handles this at startup; at runtime treat it as lost rather than spin. DropLost logs it
+                // and, if the item's blob has not sent its manifest yet, drops the rest of that blob so no manifest
+                // goes out for a blob that can no longer be completed.
+                _queue.DropLost(item, "at upload time");
                 return false;
             }
             if (item.Size > _options.MultipartThreshold) await UploadMultipartAsync(item, path, ct).ConfigureAwait(false);

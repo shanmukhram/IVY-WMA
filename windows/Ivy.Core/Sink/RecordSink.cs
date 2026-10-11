@@ -32,12 +32,14 @@ public interface IRecordSink
     EnqueuedRecord Enqueue<T>(T record, string? collector = null) where T : IvyRecord;
 
     /// <summary>
-    /// Encrypt a stream as a chunked blob (manifest first, then parts, uploaded in that order).
+    /// Encrypt a stream as a chunked blob (manifest first, then parts, uploaded in that order; once the manifest is
+    /// out the blob's parts are claimed ahead of other meta and bulk work, see <see cref="UploadQueue.ClaimNextDue"/>).
     /// The stream must be seekable (or <paramref name="length"/> given) because every chunk's AAD binds
     /// the total chunk count. <paramref name="commandId"/> (an original uploaded for a <c>file_request</c>) is
     /// written into the manifest so the Mac can track the transfer before the status arrives (§2.2).
     /// <paramref name="oid"/> lets the caller pick the blob's oid ahead of time (a record that references the
-    /// blob was already emitted); it must never have been enqueued before. <paramref name="bulk"/> puts the
+    /// blob was already emitted); it must never have been enqueued before, and an oid that still has objects in the
+    /// queue is refused (<see cref="InvalidOperationException"/>) without touching the queued files. <paramref name="bulk"/> puts the
     /// blob in the bulk lane of the upload queue, which drains after every normal item (records first).
     /// </summary>
     EnqueuedBlob EnqueueBlob(Stream stream, string payloadKind, string? collector = null, long? length = null, string? commandId = null,
@@ -155,8 +157,13 @@ public sealed class RecordSink : IRecordSink
         var total = length ?? (stream.CanSeek ? stream.Length - stream.Position : throw new ArgumentException("stream must be seekable or length given", nameof(stream)));
         if (oid is not null && !Oids.IsValid(oid)) throw new ArgumentException("invalid blob oid", nameof(oid));
         oid ??= Oids.New(_time, _random);
+        // Part files are named after their object key. Re-enqueuing an oid that is still queued would overwrite the
+        // queued ciphertext with a different content key, and the cleanup below would then delete files that live
+        // rows point at, leaving a manifest in R2 with its parts lost. Refuse before writing anything.
+        if (_queue.ContainsBlob(oid)) throw new InvalidOperationException($"blob {oid} is already in the upload queue; a blob oid is enqueued once");
         var objectId = Oids.ToBytes(oid);
         var written = new List<PartFile>();
+        PartFile? manifestFile = null;
         var buffer = ArrayPool<byte>.Shared.Rent(_options.ChunkSize);
         try
         {
@@ -180,7 +187,7 @@ public sealed class RecordSink : IRecordSink
             }
             if (stream.ReadByte() != -1) throw new IOException($"stream is longer than the declared {total} bytes");
             var (_, manifestKey, manifestEnvelope) = enc.Finish();
-            var manifestFile = _queue.WritePartFile(manifestKey, Kind.Manifest, manifestEnvelope);
+            manifestFile = _queue.WritePartFile(manifestKey, Kind.Manifest, manifestEnvelope);
             var ordered = new List<PartFile>(written.Count + 1) { manifestFile };
             ordered.AddRange(written);
             // large media originals go in the bulk lane; a small avatar rides the fast lane (it drives the UI);
@@ -200,8 +207,11 @@ public sealed class RecordSink : IRecordSink
                 try { File.Delete(f.FullPath); }
                 catch (IOException e) { _logger.LogWarning(e, "could not delete {Path}", f.FullPath); }
             }
-            try { File.Delete(Path.Combine(_queue.QueueDirectory, UploadQueue.FileNameFor(ObjectKeys.BlobManifest(oid)))); }
-            catch (IOException) { }
+            if (manifestFile is not null)
+            {
+                try { File.Delete(manifestFile.FullPath); }
+                catch (IOException) { }
+            }
             throw;
         }
         finally

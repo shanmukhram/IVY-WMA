@@ -42,9 +42,12 @@ public sealed class BackoffPolicy
 /// <item>A row is deleted only after the upload is confirmed (<see cref="Complete"/>): status→done, file deleted, row deleted.</item>
 /// <item>Items sharing a <c>group_key</c> upload strictly in <c>seq</c> order (a blob's manifest before its parts,
 /// a file_request's status after the blob).</item>
-/// <item>Two lanes: <see cref="NormalLane"/> (records, thumbnails, screenshots, requested originals) drains before
-/// <see cref="BulkLane"/> (originals the media policy uploads on its own), so metadata stays fresh while bulk is
-/// slow. A group never spans lanes.</item>
+/// <item>Three lanes: <see cref="FastLane"/> (messages, account, avatars, notifications) always drains first, then
+/// <see cref="MetaLane"/> (file listings, thumbnails, screenshots), then <see cref="BulkLane"/> (originals the media
+/// policy uploads on its own). Two rules keep a blob from being left half-sent behind that ordering: a blob whose
+/// manifest has gone out (its next due item is a <c>blob_chunk</c>) is finished before any new meta or bulk work
+/// starts, and after <see cref="BulkFairShare"/> meta claims in a row one bulk item is taken, so a continuous
+/// stream of file listings cannot hold the bulk lane back indefinitely.</item>
 /// <item><see cref="Reconcile"/> repairs any crash window at startup.</item>
 /// </list>
 /// </summary>
@@ -63,6 +66,10 @@ public sealed class UploadQueue
     private readonly TimeProvider _time;
     private readonly ILogger _logger;
     private readonly ActivityLog? _activity;
+    private readonly object _claimLock = new();
+    private int _metaStreak; // meta-lane claims since the last bulk-lane claim (bounded fairness)
+    /// <summary>A reconciled blob whose parts all fit under this goes in the fast lane (avatars, tiny thumbnails).</summary>
+    private const long SmallBlobBytes = 256 * 1024;
 
     public UploadQueue(VaultDb db, string queueDirectory, BackoffPolicy? backoff = null, TimeProvider? time = null,
         ActivityLog? activity = null, ILogger<UploadQueue>? logger = null)
@@ -78,6 +85,12 @@ public sealed class UploadQueue
 
     public string QueueDirectory { get; }
     public BackoffPolicy Backoff { get; }
+
+    /// <summary>
+    /// Bounded fairness between the meta and bulk lanes: after this many meta-lane claims in a row, the next claim
+    /// takes the oldest due bulk-lane item instead (0 turns it off). The fast lane is never displaced.
+    /// </summary>
+    public int BulkFairShare { get; set; } = 8;
 
     /// <summary>Raised after rows are inserted (the uploader listens to wake up).</summary>
     public event EventHandler? Enqueued;
@@ -199,21 +212,35 @@ public sealed class UploadQueue
         r.GetString(7), r.IsDBNull(8) ? null : r.GetString(8), r.IsDBNull(9) ? null : r.GetString(9), r.GetString(10),
         r.GetInt64(11), r.IsDBNull(12) ? null : r.GetString(12), r.IsDBNull(13) ? null : r.GetString(13), r.IsDBNull(14) ? null : r.GetInt64(14));
 
+    // Due: queued, past its backoff gate, and not behind an unfinished earlier item of its group.
+    private const string DueWhere = """
+        p.status = 'queued' AND p.next_attempt_ms <= $now
+          AND (p.group_key IS NULL OR NOT EXISTS (
+                SELECT 1 FROM pending_uploads q WHERE q.group_key = p.group_key AND q.seq < p.seq AND q.status <> 'done'))
+        """;
+
+    // Claim rank. 0: the fast lane (lane 0). 1: a due part of a blob whose manifest has already gone out (a
+    // blob_chunk is only due once every earlier item of its group, the manifest first, is done), so a started blob
+    // is finished before new meta or bulk work and its manifest is never left alone in R2 for long. 2: the meta
+    // lane (lane 1). 3: the bulk lane.
+    private const string Rank = """
+        (CASE WHEN p.lane = 0 THEN 0
+              WHEN p.kind = 'blob_chunk' AND p.group_key IS NOT NULL THEN 1
+              WHEN p.lane = 1 THEN 2 ELSE 3 END)
+        """;
+    private const int MetaRank = 2, BulkRank = 3;
+
     /// <summary>
-    /// The next item to upload: the normal lane before the bulk lane, then lowest <c>seq</c>, among items that are
-    /// queued, past their backoff gate, and not behind an unfinished earlier item of the same group.
+    /// The next item to upload, in claim order: the fast lane, then the remaining parts of blobs whose manifest has
+    /// gone out, then the meta lane, then the bulk lane, lowest <c>seq</c> first within each, among items that are
+    /// queued, past their backoff gate, and not behind an unfinished earlier item of the same group. (Does not
+    /// apply <see cref="BulkFairShare"/>; <see cref="ClaimNextDue"/> does.)
     /// </summary>
     public QueueItem? NextDue()
     {
         using var c = _db.Open();
         using var cmd = c.CreateCommand();
-        cmd.CommandText = $"""
-            SELECT {Columns} FROM pending_uploads p
-            WHERE p.status = 'queued' AND p.next_attempt_ms <= $now
-              AND (p.group_key IS NULL OR NOT EXISTS (
-                    SELECT 1 FROM pending_uploads q WHERE q.group_key = p.group_key AND q.seq < p.seq AND q.status <> 'done'))
-            ORDER BY p.lane, p.seq LIMIT 1
-            """;
+        cmd.CommandText = $"SELECT {Columns} FROM pending_uploads p WHERE {DueWhere} ORDER BY {Rank}, p.seq LIMIT 1";
         cmd.Parameters.AddWithValue("$now", _time.GetUtcNow().ToUnixTimeMilliseconds());
         using var r = cmd.ExecuteReader();
         return r.Read() ? Read(r) : null;
@@ -221,34 +248,48 @@ public sealed class UploadQueue
 
     /// <summary>
     /// Atomically take the next due item and mark it <c>uploading</c>, so several uploader workers can drain
-    /// the queue in parallel without two of them grabbing the same row. Same ordering as <see cref="NextDue"/>
-    /// (normal lane before bulk, then lowest seq, never ahead of an unfinished earlier item of its group).
-    /// Returns null when nothing is due.
+    /// the queue in parallel without two of them grabbing the same row. Same ordering as <see cref="NextDue"/>,
+    /// plus bounded fairness: after <see cref="BulkFairShare"/> meta-lane claims in a row, a due bulk-lane item is
+    /// taken in place of the next meta item. Returns null when nothing is due.
     /// </summary>
     public QueueItem? ClaimNextDue()
     {
-        using var c = _db.Open();
-        using var tx = c.BeginTransaction(deferred: false); // IMMEDIATE: take the write lock up front so claims serialize
+        lock (_claimLock)
+        {
+            using var c = _db.Open();
+            using var tx = c.BeginTransaction(deferred: false); // IMMEDIATE: take the write lock up front so claims serialize
+            var now = _time.GetUtcNow().ToUnixTimeMilliseconds();
+            var (item, rank) = SelectDue(c, tx, now, onlyRank: null);
+            if (item is null) { tx.Commit(); return null; }
+            if (rank == MetaRank && BulkFairShare > 0 && _metaStreak >= BulkFairShare)
+            {
+                var (bulk, _) = SelectDue(c, tx, now, onlyRank: BulkRank);
+                if (bulk is not null) (item, rank) = (bulk, BulkRank);
+            }
+            using var upd = c.CreateCommand();
+            upd.Transaction = tx;
+            upd.CommandText = "UPDATE pending_uploads SET status = 'uploading' WHERE id = $id AND status = 'queued'";
+            upd.Parameters.AddWithValue("$id", item.Id);
+            var claimed = upd.ExecuteNonQuery() == 1;
+            tx.Commit();
+            if (!claimed) return null;
+            if (rank == MetaRank) { if (_metaStreak < int.MaxValue) _metaStreak++; }
+            else if (rank == BulkRank) _metaStreak = 0;
+            return item;
+        }
+    }
+
+    private static (QueueItem? Item, int Rank) SelectDue(SqliteConnection c, SqliteTransaction tx, long now, int? onlyRank)
+    {
         using var sel = c.CreateCommand();
         sel.Transaction = tx;
-        sel.CommandText = $"""
-            SELECT {Columns} FROM pending_uploads p
-            WHERE p.status = 'queued' AND p.next_attempt_ms <= $now
-              AND (p.group_key IS NULL OR NOT EXISTS (
-                    SELECT 1 FROM pending_uploads q WHERE q.group_key = p.group_key AND q.seq < p.seq AND q.status <> 'done'))
-            ORDER BY p.lane, p.seq LIMIT 1
-            """;
-        sel.Parameters.AddWithValue("$now", _time.GetUtcNow().ToUnixTimeMilliseconds());
-        QueueItem? item;
-        using (var r = sel.ExecuteReader()) item = r.Read() ? Read(r) : null;
-        if (item is null) { tx.Commit(); return null; }
-        using var upd = c.CreateCommand();
-        upd.Transaction = tx;
-        upd.CommandText = "UPDATE pending_uploads SET status = 'uploading' WHERE id = $id AND status = 'queued'";
-        upd.Parameters.AddWithValue("$id", item.Id);
-        var claimed = upd.ExecuteNonQuery() == 1;
-        tx.Commit();
-        return claimed ? item : null;
+        sel.CommandText = onlyRank is null
+            ? $"SELECT {Columns}, {Rank} FROM pending_uploads p WHERE {DueWhere} ORDER BY {Rank}, p.seq LIMIT 1"
+            : $"SELECT {Columns}, {Rank} FROM pending_uploads p WHERE {DueWhere} AND {Rank} = $rank ORDER BY p.seq LIMIT 1";
+        sel.Parameters.AddWithValue("$now", now);
+        if (onlyRank is { } wanted) sel.Parameters.AddWithValue("$rank", wanted);
+        using var r = sel.ExecuteReader();
+        return r.Read() ? (Read(r), r.GetInt32(15)) : (null, -1);
     }
 
     /// <summary>Earliest backoff gate among queued items (for the uploader's sleep), or null.</summary>
@@ -312,6 +353,25 @@ public sealed class UploadQueue
         cmd.CommandText = "SELECT 1 FROM pending_uploads WHERE object_key = $k";
         cmd.Parameters.AddWithValue("$k", objectKey);
         return cmd.ExecuteScalar() is not null;
+    }
+
+    /// <summary>True when any object of blob <paramref name="oid"/> (its manifest or a part) is still in the queue.</summary>
+    public bool ContainsBlob(string oid)
+    {
+        var prefix = BlobPrefix(oid);
+        using var c = _db.Open();
+        using var cmd = c.CreateCommand();
+        cmd.CommandText = "SELECT 1 FROM pending_uploads WHERE group_key = $oid OR substr(object_key, 1, $n) = $p LIMIT 1";
+        cmd.Parameters.AddWithValue("$oid", oid);
+        cmd.Parameters.AddWithValue("$n", prefix.Length);
+        cmd.Parameters.AddWithValue("$p", prefix);
+        return cmd.ExecuteScalar() is not null;
+    }
+
+    private static string BlobPrefix(string oid)
+    {
+        var m = ObjectKeys.BlobManifest(oid);
+        return m[..(m.LastIndexOf('/') + 1)]; // up/blob/<oid>/
     }
 
     public IReadOnlyDictionary<string, int> DepthByCollector()
@@ -404,14 +464,80 @@ public sealed class UploadQueue
         tx.Commit();
     }
 
+    // ---- lost objects ----
+
+    /// <summary>
+    /// An item's ciphertext file is gone (found by the uploader at runtime or by <see cref="Reconcile"/>). The row is
+    /// removed and the loss is logged with the object key. A blob part cannot be rebuilt on this PC: its content key
+    /// exists only inside the manifest, which is sealed to the Mac. So when the lost item belongs to a blob whose
+    /// manifest has NOT gone out yet (or is the manifest itself), the rest of that blob is dropped too and logged, so
+    /// a manifest is never uploaded for a blob that can no longer be completed. When the manifest already went out,
+    /// the remaining parts still upload and the log says plainly that the Mac cannot complete that blob. Records that
+    /// only share the group for ordering (a file_request's status) are left to upload. Returns the rows removed.
+    /// </summary>
+    public int DropLost(QueueItem item, string when)
+    {
+        var removed = 0;
+        if (Get(item.Id) is not null) { Complete(item.Id); removed++; }
+        var isBlobKind = item.Kind is "manifest" or "blob_chunk";
+        if (!isBlobKind || item.GroupKey is null)
+        {
+            LogLost(item.Collector, item.ObjectKey, $"{item.ObjectKey} part file missing {when}");
+            return removed;
+        }
+        var rest = All().Where(i => i.GroupKey == item.GroupKey && i.Kind is "manifest" or "blob_chunk" && i.Status != QueueStatus.Uploading).ToList();
+        var manifestStillQueued = item.Kind == "manifest" || rest.Any(i => i.Kind == "manifest");
+        if (manifestStillQueued)
+        {
+            LogLost(item.Collector, item.ObjectKey,
+                $"{item.ObjectKey} part file missing {when}; blob {item.GroupKey} cannot be completed, so its manifest and remaining parts are not uploaded");
+            foreach (var r in rest)
+            {
+                DeleteRowAndFile(r);
+                removed++;
+                LogLost(r.Collector, r.ObjectKey, $"{r.ObjectKey} dropped: blob {item.GroupKey} lost {item.ObjectKey}");
+            }
+        }
+        else
+        {
+            LogLost(item.Collector, item.ObjectKey,
+                $"{item.ObjectKey} part file missing {when}; the manifest of blob {item.GroupKey} was already uploaded, so the Mac cannot complete this blob (the part cannot be rebuilt here)");
+        }
+        return removed;
+    }
+
+    private void LogLost(string? collector, string objectKey, string detail)
+    {
+        _logger.LogWarning("upload queue: {Detail}", detail);
+        _activity?.Append(collector, ActivityEvents.Lost, detail);
+    }
+
+    private void DeleteRowAndFile(QueueItem item)
+    {
+        var path = FullPathOf(item);
+        Exec("DELETE FROM pending_uploads WHERE id = $id", ("$id", item.Id));
+        try { if (File.Exists(path)) File.Delete(path); }
+        catch (IOException e) { _logger.LogWarning(e, "could not delete a dropped queue file for {ObjectKey}", item.ObjectKey); }
+    }
+
     // ---- crash reconciliation ----
 
     /// <summary>
     /// Startup repair. 'uploading' rows go back to 'queued' (multipart progress is kept); 'done' rows are
-    /// finalized; rows whose part file vanished are dropped and logged as lost; leftover temp files are
-    /// deleted; complete orphan part files (written, but the process died before the row was inserted)
-    /// are re-enqueued — single objects alone, blobs only when the manifest and every part are present
-    /// (manifest first), otherwise the incomplete blob is deleted.
+    /// finalized; rows whose part file vanished are dropped and logged as lost (with the rest of their blob when its
+    /// manifest has not gone out, see <see cref="DropLost"/>); leftover temp files are deleted; orphan part files
+    /// (on disk with no row) are re-enqueued where that can still produce a complete blob on the Mac:
+    /// <list type="bullet">
+    /// <item>a single object: re-enqueued alone;</item>
+    /// <item>a blob with its manifest and every part: re-enqueued, manifest first;</item>
+    /// <item>a blob with no manifest file whose parts run without a gap up to the last one: re-enqueued. The parts
+    /// are written before the manifest and uploaded after it, so a missing manifest with a tail of parts means the
+    /// manifest (and any earlier parts) already went out; leaving these parts behind would leave that manifest
+    /// alone in R2 forever. (If the process died between writing the last part and the manifest, the parts upload
+    /// without a manifest and the Mac quarantines them as orphans.)</item>
+    /// <item>anything else (an orphan manifest with parts missing, a gap, or a run of parts that stops before the
+    /// last one, i.e. a write that never finished) cannot complete: it is deleted and logged as lost.</item>
+    /// </list>
     /// </summary>
     public ReconcileReport Reconcile()
     {
@@ -425,6 +551,7 @@ public sealed class UploadQueue
 
         foreach (var item in All())
         {
+            if (Get(item.Id) is null) continue; // already dropped with its blob
             var path = FullPathOf(item);
             if (item.Status == QueueStatus.Done)
             {
@@ -434,10 +561,7 @@ public sealed class UploadQueue
             }
             else if (!File.Exists(path))
             {
-                Exec("DELETE FROM pending_uploads WHERE id = $id", ("$id", item.Id));
-                missing++;
-                _logger.LogWarning("queue row {ObjectKey} had no part file; dropped", item.ObjectKey);
-                _activity?.Append(item.Collector, ActivityEvents.Lost, $"{item.ObjectKey} part file missing at startup");
+                missing += DropLost(item, "at startup");
             }
         }
 
@@ -497,25 +621,44 @@ public sealed class UploadQueue
 
         foreach (var s in singles)
         {
-            Enqueue(new[] { s }, null, null);
+            Enqueue(new[] { s }, null, null, s.Kind is Kind.FileMeta or Kind.FileCatalog ? MetaLane : FastLane);
             requeued++;
         }
 
         foreach (var (oid, b) in blobs)
         {
-            var complete = b.Manifest is not null && b.Parts.Count > 0 && TotalFromPart(b.Parts.Values.First()) is { } total
-                           && b.Parts.Count == total && b.Parts.Keys.SequenceEqual(Enumerable.Range(0, total));
-            if (complete)
+            // every part names the blob's total; parts that disagree (or cannot be read) make the set unusable
+            var totals = b.Parts.Values.Select(TotalFromPart).Distinct().ToList();
+            int? total = totals.Count == 1 ? totals[0] : null;
+            var first = b.Parts.Count > 0 ? b.Parts.Keys.First() : -1;
+            var contiguousToEnd = total is { } t && b.Parts.Count > 0 && b.Parts.Keys.Last() == t - 1
+                                  && b.Parts.Keys.SequenceEqual(Enumerable.Range(first, t - first));
+            var lane = b.Parts.Count > 0 && b.Parts.Values.Max(p => p.Size) < SmallBlobBytes && (b.Manifest?.Size ?? 0) < SmallBlobBytes ? FastLane : BulkLane;
+            if (b.Manifest is not null && contiguousToEnd && first == 0)
             {
-                var list = new List<PartFile> { b.Manifest! };
+                var list = new List<PartFile> { b.Manifest };
                 list.AddRange(b.Parts.Values);
-                Enqueue(list, oid, null);
+                Enqueue(list, oid, null, lane);
                 requeued += list.Count;
+            }
+            else if (b.Manifest is null && contiguousToEnd)
+            {
+                var list = b.Parts.Values.ToList();
+                Enqueue(list, oid, null, lane);
+                requeued += list.Count;
+                _logger.LogWarning("upload queue: re-queued parts {First}..{Last} of blob {Oid} found without a queue row; its manifest is not in the queue (it was uploaded earlier, or the process stopped before writing it)",
+                    first, total - 1, oid);
+                _activity?.Append(null, ActivityEvents.Reconciled, $"blob {oid}: re-queued {list.Count} part(s) whose manifest is not in the queue");
             }
             else
             {
+                var why = b.Manifest is not null
+                    ? "its manifest was never uploaded and parts are missing"
+                    : total is null ? "its parts are unreadable or disagree on the chunk count"
+                    : $"parts {string.Join(",", b.Parts.Keys)} of {total} do not run to the last part (an interrupted write)";
                 if (b.Manifest is not null) { File.Delete(b.Manifest.FullPath); orphansDeleted++; }
                 foreach (var p in b.Parts.Values) { File.Delete(p.FullPath); orphansDeleted++; }
+                LogLost(null, ObjectKeys.BlobManifest(oid), $"blob {oid}: orphan files deleted at startup, the blob cannot be completed ({why})");
             }
         }
 
