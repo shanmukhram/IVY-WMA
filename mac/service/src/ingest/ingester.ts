@@ -49,6 +49,24 @@ const PREFETCH = 64; // objects fetched from R2 concurrently during a pass; comm
 // Fetch latency (the per-object round-trip) is the ingest bottleneck, so a wider window drains a large
 // backlog far faster — the whole up-bucket after the PC first syncs, for instance.
 
+// Ingest records in priority order, not plain oid order, so the device heartbeat and the conversations are
+// never stuck behind a big file-listing backlog (a full-PC catalogue is hundreds of thousands of records).
+// The heartbeat is what keeps a device shown as alive, so it always goes first.
+function recordPriority(kind: string): number {
+  switch (kind) {
+    case "device_report": return 0;   // heartbeat / liveness — always first
+    case "command_status": return 1;  // control
+    case "message_batch": case "line_account": case "call":
+    case "windows_notification": case "android_notification": return 2; // conversations and account
+    case "file_meta": case "file_catalog": return 4; // the large file-listing flood — last
+    default: return 3;
+  }
+}
+// Within blobs, avatars (profile pictures, tiny) land before thumbnails/screenshots, and large media last.
+function blobPriority(payloadKind: string | null | undefined): number {
+  return payloadKind === "avatar" ? 0 : (payloadKind === "thumbnail" || payloadKind === "screenshot") ? 1 : 2;
+}
+
 export interface BucketPassResult {
   bucket: string;
   role: Role;
@@ -303,7 +321,7 @@ export class Ingester {
 
     for (const o of invalid) tally(await this.quarantine(src, o.key, "unknown", "unrecognised object key", await this.fetchQuiet(src, o.key)));
     for (const o of pairs) tally(await this.guard(src, o.key, "pairing_device", () => this.ingestPairing(src, o)));
-    singles.sort((a, b) => (a.oid < b.oid ? -1 : a.oid > b.oid ? 1 : 0));
+    singles.sort((a, b) => recordPriority(a.kind) - recordPriority(b.kind) || (a.oid < b.oid ? -1 : a.oid > b.oid ? 1 : 0));
     // Fetch a window of objects from R2 concurrently (the per-object network round-trip is the bottleneck
     // on a large catch-up), then commit them in order so the ledger and marker stay sequential.
     for (let i = 0; i < singles.length; i += PREFETCH) {
@@ -316,17 +334,29 @@ export class Ingester {
       }
       await this.flushDeletes(src.bucketName); // one batched delete per window, not one round-trip per object
     }
-    for (const [oid, g] of [...blobs.entries()].sort(([a], [b]) => (a < b ? -1 : 1))) {
-      // a completed media original is kept in R2 (PLAN decision 6): its manifest and parts are
-      // committed in the ledger and recognised here by oid before any fetch, so they are never
-      // re-assembled or deleted on later polls (incremental within the window, hourly in full)
+    // a completed media original is kept in R2 (PLAN decision 6): its manifest and parts are committed in the
+    // ledger and recognised here by oid before any fetch, so they are never re-assembled or deleted later.
+    const blobEntries = [...blobs.entries()].filter(([oid, g]) => {
+      void g;
       const known = getBlob(this.ctx, src.bucketName, oid);
-      if (known && known.status === "complete" && archivesPayload(this.ctx, known.payload_kind)) { seeOid(oid); continue; }
-      if (g.manifest) {
-        const out = await this.guard(src, g.manifest.key, "manifest", () => this.ingestManifest(src, oid, g.manifest!.key, g.parts));
-        tally(out);
-        if (out === "quarantined") continue; // its parts were quarantined with it
-      }
+      if (known && known.status === "complete" && archivesPayload(this.ctx, known.payload_kind)) { seeOid(oid); return false; }
+      return true;
+    });
+    // Phase 1: ingest every manifest first (they are tiny), which records each blob's payload kind so the
+    // chunks can then be fetched avatars-first. A blob whose parts arrived before its manifest waits as before.
+    for (const [oid, g] of blobEntries) {
+      if (!g.manifest) continue;
+      tally(await this.guard(src, g.manifest.key, "manifest", () => this.ingestManifest(src, oid, g.manifest!.key, g.parts)));
+    }
+    await this.flushDeletes(src.bucketName);
+    // Phase 2: fetch the chunks, avatars before thumbnails before large media, so pictures land first.
+    blobEntries.sort(([a], [b]) =>
+      blobPriority(getBlob(this.ctx, src.bucketName, a)?.payload_kind) - blobPriority(getBlob(this.ctx, src.bucketName, b)?.payload_kind)
+      || (a < b ? -1 : a > b ? 1 : 0));
+    for (const [oid, g] of blobEntries) {
+      const mrow = getBlob(this.ctx, src.bucketName, oid);
+      if (mrow?.status === "quarantined") continue; // the manifest was quarantined with its parts
+      // a blob with no manifest yet still runs its parts: ingestPart leaves them waiting, or quarantines orphans
       g.parts.sort((a, b) => a.index - b.index);
       for (let i = 0; i < g.parts.length; i += PREFETCH) {
         const window = g.parts.slice(i, i + PREFETCH);
@@ -335,6 +365,7 @@ export class Ingester {
           const out = await this.guard(src, p.key, "blob_chunk", () => this.ingestPart(src, oid, p.key, p.index, bytes));
           tally(out);
         }
+        await this.flushDeletes(src.bucketName);
       }
       const row = getBlob(this.ctx, src.bucketName, oid);
       if (row?.status === "complete") seeOid(oid);
