@@ -66,6 +66,9 @@ function recordPriority(kind: string): number {
 function blobPriority(payloadKind: string | null | undefined): number {
   return payloadKind === "avatar" ? 0 : (payloadKind === "thumbnail" || payloadKind === "screenshot") ? 1 : 2;
 }
+// The file listings (file_meta, file_catalog) are the only high-volume kinds; everything else (heartbeat,
+// conversations, account, avatars) is small and always processed in full each pass.
+const BULK_PRIORITY = 4; // recordPriority of the file listings (the only high-volume kinds)
 
 export interface BucketPassResult {
   bucket: string;
@@ -321,18 +324,34 @@ export class Ingester {
 
     for (const o of invalid) tally(await this.quarantine(src, o.key, "unknown", "unrecognised object key", await this.fetchQuiet(src, o.key)));
     for (const o of pairs) tally(await this.guard(src, o.key, "pairing_device", () => this.ingestPairing(src, o)));
-    singles.sort((a, b) => recordPriority(a.kind) - recordPriority(b.kind) || (a.oid < b.oid ? -1 : a.oid > b.oid ? 1 : 0));
-    // Fetch a window of objects from R2 concurrently (the per-object network round-trip is the bottleneck
-    // on a large catch-up), then commit them in order so the ledger and marker stay sequential.
-    for (let i = 0; i < singles.length; i += PREFETCH) {
-      const window = singles.slice(i, i + PREFETCH);
+    // Process the small high-priority records first and in full (heartbeat, control, conversations, account),
+    // then the file listings up to a per-pass budget. Fetching a window concurrently is the catch-up
+    // bottleneck; commits stay in order so the ledger is sequential. A bounded pass returns promptly, so the
+    // next poll re-lists and catches new arrivals (the next heartbeat, new messages, avatars) even while a
+    // large backlog is still draining this many per pass in the background. A re-listed already-committed
+    // object is a delete that had not flushed; it is handled as a replay and does not count against the budget.
+    const byOid = (a: { oid: string }, b: { oid: string }) => (a.oid < b.oid ? -1 : a.oid > b.oid ? 1 : 0);
+    const prioritySingles = singles.filter((o) => recordPriority(o.kind) < BULK_PRIORITY)
+      .sort((a, b) => recordPriority(a.kind) - recordPriority(b.kind) || byOid(a, b));
+    const bulkSingles = singles.filter((o) => recordPriority(o.kind) >= BULK_PRIORITY).sort(byOid);
+
+    const runWindow = async (window: typeof singles): Promise<number> => {
       const fetched = await Promise.all(window.map((o) => this.prefetch(src, o.key).then((bytes) => ({ o, bytes }))));
+      let committed = 0;
       for (const { o, bytes } of fetched) {
         const out = await this.guard(src, o.key, o.kind, () => this.ingestSingle(src, o.key, o.kind, bytes));
         tally(out);
         if (out === "committed" || out === "replayed") seeOid(o.oid);
+        if (out === "committed") committed++;
       }
-      await this.flushDeletes(src.bucketName); // one batched delete per window, not one round-trip per object
+      await this.flushDeletes(src.bucketName);
+      return committed;
+    };
+
+    for (let i = 0; i < prioritySingles.length; i += PREFETCH) await runWindow(prioritySingles.slice(i, i + PREFETCH));
+    let budget = this.ctx.config.ingestBulkBudget;
+    for (let i = 0; i < bulkSingles.length && budget > 0; i += PREFETCH) {
+      budget -= await runWindow(bulkSingles.slice(i, i + PREFETCH));
     }
     // a completed media original is kept in R2 (PLAN decision 6): its manifest and parts are committed in the
     // ledger and recognised here by oid before any fetch, so they are never re-assembled or deleted later.
@@ -356,6 +375,9 @@ export class Ingester {
     for (const [oid, g] of blobEntries) {
       const mrow = getBlob(this.ctx, src.bucketName, oid);
       if (mrow?.status === "quarantined") continue; // the manifest was quarantined with its parts
+      const isBulkBlob = blobPriority(mrow?.payload_kind) > 0; // avatars (0) always; thumbnails and media share the budget
+      if (isBulkBlob && budget <= 0) break; // avatars done; the rest of the media continues next pass
+      if (isBulkBlob) budget -= g.parts.length;
       // a blob with no manifest yet still runs its parts: ingestPart leaves them waiting, or quarantines orphans
       g.parts.sort((a, b) => a.index - b.index);
       for (let i = 0; i < g.parts.length; i += PREFETCH) {

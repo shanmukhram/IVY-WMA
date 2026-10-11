@@ -41,6 +41,8 @@ export interface ServiceConfig {
    * than this window.
    */
   listLookbackMs: number;
+  /** most file-listing / large-media objects ingested per pass; small high-priority records always flow */
+  ingestBulkBudget: number;
   /** a full listing of the bucket (catches unrecognised keys) at most this often */
   fullSweepEveryMs: number;
   /** chunk parts whose manifest never arrives are quarantined after this long (7 days) */
@@ -117,6 +119,7 @@ export function loadConfig(overrides: Partial<ServiceConfig> = {}, cwd: string =
     pairingTtlMs: 10 * MIN,
     pairingGraceMs: 5 * MIN,
     listLookbackMs: envInt("IVY_LIST_LOOKBACK_MS") ?? 8 * DAY,
+    ingestBulkBudget: envInt("IVY_INGEST_BULK_BUDGET") ?? 3000,
     fullSweepEveryMs: 60 * MIN,
     orphanPartMs: 7 * DAY,
     maxPartBytes: 64 * 1024 * 1024,
