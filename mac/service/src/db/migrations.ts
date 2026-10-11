@@ -781,6 +781,11 @@ ALTER TABLE messages ADD COLUMN call_duration_s INTEGER; -- whole seconds, compl
 ALTER TABLE messages ADD COLUMN call_direction TEXT;     -- outgoing | incoming
 `;
 
+// v11: the orphan-manifest sweep reads blobs by status and last progress; keep that a small indexed query.
+const v11 = `
+CREATE INDEX blobs_pending ON blobs(status, updated_at);
+`;
+
 export const MIGRATIONS: Migration[] = [
   { version: 1, name: "initial vault schema", sql: v1 },
   { version: 2, name: "import progress, manifest commandId, transferring commands", sql: v2 },
@@ -792,4 +797,5 @@ export const MIGRATIONS: Migration[] = [
   { version: 8, name: "media originals kept in R2: the media_archive record", sql: v8 },
   { version: 9, name: "catalog entries: browse-and-fetch-on-demand (files.catalog, status 'catalog')", sql: v9 },
   { version: 10, name: "call events on messages (call_kind, call_outcome, call_duration_s, call_direction)", sql: v10 },
+  { version: 11, name: "index for the stale-blob sweep (blobs by status and last progress)", sql: v11 },
 ];

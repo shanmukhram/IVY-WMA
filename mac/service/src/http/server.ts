@@ -317,6 +317,15 @@ export async function buildServer(svc: Service): Promise<FastifyInstance> {
     return { items: rows };
   });
   app.post("/api/quarantine/:id/retry", async (req) => svc.ingester.retryQuarantined((req.params as { id: string }).id));
+  // Give up on a blob whose data part is not coming: quarantine it (and what R2 holds of it) now.
+  app.post("/api/blobs/:oid/abandon", async (req) => {
+    const oid = (req.params as { oid: string }).oid;
+    const r = await svc.ingester.abandonBlob(oid);
+    if (r.outcome === "not_found") throw new HttpError(404, "not_found", "no such blob");
+    if (r.outcome === "not_pending") throw new HttpError(409, "not_pending", "the blob is already complete or quarantined");
+    if (r.outcome !== "ok") throw new HttpError(503, "r2_not_configured", "R2 is not configured");
+    return { ok: true, oid: r.oid, reason: r.reason, quarantined: r.quarantined };
+  });
   app.delete("/api/quarantine/:id", async (req) => {
     const id = (req.params as { id: string }).id;
     const q = ctx.db.prepare("SELECT stored_path FROM quarantine WHERE id = ?").get(id) as { stored_path: string | null } | undefined;

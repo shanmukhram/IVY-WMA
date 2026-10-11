@@ -62,6 +62,8 @@ import { deleteCommandObject, maintainCommands, sendQueued } from "../commands/c
 /** Record prefixes listed incrementally (PROTOCOL §5). */
 const RECORD_PREFIXES = ["file", "fcat", "scr", "usg", "wnotif", "anotif", "call", "msg", "lineacct", "cstat", "status", "blob"];
 const BLOB_PATH = "up/blob/";
+// stale blobs quarantined per bucket per pass
+const SWEEP_LIMIT = 50;
 // Record prefixes that sort before `up/blob/` (today only `up/anotif/`) get a listing call of their own; all the
 // others sort after it and come back in the same `up/` listing that starts at the blob position.
 const BEFORE_BLOB = RECORD_PREFIXES.filter((p) => `up/${p}/` < BLOB_PATH);
@@ -534,6 +536,9 @@ export class Ingester {
       if (committedSet(b).size === b.total_chunks) await this.finalize(src, row.oid);
     }
 
+    // the mirror of the orphan-part rule: a manifest whose data parts never come
+    res.quarantined += await this.sweepStaleBlobs(src, new Map([...blobs].map(([oid, g]) => [oid, g.parts.map((p) => p.index)])));
+
     await this.flushDeletes(src.bucketName); // blob parts and any stragglers committed since the last window flush
 
     // keep only keys still listed: the rest were deleted or fell out of the listing window
@@ -973,6 +978,88 @@ export class Ingester {
     const row = getBlob(this.ctx, src.bucketName, oid)!;
     if (r.ok) this.ctx.events.emit("blob.complete", { ...blobProgress(row), sha256: row.sha256 });
     else if (row.status === "quarantined") this.ctx.events.emit("ingest.quarantined", { bucket: src.bucketName, key: `up/blob/${oid}/`, kind: "manifest", reason: row.detail });
+  }
+
+  // ------------------------------------------------------------------ blobs whose parts never arrive
+
+  /**
+   * Quarantine blobs that have not made progress for orphanPartMs and still miss parts (the mirror of the
+   * orphan-part rule in ingestPart, which covers parts with no manifest). "Progress" is blobs.updated_at: it is
+   * set when the manifest is recorded and again whenever a part is committed. A blob that has a part listed in
+   * this pass that is not yet committed is left to the part phase. One small indexed query, at most SWEEP_LIMIT blobs per pass; the rest
+   * follow on the next pass. Returns the number of R2 objects quarantined.
+   */
+  private async sweepStaleBlobs(src: Source, listedParts: Map<string, number[]>): Promise<number> {
+    if (!src.bucket) return 0;
+    const cutoff = new Date(Date.now() - this.ctx.config.orphanPartMs).toISOString();
+    const rows = this.ctx.db.prepare(
+      "SELECT oid FROM blobs WHERE status IN ('assembling','awaiting_manifest') AND updated_at < ? AND bucket = ? ORDER BY updated_at LIMIT ?",
+    ).all(cutoff, src.bucketName, SWEEP_LIMIT) as Array<{ oid: string }>;
+    let n = 0;
+    for (const { oid } of rows) {
+      // a part listed this pass that is not committed yet is still being fetched (budget, network): not stale
+      const row = getBlob(this.ctx, src.bucketName, oid)!;
+      const have = committedSet(row);
+      if ((listedParts.get(oid) ?? []).some((i) => !have.has(i))) continue;
+      try { n += await this.quarantineStaleBlob(src, oid, "no data part within 7 days"); }
+      catch { /* the listing or a write failed: the blob stays as it is and is tried again next pass */ }
+    }
+    return n;
+  }
+
+  /**
+   * Quarantine one unfinished blob: mark it, move every object R2 still holds under its prefix (the manifest
+   * and any parts; ciphertext only) into data/quarantine with a ledger row each, and delete them from R2.
+   * Returns how many objects were quarantined. Throws if the bucket cannot be listed, before changing anything.
+   */
+  private async quarantineStaleBlob(src: Source, oid: string, reason: string): Promise<number> {
+    const objs = await src.bucket!.list(`${BLOB_PATH}${oid}/`);
+    const row = getBlob(this.ctx, src.bucketName, oid);
+    if (!row || (row.status !== "assembling" && row.status !== "awaiting_manifest")) return 0;
+    quarantineBlob(this.ctx, row, reason);
+    let n = 0;
+    for (const o of objs) {
+      const manifest = o.key === `${BLOB_PATH}${oid}/manifest`;
+      const kind = manifest ? "manifest" : "blob_chunk";
+      const out = await this.quarantine(src, o.key, kind, reason, await this.fetchQuiet(src, o.key));
+      // a committed ledger row is not overwritten by insertLedger; this object is now quarantined
+      this.ctx.db.prepare("UPDATE sync_objects SET status = 'quarantined', detail = ? WHERE bucket = ? AND object_key = ?").run(reason, src.bucketName, o.key);
+      if (out === "quarantined") n++;
+    }
+    await this.flushDeletes(src.bucketName);
+    this.ctx.events.emit("coverage.changed", {});
+    return n;
+  }
+
+  /**
+   * Quarantine one unfinished blob now, whatever its age (POST /api/blobs/:oid/abandon). Runs in the same
+   * single-flight slot as a pass, so it waits for a running pass and no pass starts meanwhile.
+   */
+  async abandonBlob(oid: string): Promise<{ outcome: "ok"; oid: string; reason: string; quarantined: number } | { outcome: "not_found" | "not_pending" | "no_r2" }> {
+    for (;;) { await this.settle(); if (!this.running) break; }
+    let result!: Awaited<ReturnType<Ingester["abandonBlob"]>>;
+    const slot = (async (): Promise<PollResult> => {
+      const rows = this.ctx.db.prepare("SELECT bucket, role, status FROM blobs WHERE oid = ?").all(oid) as Array<{ bucket: string; role: Role; status: string }>;
+      if (rows.length === 0) { result = { outcome: "not_found" }; }
+      else {
+        const row = rows.find((r) => r.status === "assembling" || r.status === "awaiting_manifest");
+        if (!row) result = { outcome: "not_pending" };
+        else {
+          const r2 = this.ctx.r2();
+          const bucket = r2?.bucket("up", row.role) ?? null;
+          if (!bucket) result = { outcome: "no_r2" };
+          else {
+            const reason = "abandoned by the user: its data part was not coming";
+            const quarantined = await this.quarantineStaleBlob({ bucket, bucketName: row.bucket, role: row.role }, oid, reason);
+            result = { outcome: "ok", oid, reason, quarantined };
+          }
+        }
+      }
+      return { at: nowIso(), skipped: "abandoning a blob", buckets: [], durationMs: 0 };
+    })();
+    this.running = slot.finally(() => { this.running = null; });
+    await this.running;
+    return result;
   }
 
   // ------------------------------------------------------------------ quarantine retry
