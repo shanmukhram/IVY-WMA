@@ -114,7 +114,7 @@ export function loadConfig(overrides: Partial<ServiceConfig> = {}, cwd: string =
     staticDir: defaultStaticDir(),
     host: process.env.IVY_HOST ?? "127.0.0.1",
     port: envInt("IVY_PORT") ?? 4777,
-    pollIntervalMs: envInt("IVY_POLL_INTERVAL_MS") ?? 15 * SEC,
+    pollIntervalMs: envInt("IVY_POLL_INTERVAL_MS") ?? 5 * SEC,
     autoLockMinutes: envInt("IVY_AUTO_LOCK_MINUTES") ?? 30,
     pairingTtlMs: 10 * MIN,
     pairingGraceMs: 5 * MIN,

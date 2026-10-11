@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * Run the IVY Mac service from source (Node 25 strips the types):
- *   node src/main.ts [--data ./data] [--port 4777] [--static ./public] [--poll-ms 120000]
+ *   node src/main.ts [--data ./data] [--port 4777] [--static ./public] [--poll-ms 5000]
  * Relative paths resolve against the working directory. Without --static the built
  * dashboard (mac/ui/dist, located relative to this package) is served when it exists.
  * Environment equivalents: IVY_DATA_DIR, IVY_DB_PATH, IVY_PORT, IVY_STATIC_DIR, IVY_POLL_INTERVAL_MS,

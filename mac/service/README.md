@@ -62,7 +62,7 @@ Bucket lifecycle rules (PLAN decision 6): **no** lifecycle/expiry rule on `ivy-u
 | vault database | `IVY_DB_PATH`, `--db` | `<data>/vault.db` |
 | UI directory served at `/` | `IVY_STATIC_DIR`, `--static` | `mac/ui/dist` if it has an `index.html`, else `mac/service/public` (placeholder page) |
 | bind address / port | `IVY_HOST` / `IVY_PORT`, `--host` / `--port` | `127.0.0.1` / `4777` |
-| poll interval (S1) | `IVY_POLL_INTERVAL_MS`, `--poll-ms` | 120000 (0 = only on demand) |
+| poll interval (S1) | `IVY_POLL_INTERVAL_MS`, `--poll-ms` | 5000 (0 = only on demand) |
 | auto-lock (S8) | `IVY_AUTO_LOCK_MINUTES`, `--auto-lock-minutes`, then `PUT /api/keystore/settings` | 30 (0 = never) |
 | auto-lock mode | `PUT /api/keystore/settings {autoLockMode: "ui" \| "full"}` (stored in the vault) | `ui` |
 | listing window | `IVY_LIST_LOOKBACK_MS` | 8 days |
@@ -124,21 +124,21 @@ Chunked blobs: the manifest is verified and stored (as its envelope; the content
 
 ## R2 request budget
 
-R2 bills ListObjectsV2, PutObject, CopyObject and the multipart writes as Class A operations (1 million free per month) and GetObject/HeadObject as Class B (10 million free); DeleteObject is free. With the listing above the Mac makes about **one list call per up-bucket per poll** (2 per poll with both up-buckets configured; the default poll interval is 15s; measured against the mock in `test/request-budget.test.ts`, which asserts that bound; the previous per-prefix listing made 22).
+R2 bills ListObjectsV2, PutObject, CopyObject and the multipart writes as Class A operations (1 million free per month) and GetObject/HeadObject as Class B (10 million free); DeleteObject is free. With the listing above the Mac makes about **one list call per up-bucket per poll** (2 per poll with both up-buckets configured; the default poll interval is 5s; measured against the mock in `test/request-budget.test.ts`, which asserts that bound; the previous per-prefix listing made 22).
 
 | Who | Operation | Rate | Per month (30 days) |
 | --- | --- | --- | --- |
-| Mac | ListObjectsV2, `up/` (or the hourly full listing in its place), 2 up-buckets | every 15 s | about 345 600 |
+| Mac | ListObjectsV2, `up/` (or the hourly full listing in its place), 2 up-buckets | every 5 s | about 1 037 000 |
 | Mac | ListObjectsV2 `pair/` while a pairing is open | about 8 per pairing | negligible |
 | Mac | extra list pages | +1 per 1 000 objects waiting in a bucket | only during a backlog |
 | Mac | PutObject `cmd/<oid>` | per command | tens |
 | Mac | `POST /api/r2/check` | 4 per press | negligible |
-| **Mac Class A** | | | **about 43 000** |
+| **Mac Class A** | | | **about 1 040 000** |
 | Windows | ListObjectsV2 on its cmd-bucket (command poll) | every 2 min | 21 600 |
 | Windows | PutObject `device_report` | every 5 min | 8 640 |
 | Windows | PutObject records and blobs (first-run workload: about 200 objects a day: file metadata, screenshots and their parts, usage, notifications) | about 200 / day | 6 000 |
 | Windows | multipart for objects over 16 MiB (8 MiB parts): create + parts + complete, e.g. 6 for a 32 MiB chunk instead of 1 | per large object | a 50 MB file request costs about 13 (2 chunks as multipart, manifest, status) |
-| **Total Class A** | | | **about 80 000, 8 % of the free tier** |
+| **Total Class A** | | | **about 1 075 000, just over the 1 million free tier (the excess is a few cents a month; see PLAN decision 13)** |
 
 Class B: the Mac GETs each object once (about 15 000 a month for the workload above), far below 10 million. A slower poll (`IVY_POLL_INTERVAL_MS`) scales the Mac's line linearly.
 

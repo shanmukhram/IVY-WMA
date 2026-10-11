@@ -1,6 +1,6 @@
 /**
  * R2 bills lists as Class A operations (1 million free per month). At the default
- * 2-minute poll a month has 21 600 polls, so the Mac's listing must stay at about
+ * poll interval (5 s, 17 280 polls a day) the Mac's listing must stay at about
  * one ListObjectsV2 per up-bucket per poll: a single `up/` listing (the marker
  * window is applied per prefix to that one listing), `pair/` only while a pairing
  * is open, and the hourly / catch-up full listing in place of the `up/` one.
@@ -46,8 +46,6 @@ describe("R2 list requests per poll", () => {
     expect(r.buckets.find((b) => b.bucket === BUCKET)!.committed).toBe(1);
     expect(listsPerBucket()).toEqual({ "ivy-up-windows": 1, "ivy-up-android": 1 });
     expect(lists().length).toBeLessThanOrEqual(2);
-    // 21 600 polls a month at 2 minutes
-    expect(lists().length * 21_600).toBeLessThan(100_000);
   });
 
   it("pair/ is listed only while a pairing for that role is open", async () => {

@@ -56,7 +56,7 @@ Everything is under the data directory (`<repo>/data` for the app, `--data` for 
 3. Devices > Start pairing: Windows (or Android). The page shows the pairing string (Copy button), a QR code of the same string, the Mac fingerprint and a 10-minute countdown.
    - Windows: paste the pairing string into the IVY Windows app.
    - Android: scan the QR code.
-4. The device answers through its up-bucket; the next poll (every 2 minutes, or Check now in the pairing sheet / Sync now at the bottom of the sidebar) completes pairing. The page shows the device fingerprint; both screens must show the same Mac fingerprint.
+4. The device answers through its up-bucket; the next poll (every 5 seconds, or Check now in the pairing sheet / Sync now at the bottom of the sidebar) completes pairing. The page shows the device fingerprint; both screens must show the same Mac fingerprint.
 5. Coverage shows each device and collector with a status dot, last sync, last report, queue depth, import progress and gaps; problems are pinned at the top.
 
 Revoking a device (Devices) forgets its key; its R2 tokens stay valid until rotated in Cloudflare.

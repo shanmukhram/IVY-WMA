@@ -17,6 +17,18 @@ const saved = Object.fromEntries(ENV.map((k) => [k, process.env[k]]));
 afterEach(() => { for (const k of ENV) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; } });
 const clearEnv = () => { for (const k of ENV) delete process.env[k]; };
 
+describe("poll interval", () => {
+  it("defaults to 5 seconds and IVY_POLL_INTERVAL_MS overrides it", () => {
+    const saved = process.env.IVY_POLL_INTERVAL_MS;
+    try {
+      delete process.env.IVY_POLL_INTERVAL_MS;
+      expect(loadConfig({}, abs("/w")).pollIntervalMs).toBe(5000);
+      process.env.IVY_POLL_INTERVAL_MS = "120000";
+      expect(loadConfig({}, abs("/w")).pollIntervalMs).toBe(120000);
+    } finally { if (saved === undefined) delete process.env.IVY_POLL_INTERVAL_MS; else process.env.IVY_POLL_INTERVAL_MS = saved; }
+  });
+});
+
 describe("path resolution", () => {
   it("resolves relative --data, --db and --static against the working directory", () => {
     clearEnv();
