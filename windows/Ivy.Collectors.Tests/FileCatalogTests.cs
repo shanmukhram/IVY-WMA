@@ -27,13 +27,20 @@ public class FileCatalogTests : IDisposable
     private FileCatalogCollector NewCollector(int batch = 1000)
     {
         var c = new FileCatalogCollector(_env.Context);
-        c.ApplySettings(CollectorHost.Merge(c.GetSettingsJson(), new System.Text.Json.Nodes.JsonObject
-        {
-            ["roots"] = new System.Text.Json.Nodes.JsonArray((System.Text.Json.Nodes.JsonNode?)_root),
-            ["scanBatchSize"] = batch,
-        }));
+        Apply(c, batch, _root);
         return c;
     }
+
+    // apply settings the way the host does: merged over the collector's current settings
+    private static void Apply(FileCatalogCollector c, int batch, params string[] roots) =>
+        Apply(c, new System.Text.Json.Nodes.JsonObject
+        {
+            ["roots"] = new System.Text.Json.Nodes.JsonArray(roots.Select(r => (System.Text.Json.Nodes.JsonNode?)r).ToArray()),
+            ["scanBatchSize"] = batch,
+        });
+
+    private static void Apply(FileCatalogCollector c, System.Text.Json.Nodes.JsonObject patch) =>
+        c.ApplySettings(CollectorHost.Merge(c.GetSettingsJson(), patch));
 
     // catalog entries and deletions are carried in file_catalog batch records (entries[] / deletions[])
     private IEnumerable<System.Text.Json.JsonElement> Entries() =>
@@ -164,5 +171,133 @@ public class FileCatalogTests : IDisposable
         Assert.Equal(25, names.Count);
         Assert.Equal(25, names.Distinct().Count()); // no duplicates across the restart
         for (var i = 0; i < 25; i++) Assert.Contains($"f{i:00}.txt", names);
+    }
+
+    [Fact]
+    public async Task Relaunch_with_identical_settings_resumes_the_saved_pass_and_does_not_restart()
+    {
+        for (var i = 0; i < 25; i++) _dir.Write($"tree/d{i % 4}/f{i:00}.txt", $"file {i}", T0);
+        var c = NewCollector(batch: 4);
+        await c.StartAsync(default);
+        await c.TickAsync(default);
+        await c.TickAsync(default); // mid first pass
+        var saved = c.CurrentScan!;
+        var (gen, rootIndex, checkpoint, seen) = (saved.Generation, saved.RootIndex, saved.Checkpoint, saved.FilesSeen);
+        Assert.NotNull(checkpoint);
+        Assert.True(saved.Initial);
+
+        // relaunch: the host applies the saved settings (here twice, identical) before StartAsync
+        c = NewCollector(batch: 4);
+        Apply(c, batch: 4, _root);
+        await c.StartAsync(default);
+        var resumed = c.CurrentScan!;
+        Assert.Equal(gen, resumed.Generation);
+        Assert.Equal(rootIndex, resumed.RootIndex);
+        Assert.Equal(checkpoint, resumed.Checkpoint);
+        Assert.Equal(seen, resumed.FilesSeen);
+        Assert.True(resumed.Initial);
+
+        for (var t = 0; t < 100 && c.CurrentScan is not null; t++)
+        {
+            Assert.Equal(gen, c.CurrentScan.Generation); // the same pass throughout
+            await c.TickAsync(default);
+        }
+        Assert.Null(c.CurrentScan);
+        var names = CataloguedNames();
+        Assert.Equal(25, names.Count);
+        Assert.Equal(25, names.Distinct().Count()); // continued from the checkpoint: nothing listed twice
+
+        // and once it completes, no new pass starts by itself
+        _env.Sink.Clear();
+        for (var t = 0; t < 5; t++) await c.TickAsync(default);
+        Assert.Null(c.CurrentScan);
+        Assert.Empty(_env.Sink.Of(Kind.FileCatalog));
+
+        // nor after another relaunch with the same settings
+        c = NewCollector(batch: 4);
+        await c.StartAsync(default);
+        await c.TickAsync(default);
+        Assert.Null(c.CurrentScan);
+    }
+
+    [Fact]
+    public async Task Roots_change_after_start_restarts_with_a_new_generation()
+    {
+        for (var i = 0; i < 10; i++) _dir.Write($"tree/f{i}.txt", "x" + i, T0);
+        _dir.Write("tree2/other.txt", "other", T0);
+        var c = NewCollector(batch: 4);
+        await c.StartAsync(default);
+        await c.TickAsync(default); // mid first pass
+        var gen = c.CurrentScan!.Generation;
+
+        Apply(c, batch: 4, _root, _dir.Sub("tree2"));
+        await c.TickAsync(default);
+        Assert.NotNull(c.CurrentScan);
+        Assert.Equal(gen + 1, c.CurrentScan!.Generation);
+
+        c.RunScanToCompletion();
+        Assert.Contains("other.txt", CataloguedNames());
+
+        // after a completed pass, another real change also starts a new pass
+        Apply(c, batch: 4, _root);
+        await c.TickAsync(default);
+        Assert.Equal(gen + 2, c.CurrentScan!.Generation);
+    }
+
+    [Fact]
+    public async Task Reordered_or_recased_roots_and_budget_changes_do_not_restart()
+    {
+        for (var i = 0; i < 12; i++) _dir.Write($"tree/d{i % 3}/f{i:00}.txt", "x" + i, T0);
+        _dir.Write("tree2/other.txt", "other", T0);
+        var tree2 = _dir.Sub("tree2");
+        var c = new FileCatalogCollector(_env.Context);
+        Apply(c, batch: 4, _root, tree2);
+        await c.StartAsync(default);
+        await c.TickAsync(default); // mid first pass
+        var (gen, checkpoint) = (c.CurrentScan!.Generation, c.CurrentScan.Checkpoint);
+
+        // budgets, batch size and rescan period are not part of what the pass walks
+        Apply(c, new System.Text.Json.Nodes.JsonObject { ["scanBatchSize"] = 5, ["fullRescanHours"] = 6 });
+        Assert.Equal(gen, c.CurrentScan!.Generation);
+        Assert.Equal(checkpoint, c.CurrentScan.Checkpoint);
+
+        // the same roots in a different order (and, on Windows, different case / trailing separator)
+        var root = OperatingSystem.IsWindows() ? _root.ToUpperInvariant() + Path.DirectorySeparatorChar : _root;
+        Apply(c, batch: 5, tree2, root);
+        Assert.Equal(gen, c.CurrentScan!.Generation);
+        Assert.Equal(checkpoint, c.CurrentScan.Checkpoint);
+
+        // the same exclusions in a different order
+        var reversed = FileCatalogSettings.CatalogExclusions.Reverse().Select(e => (System.Text.Json.Nodes.JsonNode?)e).ToArray();
+        Apply(c, new System.Text.Json.Nodes.JsonObject { ["exclusions"] = new System.Text.Json.Nodes.JsonArray(reversed) });
+        Assert.Equal(gen, c.CurrentScan!.Generation);
+
+        for (var t = 0; t < 100 && c.CurrentScan is not null; t++)
+        {
+            Assert.Equal(gen, c.CurrentScan.Generation);
+            await c.TickAsync(default);
+        }
+        var names = CataloguedNames();
+        Assert.Equal(13, names.Count);
+        Assert.Equal(13, names.Distinct().Count());
+    }
+
+    [Fact]
+    public async Task Saved_pass_is_discarded_when_roots_changed_while_not_running()
+    {
+        for (var i = 0; i < 10; i++) _dir.Write($"tree/f{i}.txt", "x" + i, T0);
+        _dir.Write("tree2/other.txt", "other", T0);
+        var c = NewCollector(batch: 4);
+        await c.StartAsync(default);
+        await c.TickAsync(default); // mid first pass, saved
+        var gen = c.CurrentScan!.Generation;
+
+        // relaunch with different saved roots: the saved pass was for another scope, so a new one starts
+        c = new FileCatalogCollector(_env.Context);
+        Apply(c, batch: 4, _dir.Sub("tree2"));
+        await c.StartAsync(default);
+        Assert.Null(c.CurrentScan);
+        await c.TickAsync(default);
+        Assert.Contains("other.txt", CataloguedNames());
     }
 }

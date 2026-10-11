@@ -23,6 +23,12 @@ public sealed class CatalogScanState
     public long FilesEmitted { get; set; }
     /// <summary>True when this is the first pass ever (nothing catalogued before); later passes are rescans.</summary>
     public bool Initial { get; init; }
+    /// <summary>
+    /// The roots/filter this pass was started with (<see cref="FileCatalogCollector.ScopeFingerprint"/>). On start, a
+    /// saved pass whose scope no longer matches the settings is discarded. Null for passes saved before this
+    /// field existed; those are resumed as-is.
+    /// </summary>
+    public string? Scope { get; init; }
 }
 
 /// <summary>
@@ -38,6 +44,8 @@ public sealed class FileCatalogCollector : Collector<FileCatalogSettings>
     public const string CollectorName = "catalog";
     private const string ScanKey = "scan";
     private const string LastScanKey = "lastScanCompletedAt";
+    private const string LastScopeKey = "lastScanScope";
+    private const string SettingsChangedReason = "settings_changed";
 
     private readonly IFileSystemSource _fs;
     private readonly CatalogStore _store;
@@ -78,17 +86,68 @@ public sealed class FileCatalogCollector : Collector<FileCatalogSettings>
     protected override void OnSettingsChanged(FileCatalogSettings previous, FileCatalogSettings current)
     {
         _exclusions = new ExclusionMatcher(current.Exclusions);
-        // the roots or filter changed, so the current pass is stale; restart cleanly on the next tick
+        // Only a change to what the pass walks (roots, exclusions, hidden/system) makes the current pass stale.
+        // Budgets, batch sizes and the rescan period do not, and re-applying identical settings (the host does
+        // this on every launch) must not restart a pass of hundreds of thousands of files.
+        if (ScopeFingerprint(previous) == ScopeFingerprint(current)) return;
+        _walk?.Dispose();
         _scan = null;
         _walk = null;
-        _pendingRescanReason = "settings_changed";
+        _pendingRescanReason = SettingsChangedReason; // restart cleanly on the next tick
     }
 
+    /// <summary>
+    /// Start is authoritative for the pass state: it resumes the saved pass from its checkpoint, keeping its
+    /// generation. A pending restart left by the host's initial settings apply is dropped (the current settings
+    /// are compared against the saved pass instead), so a launch never starts a new generation by itself. A
+    /// rescan is requested only when the saved pass, or the last completed pass, was made with different roots
+    /// or filters than the current settings.
+    /// </summary>
     public override Task StartAsync(CancellationToken ct)
     {
-        _scan = Context.Settings.Load<CatalogScanState>(Name, ScanKey);
+        _walk?.Dispose();
         _walk = null; // recreated from the checkpoint on the next scan step
+        if (_pendingRescanReason == SettingsChangedReason) _pendingRescanReason = null;
+        var scope = ScopeFingerprint(Settings);
+        _scan = Context.Settings.Load<CatalogScanState>(Name, ScanKey);
+        if (_scan is not null)
+        {
+            if (_scan.Scope is not null && _scan.Scope != scope)
+            {
+                // the roots or filter changed while the collector was not running: the saved pass is stale
+                _scan = null;
+                Context.Settings.Save<CatalogScanState>(Name, ScanKey, null);
+                _pendingRescanReason ??= SettingsChangedReason;
+            }
+        }
+        else if (Context.Settings.LoadJson(Name, LastScopeKey)?.GetValue<string>() is { } last && last != scope)
+        {
+            _pendingRescanReason ??= SettingsChangedReason;
+        }
         return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// What a pass depends on: the normalised roots and exclusions (order-insensitive; roots case-insensitive on
+    /// Windows, exclusions always, since globs match case-insensitively) plus the hidden/system switches. Two
+    /// settings with the same fingerprint walk the same files.
+    /// </summary>
+    internal static string ScopeFingerprint(FileCatalogSettings s)
+    {
+        var roots = s.Roots.Where(r => !string.IsNullOrWhiteSpace(r)).Select(RootKey).Distinct().Order(StringComparer.Ordinal);
+        var exclusions = s.Exclusions.Where(e => !string.IsNullOrWhiteSpace(e)).Select(e => e.Trim().ToUpperInvariant())
+            .Distinct().Order(StringComparer.Ordinal);
+        return string.Join("|",
+            string.Join(";", roots),
+            string.Join(";", exclusions),
+            s.IncludeHidden ? "h" : "-",
+            s.IncludeSystem ? "s" : "-");
+    }
+
+    private static string RootKey(string root)
+    {
+        var full = PathUtil.Full(root.Trim());
+        return OperatingSystem.IsWindows() ? full.ToUpperInvariant() : full;
     }
 
     public override Task<CommandOutcome> RescanAsync(string? scope, CancellationToken ct)
@@ -159,8 +218,11 @@ public sealed class FileCatalogCollector : Collector<FileCatalogSettings>
         Activity(CollectorActivity.Config, $"cataloguing automatically: {string.Join(", ", scope)}");
     }
 
+    // Walked in a canonical order, not the settings order: RootIndex is positional, and reordering the roots
+    // in the settings is not a change (see ScopeFingerprint), so it must not shift a pass in progress.
     private IReadOnlyList<string> ExistingRoots() =>
-        Settings.Roots.Where(r => !string.IsNullOrWhiteSpace(r) && _fs.Stat(r) is { IsDirectory: true }).ToList();
+        Settings.Roots.Where(r => !string.IsNullOrWhiteSpace(r) && _fs.Stat(r) is { IsDirectory: true })
+            .DistinctBy(RootKey).OrderBy(RootKey, StringComparer.Ordinal).ToList();
 
     private void StartScanIfDue()
     {
@@ -169,7 +231,10 @@ public sealed class FileCatalogCollector : Collector<FileCatalogSettings>
         if (!due) return;
         _pendingRescanReason = null;
         var first = Context.Settings.LoadJson(Name, LastScanKey) is null;
-        _scan = new CatalogScanState { Generation = _store.MaxGeneration() + 1, StartedAt = IvyTime.Format(Now), Initial = first };
+        _scan = new CatalogScanState
+        {
+            Generation = _store.MaxGeneration() + 1, StartedAt = IvyTime.Format(Now), Initial = first, Scope = ScopeFingerprint(Settings),
+        };
         _walk = null;
         SaveScan();
     }
@@ -249,6 +314,7 @@ public sealed class FileCatalogCollector : Collector<FileCatalogSettings>
         FlushBatch(sink, deviceId, nowStr);
         batch.Commit();
         Context.Settings.SaveJson(Name, LastScanKey, JsonValue.Create(nowStr));
+        Context.Settings.SaveJson(Name, LastScopeKey, JsonValue.Create(_scan.Scope ?? ScopeFingerprint(Settings)));
         Context.Settings.Save<CatalogScanState>(Name, ScanKey, null);
         Activity(CollectorActivity.ScanCompleted, $"catalogue complete: {_scan.FilesSeen} files, {_scan.FilesEmitted} new or changed");
         _scan = null;
