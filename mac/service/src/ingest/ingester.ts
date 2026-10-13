@@ -126,6 +126,8 @@ export interface BucketPassResult {
   errors: number;
   marker: string | null;
   full: boolean;
+  /** true when the bulk/blob phase hit the per-pass wall-clock budget and the rest continues next pass */
+  capped?: boolean;
   error?: string;
 }
 
@@ -183,6 +185,10 @@ export class Ingester {
   private readonly draining = new Set<string>();
   private stopped = false;
   private pausedUntil: number | null = null;
+  // per device: last wall-clock ms we refreshed its last_seen, so a blob flood touches it at most every few
+  // seconds instead of once per part. Cleared implicitly by process lifetime; a stale entry only delays one
+  // touch by the throttle window.
+  private readonly lastSeenTouch = new Map<string, number>();
   last: PollResult | null = null;
 
   constructor(ctx: Ctx) { this.ctx = ctx; }
@@ -494,7 +500,14 @@ export class Ingester {
 
     for (let i = 0; i < prioritySingles.length; i += PREFETCH) await runWindow(prioritySingles.slice(i, i + PREFETCH));
     let budget = this.ctx.config.ingestBulkBudget;
+    // Bound the bulk (file-listing + blob) phase by wall clock as well as by count, so one pass completes and
+    // the next poll re-lists promptly. The high-priority records above (heartbeat, control, conversations)
+    // have already been committed in full, so capping here never delays a device's heartbeat; the rest of the
+    // backlog continues next pass.
+    const deadline = Date.now() + this.ctx.config.ingestPassBudgetMs;
+    let capped = false;
     for (let i = 0; i < bulkSingles.length && budget > 0; i += PREFETCH) {
+      if (Date.now() > deadline) { capped = true; break; }
       budget -= await runWindow(bulkSingles.slice(i, i + PREFETCH));
     }
     // a completed media original is kept in R2 (PLAN decision 6): its manifest and parts are committed in the
@@ -517,6 +530,7 @@ export class Ingester {
     // chunks can then be fetched avatars-first. A blob whose parts arrived before its manifest waits as before.
     for (const [oid, g] of blobEntries) {
       if (!g.manifest) continue;
+      if (Date.now() > deadline) { capped = true; break; }
       const out = await this.guard(src, g.manifest.key, "manifest", () => this.ingestManifest(src, oid, g.manifest!.key, g.parts, undefined, false, g.manifest));
       tally(out); note(g.manifest, out);
     }
@@ -530,6 +544,7 @@ export class Ingester {
       if (mrow?.status === "quarantined") continue; // the manifest was quarantined with its parts
       const isBulkBlob = blobPriority(mrow?.payload_kind) > 0; // avatars (0) always; thumbnails and media share the budget
       if (isBulkBlob && budget <= 0) break; // avatars done; the rest of the media continues next pass
+      if (Date.now() > deadline) { capped = true; break; } // time's up for this pass; the rest continues next pass
       if (isBulkBlob) budget -= g.parts.length;
       // a blob with no manifest yet still runs its parts: ingestPart leaves them waiting, or quarantines orphans
       g.parts.sort((a, b) => a.index - b.index);
@@ -564,6 +579,8 @@ export class Ingester {
 
     // positions last: after the commits and the delete flush above (crash safety)
     this.advancePositions(src, pos, singles, singleOutcome, [...blobs.keys()], blobCut);
+    res.capped = capped;
+    if (capped) this.ctx.events.emit("ingest.capped", { bucket: src.bucketName, committed: res.committed, budgetMs: this.ctx.config.ingestPassBudgetMs });
     res.marker = highest(pos);
     // kept for the coverage view, which shows it per bucket
     if (res.marker && res.marker !== getSetting(this.ctx.db, `marker:${src.bucketName}`)) setSetting(this.ctx.db, `marker:${src.bucketName}`, res.marker);
@@ -966,6 +983,26 @@ export class Ingester {
    * record), the next pass lists the bucket in full. If that report still shows a queue, the first later report
    * showing it empty asks for one more full listing, for whatever drained in between.
    */
+  /**
+   * Record that the Mac just heard from a device by committing one of its objects. Called for every committed
+   * object, including blob parts and manifests, so a device actively uploading a media backfill never shows
+   * stale. Throttled per device (default every 10 s) so a flood of parts does not write once per part; a
+   * single record passes force so its heartbeat lands immediately.
+   */
+  private touchDeviceSeen(deviceId: string | null | undefined, force = false): void {
+    if (!deviceId) return;
+    const now = Date.now();
+    if (!force && now - (this.lastSeenTouch.get(deviceId) ?? 0) < 10_000) return;
+    this.lastSeenTouch.set(deviceId, now);
+    this.ctx.db.prepare("UPDATE devices SET last_seen = ? WHERE id = ?").run(nowIso(), deviceId);
+  }
+
+  // A standalone media blob's row carries no device_id until a record links it, but it always has a role, and
+  // IVY has one device per role, so resolve the blob's device by role to refresh its presence.
+  private deviceIdForRole(role: string): string | undefined {
+    return (this.ctx.db.prepare("SELECT id FROM devices WHERE role = ? ORDER BY paired_at DESC LIMIT 1").get(role) as { id: string } | undefined)?.id;
+  }
+
   private noteDeviceReport(src: Source, deviceId: string, lastSeen: string | null, queueDepthTotal: number): void {
     const seenMs = msOf(lastSeen);
     if (seenMs !== null && Date.now() - seenMs > this.ctx.config.deviceReturnFullMs) {
@@ -1022,6 +1059,7 @@ export class Ingester {
     })();
     // a media original is kept in R2 for on-demand full-quality fetch; everything else is deleted after commit
     if (!archivesPayload(this.ctx, m.payloadKind)) await this.remove(src, key);
+    this.touchDeviceSeen(getBlob(this.ctx, src.bucketName, oid)?.device_id ?? this.deviceIdForRole(src.role)); // the device is alive: it just uploaded this manifest
     const prog = blobProgress(getBlob(this.ctx, src.bucketName, oid)!);
     this.ctx.events.emit("blob.progress", { ...prog });
     if (commandId) this.ctx.events.emit("command.transferring", { commandId, ...transferOf(prog) });
@@ -1074,6 +1112,7 @@ export class Ingester {
     if (!keep) await this.remove(src, key); // a kept media original's part stays in R2
     else this.ctx.events.emit("ingest.archived", { bucket: src.bucketName, oid, part: index });
     const fresh = getBlob(this.ctx, src.bucketName, oid)!;
+    this.touchDeviceSeen(fresh.device_id ?? this.deviceIdForRole(src.role)); // the device is alive: it just uploaded this part
     const prog = blobProgress(fresh);
     this.ctx.events.emit("blob.progress", { ...prog });
     if (fresh.command_id) this.ctx.events.emit("command.progress", { commandId: fresh.command_id, ...transferOf(prog) });

@@ -13,6 +13,15 @@ export function normTs(s: string | undefined | null): string | null {
 
 export const nowIso = (): string => new Date().toISOString();
 
+/** The later (freshest) of two ISO timestamps; ignores nulls; null when both are null. */
+export function freshest(a: string | null | undefined, b: string | null | undefined): string | null {
+  const am = msOf(a);
+  const bm = msOf(b);
+  if (am === null) return b ?? null;
+  if (bm === null) return a ?? null;
+  return am >= bm ? a! : b!;
+}
+
 export function msOf(s: string | null | undefined): number | null {
   if (!s) return null;
   const ms = Date.parse(s);

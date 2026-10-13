@@ -44,6 +44,13 @@ export interface ServiceConfig {
   listLookbackMs: number;
   /** most file-listing / large-media objects ingested per pass; small high-priority records always flow */
   ingestBulkBudget: number;
+  /**
+   * wall-clock cap on the bulk (file-listing + blob) phase of one pass. High-priority records (heartbeat,
+   * control, conversations, avatars) are always processed first and in full; once this long has elapsed the
+   * rest of the backlog stops for this pass so it completes and the next poll re-lists promptly. This keeps a
+   * device's heartbeat landing every poll even while a large media backfill is still draining.
+   */
+  ingestPassBudgetMs: number;
   /** a full listing of the bucket (catches unrecognised keys) at most this often */
   fullSweepEveryMs: number;
   /**
@@ -127,6 +134,7 @@ export function loadConfig(overrides: Partial<ServiceConfig> = {}, cwd: string =
     pairingGraceMs: 5 * MIN,
     listLookbackMs: envInt("IVY_LIST_LOOKBACK_MS") ?? 8 * DAY,
     ingestBulkBudget: envInt("IVY_INGEST_BULK_BUDGET") ?? 3000,
+    ingestPassBudgetMs: envInt("IVY_INGEST_PASS_BUDGET_MS") ?? 20_000,
     fullSweepEveryMs: 60 * MIN,
     deviceReturnFullMs: envInt("IVY_DEVICE_RETURN_FULL_MS") ?? 10 * MIN,
     orphanPartMs: 7 * DAY,

@@ -9,7 +9,7 @@
  */
 import type { Ctx } from "../context.ts";
 import { getSetting } from "../db/index.ts";
-import { msOf, nowIso } from "../util/time.ts";
+import { freshest, msOf, nowIso } from "../util/time.ts";
 import { ROLES } from "../r2/config.ts";
 import { activityVaultCoverage } from "../imports/activity-vault.ts";
 import { deviceScope } from "./types.ts";
@@ -145,8 +145,14 @@ export function coverage(ctx: Ctx, now = Date.now(), scope: { device?: string } 
 
   const deviceViews = devices.map((d) => {
     const collectors = ctx.db.prepare("SELECT * FROM collector_state WHERE device_id = ? ORDER BY name").all(d.id) as CollectorRow[];
-    const reportDot: Dot = ageDot(ctx, d.last_report_at, now);
-    let dot: Dot = reportDot;
+    // "last heard" is the freshest of the heartbeat (last_report_at) and the newest committed object
+    // (last_seen, which now advances on every object including blobs). The device presence dot follows it, so
+    // a device actively uploading a backfill is shown alive even if its heartbeat is momentarily behind.
+    const lastHeard = freshest(d.last_report_at, d.last_seen);
+    // A device that has never once sent a heartbeat is red (its reporting never started). Otherwise presence
+    // follows the freshest of its heartbeat and its newest object, so an active backfill reads as alive.
+    const heardDot: Dot = d.last_report_at ? ageDot(ctx, lastHeard, now) : "red";
+    let dot: Dot = heardDot;
     const colViews = collectors.map((c) => {
       const s = collectorStatus(ctx, c, d.last_report_at, now);
       dot = worst(dot, s.dot);
@@ -160,7 +166,13 @@ export function coverage(ctx: Ctx, now = Date.now(), scope: { device?: string } 
       };
     });
     if (!d.last_report_at) problems.push({ severity: "red", source: { deviceId: d.id, role: d.role }, message: `${d.role} has paired but never sent a device report` });
-    else if (reportDot !== "green") problems.push({ severity: reportDot === "red" ? "red" : "amber", source: { deviceId: d.id, role: d.role }, message: `${d.role}: last device report ${fmtAge(now - msOf(d.last_report_at)!)} ago` });
+    else if (heardDot !== "green") {
+      // Truly quiet: the Mac has heard nothing (no report, no object) for a while.
+      problems.push({ severity: heardDot === "red" ? "red" : "amber", source: { deviceId: d.id, role: d.role }, message: `${d.role}: last heard ${fmtAge(now - (msOf(lastHeard) ?? 0))} ago` });
+    } else if (ageDot(ctx, d.last_report_at, now) !== "green") {
+      // Being heard from (uploading), but the heartbeat specifically is behind — surfaced, not hidden.
+      problems.push({ severity: "amber", source: { deviceId: d.id, role: d.role }, message: `${d.role}: uploading, but no heartbeat for ${fmtAge(now - (msOf(d.last_report_at) ?? 0))}` });
+    }
 
     const role = d.role;
     const pending = ctx.db.prepare(`SELECT oid, status, payload_kind, committed_parts, total_chunks, committed_bytes, total_size, updated_at, first_seen_at
@@ -186,7 +198,8 @@ export function coverage(ctx: Ctx, now = Date.now(), scope: { device?: string } 
     };
     return {
       deviceId: d.id, role: d.role, fingerprint: d.fingerprint, pairedAt: d.paired_at, lastSeen: d.last_seen,
-      lastReportAt: d.last_report_at, reportStatus: reportDot, appVersion: d.app_version, queueDepthTotal: d.queue_depth_total,
+      lastReportAt: d.last_report_at, lastHeard, reportStatus: ageDot(ctx, d.last_report_at, now),
+      appVersion: d.app_version, queueDepthTotal: d.queue_depth_total,
       status: dot, collectors: colViews,
       pendingBlobs: pending.map((b) => ({ oid: b.oid, status: b.status, payloadKind: b.payload_kind, committedParts: (JSON.parse(b.committed_parts) as number[]).length, totalChunks: b.total_chunks, committedBytes: b.committed_bytes, totalSize: b.total_size, updatedAt: b.updated_at })),
       quarantined, queuedCommands, counts,
