@@ -574,7 +574,7 @@ The family look: near-black background, 1px borders, one green accent, monospace
 - Media: grid with OCR text on hover; an origin panel ("received via LINE from X on …; also appears in WhatsApp").
 - Files: reference vs. local-copy indicator; request button with progress; queued state when the device is offline.
 - Coverage: one row per device and source — status dot, last sync, import progress bars, gaps by date; problems pinned on top.
-- Devices and pairing: paired devices, fingerprints, revoke, re-pair from passphrase.
+- Devices and pairing: paired devices, fingerprints, revoke, re-pair from passphrase; each device's view is scoped by name under its role, and forget wipes one device's records from the Mac only, leaving R2 untouched.
 - AI settings: cloud on/off, what would be sent, model choice.
 - Recovery bin: retention setting, restore, explicit permanent delete.
 
