@@ -126,7 +126,7 @@ function Shell({ onLocked }: { onLocked: () => void }) {
       const q = new URLSearchParams(location.search); q.delete(SCOPE_PARAM);
       navigate(`${location.pathname}${q.toString() ? `?${q}` : ""}`, true, false);
     }
-  }, ["pairing.completed", "device.revoked", "device.forgotten"]);
+  }, ["pairing.completed", "device.revoked", "device.forgotten", "device.renamed"]);
   useEvents(() => stats.reload(), ["ingest.poll"]);
   const lastOk = ((stats.data?.lastSync ?? []) as Array<{ lastOkAt?: string | null }>).map((b) => b.lastOkAt).filter(Boolean).sort().at(-1) ?? null;
 

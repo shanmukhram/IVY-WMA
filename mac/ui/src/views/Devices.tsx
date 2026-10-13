@@ -1,6 +1,7 @@
 /**
- * Devices: paired devices, pairing (QR + pairing string in a sheet), revoke with confirmation, and forget:
- * remove an old device and everything it captured from this Mac, confirmed with its fingerprint.
+ * Devices: paired devices, pairing (QR + pairing string in a sheet), naming a device, revoke with
+ * confirmation, and forget: remove an old device and everything it captured from this Mac, confirmed with
+ * its fingerprint. A device's name is kept on this Mac only; the fingerprint stays its stable identifier.
  */
 import { useEffect, useState } from "react";
 import QRCode from "qrcode";
@@ -12,6 +13,7 @@ import { Icon } from "../components/Icon.tsx";
 import { Empty, ErrorLine, Notice, Time } from "../components/Feedback.tsx";
 import { Sheet } from "../components/Overlay.tsx";
 import { Link } from "../components/Controls.tsx";
+import { deviceLabel } from "../scope.tsx";
 
 interface Pairing { pairingId: string; role: string; pairingString: string; macFingerprint: string; expiresAt: string }
 
@@ -29,6 +31,7 @@ export function DevicesView() {
   const [err, setErr] = useState<string | null>(null);
   const [confirmRevoke, setConfirmRevoke] = useState<any>(null);
   const [forgetting, setForgetting] = useState<any>(null);
+  const [renaming, setRenaming] = useState<string | null>(null);
 
   useEvents((ev) => {
     if (ev.type === "pairing.completed" && pairing && ev.data.pairingId === pairing.pairingId) {
@@ -38,7 +41,7 @@ export function DevicesView() {
     if ((ev.type === "pairing.expired" || ev.type === "pairing.cancelled") && pairing && ev.data.pairingId === pairing.pairingId) { setResult(`Pairing code ${ev.type.slice(8)}.`); setPairing(null); }
     if (ev.type === "pairing.rejected") setResult(`A device answer was rejected: ${ev.data.reason ?? "unknown reason"}`);
     devs.reload();
-  }, ["pairing.", "device.revoked", "device.forgotten"]);
+  }, ["pairing.", "device.revoked", "device.forgotten", "device.renamed"]);
 
   const start = async (role: "windows" | "android") => {
     setErr(null); setResult(null);
@@ -84,11 +87,13 @@ export function DevicesView() {
               <div key={x.id} className="group-row" style={{ alignItems: "flex-start", paddingTop: 12, paddingBottom: 12 }}>
                 <span className="dev-icon" style={{ width: 36, height: 36, borderRadius: 9, background: "var(--fill-2)", display: "flex", alignItems: "center", justifyContent: "center" }}><Icon name={x.role === "windows" ? "laptop" : "phone"} size={18} /></span>
                 <div className="row-label">
-                  <div style={{ fontWeight: 600 }}>{roleLabel(x.role)} <span className="faint hash small">{x.id}</span></div>
-                  <div className="fingerprint small">{x.fingerprint}</div>
+                  <div style={{ fontWeight: 600 }} className={x.name ? undefined : "fingerprint"} data-testid={`device-title-${x.id}`}>{deviceLabel(x)}</div>
+                  <div className="small muted">{roleLabel(x.role)} · {x.name ? <>fingerprint <span className="fingerprint">{x.fingerprint}</span></> : "no name yet (shown by its fingerprint)"} · <span className="faint hash">{x.id}</span></div>
                   <div className="row-sub">Paired <Time at={x.pairedAt} /> · last seen {ago(x.lastSeen)} · last report {ago(x.lastReportAt)} · app {x.appVersion ?? "—"}</div>
+                  {renaming === x.id && <RenameField device={x} onDone={() => { setRenaming(null); devs.reload(); }} onCancel={() => setRenaming(null)} />}
                 </div>
                 <div className="row">
+                  <button className="btn btn-sm" onClick={() => setRenaming(renaming === x.id ? null : x.id)} aria-expanded={renaming === x.id} aria-label={`Rename ${deviceLabel(x)}`}>Rename</button>
                   <button className="btn btn-sm btn-danger" onClick={() => setConfirmRevoke(x)}>Revoke</button>
                   <button className="btn btn-sm btn-danger" onClick={() => setForgetting(x)}>Forget…</button>
                 </div>
@@ -100,7 +105,7 @@ export function DevicesView() {
       </div>
       {pairing && <PairingSheet p={pairing} onCancel={() => void cancel()} />}
       {confirmRevoke && (
-        <Sheet title={`Revoke ${roleLabel(confirmRevoke.role)}?`} label="Confirm revoke" onClose={() => setConfirmRevoke(null)}
+        <Sheet title={`Revoke ${roleLabel(confirmRevoke.role)} · ${deviceLabel(confirmRevoke)}?`} label="Confirm revoke" onClose={() => setConfirmRevoke(null)}
           footer={<><button className="btn" onClick={() => setConfirmRevoke(null)}>Keep</button><button className="btn btn-danger-fill" onClick={() => void revoke(confirmRevoke.id)}>Confirm revoke</button></>}>
           <p className="fingerprint">{confirmRevoke.fingerprint}</p>
           <p>Revoke stops this device: the Mac drops its key, ignores its new uploads and sends it no more commands. Everything it already captured stays in the archive on this Mac. To remove that as well, use Forget.</p>
@@ -109,6 +114,43 @@ export function DevicesView() {
       )}
       {forgetting && <ForgetSheet device={forgetting} onClose={() => setForgetting(null)} onForgotten={forgotten} />}
     </div>
+  );
+}
+
+/** Longest name the service accepts (PATCH /api/devices/:id). */
+export const DEVICE_NAME_MAX = 60;
+
+function renameError(e: unknown): string {
+  if (e instanceof ApiError && e.status === 400) return `The name was not saved: ${e.message}.`;
+  if (e instanceof ApiError && e.status === 404) return "This device is no longer paired; reload the list.";
+  return errText(e);
+}
+
+/** Inline field that names a device. Enter or Save stores it; an empty field clears the name. */
+export function RenameField({ device, onDone, onCancel }: { device: { id: string; name?: string | null; fingerprint: string }; onDone: () => void; onCancel: () => void }) {
+  const api = useApi();
+  const [value, setValue] = useState(device.name ?? "");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const save = async () => {
+    setBusy(true); setErr(null);
+    try {
+      await api.patch(`/api/devices/${encodeURIComponent(device.id)}`, { name: value.trim() === "" ? null : value });
+      onDone();
+    } catch (e) { setErr(renameError(e)); } finally { setBusy(false); }
+  };
+  return (
+    <form className="stack-sm" style={{ marginTop: 8 }} aria-label="Rename device" onSubmit={(e) => { e.preventDefault(); void save(); }}>
+      <span className="row" style={{ flexWrap: "wrap" }}>
+        <input className="input" aria-label="Device name" placeholder={`No name: shown as ${device.fingerprint}`} autoFocus autoComplete="off" value={value}
+          onChange={(e) => { setValue(e.target.value); setErr(null); }} onKeyDown={(e) => { if (e.key === "Escape") { e.stopPropagation(); onCancel(); } }} style={{ flex: 1, minWidth: 200 }} />
+        <button type="submit" className="btn btn-sm btn-primary" disabled={busy}>{busy ? "Saving…" : "Save"}</button>
+        {device.name && <button type="button" className="btn btn-sm" disabled={busy} onClick={() => setValue("")}>Clear</button>}
+        <button type="button" className="btn btn-sm btn-plain" onClick={onCancel}>Cancel</button>
+      </span>
+      <span className="small faint">Up to {DEVICE_NAME_MAX} characters. Leave empty to show the fingerprint instead. The name stays on this Mac.</span>
+      {err && <Notice tone="error" role="alert">{err}</Notice>}
+    </form>
   );
 }
 
@@ -196,7 +238,7 @@ function forgetError(e: unknown): string {
 }
 
 /** Forget a device: show what goes and what stays, confirm with the fingerprint, then show what was removed. */
-export function ForgetSheet({ device, onClose, onForgotten }: { device: { id: string; role: string; fingerprint: string }; onClose: () => void; onForgotten: (id: string) => void }) {
+export function ForgetSheet({ device, onClose, onForgotten }: { device: { id: string; role: string; fingerprint: string; name?: string | null }; onClose: () => void; onForgotten: (id: string) => void }) {
   const api = useApi();
   const fp = useLoad<Footprint>((a) => a.get(`/api/devices/${encodeURIComponent(device.id)}/footprint`), [device.id]);
   const [typed, setTyped] = useState("");
@@ -216,10 +258,11 @@ export function ForgetSheet({ device, onClose, onForgotten }: { device: { id: st
     } catch (e) { setErr(forgetError(e)); } finally { setBusy(false); }
   };
 
-  const title = `Forget ${roleLabel(device.role)}?`;
+  const label = `${roleLabel(device.role)} · ${deviceLabel(device)}`;
+  const title = `Forget ${label}?`;
   if (done) {
     return (
-      <Sheet title={`${roleLabel(device.role)} forgotten`} label="Forget device" onClose={onClose} footer={<button className="btn btn-primary" onClick={onClose}>Done</button>}>
+      <Sheet title={`${label} forgotten`} label="Forget device" onClose={onClose} footer={<button className="btn btn-primary" onClick={onClose}>Done</button>}>
         <Notice tone="ok" role="status">{forgetSummary(done)}</Notice>
         {done.binPurged > 0 && <p className="small muted">{plural(done.binPurged, "item")} of this device in the recovery bin were removed too.</p>}
         <p className="small">{done.r2Note}</p>

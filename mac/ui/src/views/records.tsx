@@ -4,6 +4,7 @@
  * time kept apart (T4), file availability (F4), deleted at source vs in the vault (B4).
  */
 import { createContext, useContext } from "react";
+import { deviceLabel } from "../scope.tsx";
 import { href } from "../router.ts";
 import { Icon, TYPE_ICON } from "../components/Icon.tsx";
 import { AppIcon } from "../components/AppIcon.tsx";
@@ -36,9 +37,11 @@ export const AVAILABILITY_SHORT: Record<string, string> = { reference: "Referenc
 /** Paired devices, provided once by the shell so every card can name the device. */
 export const DevicesContext = createContext<DeviceLite[] | undefined>(undefined);
 
+/** A record's device: the owner's name for it when set, else the role (with a short id when the role has several devices). */
 export function deviceName(id: string | null, devices?: DeviceLite[]): string {
   const d = devices?.find((x) => x.id === id);
   if (!d) return id ? `device ${shortId(id)}` : "no device";
+  if (d.name?.trim()) return deviceLabel(d);
   const sameRole = devices!.filter((x) => x.role === d.role).length;
   return sameRole > 1 ? `${roleLabel(d.role)} ${shortId(id)}` : roleLabel(d.role);
 }

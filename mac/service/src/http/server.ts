@@ -20,7 +20,7 @@ import { ZodError } from "zod";
 import type { Service } from "../service.ts";
 import { KeystoreError } from "../keystore/keystore.ts";
 import { ForgetError, forgetDevice, forgetFootprint } from "../devices/forget.ts";
-import { PairingError, cancelPairing, getDevice, listDevices, listPairings, revokeDevice, startPairing } from "../pairing/pairing.ts";
+import { PairingError, cancelPairing, getDevice, listDevices, listPairings, renameDevice, revokeDevice, startPairing } from "../pairing/pairing.ts";
 import { CommandError, cancelCommand, commandView, getCommand, issueCommand, listCommands, requestFile } from "../commands/commands.ts";
 import { search, SearchError } from "../query/search.ts";
 import { timeline, TimelineError } from "../query/timeline.ts";
@@ -261,6 +261,20 @@ export async function buildServer(svc: Service): Promise<FastifyInstance> {
     if (!d) throw new HttpError(404, "not_found", "no such device");
     return deviceView(d);
   });
+  // Set or clear the owner's name for a device: { name: string | null }. Trimmed; "" or null clears it;
+  // at most 60 characters. The name stays on the Mac.
+  app.patch("/api/devices/:id", async (req) => {
+    const id = (req.params as { id: string }).id;
+    const body = req.body as { name?: unknown } | undefined;
+    if (!body || !("name" in body)) throw new HttpError(400, "bad_value", "name is required (a string, or null to clear)");
+    try {
+      renameDevice(ctx, id, body.name);
+    } catch (e) {
+      if (e instanceof PairingError) throw new HttpError(e.code === "not_found" ? 404 : 400, e.code, e.message);
+      throw e;
+    }
+    return deviceView(getDevice(ctx, id)!);
+  });
   // DELETE without ?wipe: revoke only (the captured records stay). With ?wipe=1 and { confirm: <fingerprint> }:
   // forget the device, removing everything it contributed from the vault and the local cache (devices/forget.ts).
   // R2 is not touched; whatever the device left there is ignored by ingest.
@@ -278,9 +292,10 @@ export async function buildServer(svc: Service): Promise<FastifyInstance> {
   });
   // What a forget would remove (counts per table, shared records kept, local cache bytes, media left in R2).
   app.get("/api/devices/:id/footprint", async (req) => {
-    const f = forgetFootprint(ctx, (req.params as { id: string }).id);
+    const id = (req.params as { id: string }).id;
+    const f = forgetFootprint(ctx, id);
     if (!f) throw new HttpError(404, "not_found", "no such device");
-    return f;
+    return { ...f, name: getDevice(ctx, id)?.name ?? null };
   });
   // Read-only device file browser (catalog + indexed files). Immediate children of a directory, or
   // the top-level roots/drives with no path. See query/browse.ts for the derived-folder logic.
@@ -592,7 +607,7 @@ export async function buildServer(svc: Service): Promise<FastifyInstance> {
 
 function deviceView(d: ReturnType<typeof listDevices>[number]) {
   return {
-    id: d.id, role: d.role, fingerprint: d.fingerprint, publicKey: d.public_key, pairingId: d.pairing_id, pairedAt: d.paired_at,
+    id: d.id, role: d.role, name: d.name ?? null, fingerprint: d.fingerprint, publicKey: d.public_key, pairingId: d.pairing_id, pairedAt: d.paired_at,
     lastSeen: d.last_seen, lastReportAt: d.last_report_at, appVersion: d.app_version, queueDepthTotal: d.queue_depth_total,
     revokeWarning: "Revoking forgets this device's key: its uploads are quarantined and no commands reach it. Captured content stays in the vault. Its R2 tokens stay valid until rotated in Cloudflare.",
   };

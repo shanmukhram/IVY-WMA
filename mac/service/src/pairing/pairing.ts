@@ -35,6 +35,7 @@ export interface PairingRow {
 export interface DeviceRow {
   id: string; role: Role; public_key: string; fingerprint: string; pairing_id: string | null; paired_at: string;
   last_seen: string | null; last_report_at: string | null; app_version: string | null; queue_depth_total: number | null;
+  name: string | null;
 }
 
 export async function startPairing(ctx: Ctx, role: Role): Promise<{
@@ -164,11 +165,30 @@ export async function finishPairing(ctx: Ctx, pairingId: string, role: Role): Pr
 // ---------------------------------------------------------------- devices
 
 export function listDevices(ctx: Ctx): DeviceRow[] {
-  return ctx.db.prepare("SELECT id, role, public_key, fingerprint, pairing_id, paired_at, last_seen, last_report_at, app_version, queue_depth_total FROM devices ORDER BY paired_at").all() as DeviceRow[];
+  return ctx.db.prepare("SELECT id, role, public_key, fingerprint, pairing_id, paired_at, last_seen, last_report_at, app_version, queue_depth_total, name FROM devices ORDER BY paired_at").all() as DeviceRow[];
 }
 
 export function getDevice(ctx: Ctx, id: string): DeviceRow | undefined {
   return ctx.db.prepare("SELECT * FROM devices WHERE id = ?").get(id) as DeviceRow | undefined;
+}
+
+/** Longest device name the owner can set. */
+export const DEVICE_NAME_MAX = 60;
+
+/**
+ * Set or clear the owner's name for a paired device. Trims; an empty string or
+ * null clears it. Throws PairingError not_found / bad_value. The name lives only
+ * in the Mac's database.
+ */
+export function renameDevice(ctx: Ctx, id: string, name: unknown): { deviceId: string; name: string | null } {
+  if (name !== null && typeof name !== "string") throw new PairingError("bad_value", "name must be a string or null");
+  const trimmed = name === null ? "" : name.trim();
+  if (trimmed.length > DEVICE_NAME_MAX) throw new PairingError("bad_value", `name must be at most ${DEVICE_NAME_MAX} characters`);
+  if (!getDevice(ctx, id)) throw new PairingError("not_found", "no such device");
+  const value = trimmed === "" ? null : trimmed;
+  ctx.db.prepare("UPDATE devices SET name = ? WHERE id = ?").run(value, id);
+  ctx.events.emit("device.renamed", { deviceId: id, name: value });
+  return { deviceId: id, name: value };
 }
 
 /** Shown after a revoke or a forget: the Mac cannot invalidate a device's R2 tokens itself. */

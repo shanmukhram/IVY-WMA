@@ -172,7 +172,7 @@ describe("migration v5 backfill", () => {
     raw.exec(`INSERT INTO devices(id, role, public_key, fingerprint, paired_at) VALUES ('a1', 'android', 'k', 'f', 't');
               INSERT INTO conversations(id, device_id, platform, account, conv_key, kind, coverage, created_at, updated_at) VALUES ('c1', 'a1', 'line', 'me', 'k', 'dm', 'complete', 't', 't');
               INSERT INTO messages(id, conversation_id, device_id, msg_key, sender, sent_at, captured_at, text, source_status) VALUES ('m1', 'c1', 'a1', '1', 'Aki', 't', '2026-01-01T00:00:00.000Z', 'hi', 'deleted_at_source');`);
-    expect(migrate(raw)).toEqual([5, 6, 7, 8, 9, 10, 11, 12, 13]);
+    expect(migrate(raw)).toEqual([5, 6, 7, 8, 9, 10, 11, 12, 13, 14]);
     expect(raw.prepare("SELECT coverage_by_source FROM conversations").get()).toEqual({ coverage_by_source: '{"android:legacy":"complete"}' });
     expect(raw.prepare("SELECT message_id, device_id, source_session FROM message_sources").all()).toEqual([{ message_id: "m1", device_id: "a1", source_session: "android:legacy" }]);
     expect(raw.prepare("SELECT text_source, text_quality, source_deleted_at FROM messages").get()).toEqual({ text_source: "android:legacy", text_quality: "full", source_deleted_at: "2026-01-01T00:00:00.000Z" });

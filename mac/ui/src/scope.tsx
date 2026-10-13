@@ -15,7 +15,10 @@ import { Icon } from "./components/Icon.tsx";
 
 export const isRole = (v: string | null | undefined): v is Role => v === "windows" || v === "android";
 
-/** A device's display name: its name when it has one, else its fingerprint. */
+/**
+ * A device's label, the one place the UI derives it: the name the owner gave it on the Devices page when
+ * set, else its fingerprint (the stable identifier), else a short form of its id.
+ */
 export function deviceLabel(d: Pick<DeviceLite, "id" | "fingerprint" | "name">): string {
   return d.name?.trim() || d.fingerprint || shortId(d.id);
 }

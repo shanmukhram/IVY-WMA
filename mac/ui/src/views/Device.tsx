@@ -1,8 +1,8 @@
 /** Per-device view: the device's status card, then the chosen source filtered to that device. */
-import { useEffect, useState } from "react";
+import { useContext, useEffect, useState } from "react";
 import { useDebounced, useEvents, useLoad } from "../ctx.tsx";
 import { SCOPE_PARAM, navigate, useLocation } from "../router.ts";
-import { isRole, scopeRole, useScope } from "../scope.tsx";
+import { deviceLabel, isRole, scopeLabel, scopeRole, useScope } from "../scope.tsx";
 import { DEVICE_SOURCES, type DeviceSource, type Role } from "../nav.ts";
 import { ago, roleLabel, collectorLabel } from "../format.ts";
 import { Icon } from "../components/Icon.tsx";
@@ -14,7 +14,7 @@ import { BrowseView } from "./Browse.tsx";
 import { MediaView } from "./Media.tsx";
 import { NotificationsView } from "./Notifications.tsx";
 import { ConversationsView } from "./Conversations.tsx";
-import { RecordCard, type Item } from "./records.tsx";
+import { DevicesContext, RecordCard, type Item } from "./records.tsx";
 
 /** Collector names a source may be reported under (device reports name their own collectors). */
 const COLLECTOR_NAMES: Record<string, string[]> = {
@@ -23,11 +23,13 @@ const COLLECTOR_NAMES: Record<string, string[]> = {
 };
 
 export function DeviceStatusCard({ d }: { d: any }) {
+  const paired = useContext(DevicesContext)?.find((x) => x.id === d.deviceId);
+  const title = paired?.name?.trim() ? `${roleLabel(d.role)} · ${deviceLabel(paired)}` : roleLabel(d.role);
   return (
     <section className="card status-card" aria-label={`${roleLabel(d.role)} status`}>
       <span className="dev-icon"><Icon name={d.role === "windows" ? "laptop" : "phone"} size={24} /></span>
       <div style={{ minWidth: 0 }}>
-        <div className="row"><h2 className="status-title">{roleLabel(d.role)}</h2><Dot s={d.status} label={`${d.role} ${d.status}`} /><span className="small muted">{d.status === "green" ? "Working" : d.status === "amber" ? "Stale" : d.status === "red" ? "Needs attention" : "Off"}</span></div>
+        <div className="row"><h2 className="status-title">{title}</h2><Dot s={d.status} label={`${d.role} ${d.status}`} /><span className="small muted">{d.status === "green" ? "Working" : d.status === "amber" ? "Stale" : d.status === "red" ? "Needs attention" : "Off"}</span></div>
         <div className="stats">
           <span>Fingerprint <b className="fingerprint">{d.fingerprint}</b></span>
           <span>Last seen <b title={d.lastSeen ?? ""}>{ago(d.lastSeen)}</b></span>
@@ -96,6 +98,8 @@ export function DeviceView() {
     navigate(`${location.pathname}?${q.toString()}`, true, false);
   }, [inRole, scope, paired, role]);
   const device = inRole ? scope! : role;
+  // "Windows", or "Windows · <name or fingerprint>" when the page shows one device
+  const where = isRole(device) ? roleLabel(role) : scopeLabel(device, paired);
   const cov = useLoad<any>((a) => a.get("/api/coverage"), []);
   const reload = useDebounced(cov.reload, 1500);
   useEvents(() => reload(), ["coverage.changed", "ingest.", "pairing.completed", "device.revoked"]);
@@ -108,8 +112,8 @@ export function DeviceView() {
     <div className="page page-wide" style={{ maxWidth: 1320 }}>
       <div className="page-head">
         <div>
-          <h1>{source ? source.label : roleLabel(role)}</h1>
-          <p className="page-sub">{source ? `${roleLabel(role)} · ${source.captures}` : `Everything captured from ${roleLabel(role)}.`}</p>
+          <h1>{source ? source.label : where}</h1>
+          <p className="page-sub">{source ? `${where} · ${source.captures}` : `Everything captured from ${where}.`}</p>
         </div>
       </div>
       <ErrorLine error={cov.error} />

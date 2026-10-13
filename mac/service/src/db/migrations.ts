@@ -875,6 +875,11 @@ CREATE INDEX media_archive_device ON media_archive(device_id);
 CREATE INDEX pairings_device ON pairings(device_id);
 `;
 
+/** v14: an optional name the owner gives a paired device on the Mac. Kept only here; never sent to R2 or a device. */
+const v14 = `
+ALTER TABLE devices ADD COLUMN name TEXT;
+`;
+
 export const MIGRATIONS: Migration[] = [
   { version: 1, name: "initial vault schema", sql: v1 },
   { version: 2, name: "import progress, manifest commandId, transferring commands", sql: v2 },
@@ -889,4 +894,5 @@ export const MIGRATIONS: Migration[] = [
   { version: 11, name: "index for the stale-blob sweep (blobs by status and last progress)", sql: v11 },
   { version: 12, name: "conversation listing (normal | archived | hidden) from chatMeta.listing", sql: v12 },
   { version: 13, name: "forgotten devices: ignore list, 'ignored' ledger and blob status, device_id indexes", sql: v13 },
+  { version: 14, name: "device names chosen by the owner (devices.name)", sql: v14 },
 ];
