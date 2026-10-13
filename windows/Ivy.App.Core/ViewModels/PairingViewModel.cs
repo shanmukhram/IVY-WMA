@@ -20,7 +20,7 @@ public sealed class PairingViewModel : ObservableObject
     private bool _completed;
     private string _errorText = "";
     private string _errorHint = "";
-    public const string DefaultStatus = "Paste the pairing string shown on the Mac, then press Pair.";
+    public const string DefaultStatus = "Paste the pairing string shown in IVY, then press Pair.";
 
     public PairingViewModel(IAgentView agent, IUiDispatcher ui)
     {
@@ -90,7 +90,7 @@ public sealed class PairingViewModel : ObservableObject
             IsBusy = true;
             Raise(nameof(CanEdit));
             PairCommand.RaiseCanExecuteChanged();
-            Status = "Pairing: fetching the bootstrap from the cmd bucket and sending this device's key to the Mac...";
+            Status = "Pairing with IVY...";
         }
         try
         {
@@ -100,7 +100,7 @@ public sealed class PairingViewModel : ObservableObject
             MacFingerprint = r.MacFingerprint;
             Completed = true;
             PairingText = "";
-            Status = "Paired. Check that both fingerprints match the Mac's screen, then press Continue.";
+            Status = "Paired. Check that both fingerprints match the IVY screen, then press Continue.";
             Paired?.Invoke(this, EventArgs.Empty);
         }
         catch (PairingException e)

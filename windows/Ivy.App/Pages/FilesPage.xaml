@@ -141,7 +141,7 @@
                     </Grid.ColumnDefinitions>
                     <StackPanel VerticalAlignment="Center">
                         <TextBlock Text="Upload images" />
-                        <TextBlock Text="Sent in full so the Mac can read their text." Style="{StaticResource SecondaryTextStyle}" />
+                        <TextBlock Text="Sent in full so IVY can read their text." Style="{StaticResource SecondaryTextStyle}" />
                     </StackPanel>
                     <ToggleSwitch Grid.Column="1" MinWidth="0" OnContent="On" OffContent="Off"
                                   IsOn="{x:Bind ViewModel.Settings.AutoUploadImages, Mode=TwoWay}"

@@ -37,7 +37,7 @@ public static class CollectorNames
     public static string Describe(string name) => name switch
     {
         Files => "Indexes your folders with thumbnails. Images and documents under the size caps upload in full; other originals on request.",
-        Screenshots => "Uploads new screenshots so the Mac can read their text.",
+        Screenshots => "Uploads new screenshots so IVY can read their text.",
         Usage => "Records which app is in front, with window titles when title capture is on.",
         Notifications => "Copies Windows notifications as they were shown: partial records, not conversations.",
         Line => "Reads what LINE for Windows has synced to this PC. Always partial: the phone holds the full history.",

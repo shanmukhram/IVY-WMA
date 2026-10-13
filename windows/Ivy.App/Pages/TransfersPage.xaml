@@ -11,7 +11,7 @@
     <ScrollViewer>
         <StackPanel MaxWidth="{StaticResource PageMaxWidth}" Margin="{StaticResource PageMargin}" Spacing="8">
             <TextBlock Text="Transfers" Style="{StaticResource PageTitleStyle}" />
-            <TextBlock Text="What is waiting to go to the Mac, and what the Mac asked this PC for." Style="{StaticResource PageSubtitleStyle}" />
+            <TextBlock Text="What is waiting to go to IVY, and what IVY asked this PC for." Style="{StaticResource PageSubtitleStyle}" />
 
             <InfoBar IsClosable="False"
                      IsOpen="{x:Bind ViewModel.Overview.HasBucketProblem, Mode=OneWay}"
@@ -94,13 +94,13 @@
             </Border>
 
             <!-- ============ Commands from the Mac ============ -->
-            <TextBlock Text="Recent commands from the Mac" Style="{StaticResource SectionHeaderStyle}" />
+            <TextBlock Text="Recent commands from IVY" Style="{StaticResource SectionHeaderStyle}" />
             <Border Style="{StaticResource CardStyle}" Padding="4">
                 <StackPanel>
                     <TextBlock Margin="12,8" Style="{StaticResource SecondaryTextStyle}"
-                               Text="File requests, rescans and settings changes, newest first. The Mac sees the same outcome." />
+                               Text="File requests, rescans and settings changes, newest first. IVY sees the same outcome." />
                     <ListView ItemsSource="{x:Bind ViewModel.Commands.Items}" SelectionMode="None" MaxHeight="360"
-                              AutomationProperties.Name="Recent commands from the Mac">
+                              AutomationProperties.Name="Recent commands from IVY">
                         <ListView.ItemContainerStyle>
                             <Style TargetType="ListViewItem" BasedOn="{StaticResource DefaultListViewItemStyle}">
                                 <Setter Property="MinHeight" Value="36" />

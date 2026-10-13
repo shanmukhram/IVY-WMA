@@ -11,10 +11,10 @@ public sealed record PairingError(string Message, string Hint);
 /// </summary>
 public static class PairingErrors
 {
-    public const string FreshStringHint = "On the Mac, add the Windows device again and paste the new pairing string.";
+    public const string FreshStringHint = "In IVY, add the Windows device again and paste the new pairing string.";
 
     public static PairingError Empty() =>
-        new("Paste the pairing string first.", "On the Mac, add a Windows device, copy the pairing string and paste it here.");
+        new("Paste the pairing string first.", "In IVY, add a Windows device, copy the pairing string and paste it here.");
 
     public static PairingError Describe(Exception e)
     {
@@ -24,18 +24,18 @@ public static class PairingErrors
 
         if (Has("not an IVY pairing string") || Has("malformed pairing string") || Has("not base64") || Has("is malformed") || Has("must be 32 bytes"))
             return new("That is not a complete IVY pairing string.",
-                "Copy the whole string from the Mac (it starts with IVYPAIR1.) and paste it again. Line breaks are fine.");
+                "Copy the whole string from IVY (it starts with IVYPAIR1.) and paste it again. Line breaks are fine.");
         if (Has("expired"))
             return new("This pairing string has expired.", "Pairing strings are short-lived. " + FreshStringHint);
         if (Has("not found"))
-            return new("This pairing string was already used, or the Mac has not finished preparing it.",
+            return new("This pairing string was already used, or IVY has not finished preparing it.",
                 "Wait a few seconds and press Pair again. If it still fails: " + FreshStringHint);
         if (Has("role"))
-            return new("This pairing string is for a different kind of device.", "On the Mac, choose to add a Windows device, then paste that string.");
+            return new("This pairing string is for a different kind of device.", "In IVY, choose to add a Windows device, then paste that string.");
         if (Has("unsupported"))
-            return new("This pairing string comes from a different IVY version.", "Update IVY on the Mac and on this PC so they match, then pair again.");
+            return new("This pairing string comes from a different IVY version.", "Update IVY on both sides so they match, then pair again.");
         if (Has("authentication failed") || Has("mismatch") || Has("does not match"))
-            return new("The pairing string does not match what the Mac prepared.", FreshStringHint);
+            return new("The pairing string does not match what IVY prepared.", FreshStringHint);
         return new("Pairing failed: " + m, FreshStringHint);
     }
 

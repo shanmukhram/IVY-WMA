@@ -419,7 +419,7 @@ public class PageViewModelTests
         var file = vm.Commands.Items[1];
         Assert.Equal("File request", file.TypeText);
         Assert.Equal("01234567", file.ShortId);
-        Assert.Equal("Uploaded to the Mac", file.StatusText);
+        Assert.Equal("Uploaded to IVY", file.StatusText);
         Assert.Equal(UiSeverity.Success, file.Severity);
 
         _agent.RaiseActivity(new ActivityEntry(5, "2026-10-10T12:00:00.000Z", "commands", ActivityEvents.CommandReceived, "rescan feedface00"));
@@ -569,11 +569,11 @@ public class PairingErrorTests
     [InlineData("not an IVY pairing string", "That is not a complete IVY pairing string.")]
     [InlineData("malformed pairing string", "That is not a complete IVY pairing string.")]
     [InlineData("pairing code expired", "This pairing string has expired.")]
-    [InlineData("pairing bootstrap not found (already used or not yet written)", "This pairing string was already used, or the Mac has not finished preparing it.")]
+    [InlineData("pairing bootstrap not found (already used or not yet written)", "This pairing string was already used, or IVY has not finished preparing it.")]
     [InlineData("pairing code is for role 'android', this device is 'windows'", "This pairing string is for a different kind of device.")]
     [InlineData("unsupported pairing version 2", "This pairing string comes from a different IVY version.")]
-    [InlineData("bootstrap authentication failed", "The pairing string does not match what the Mac prepared.")]
-    [InlineData("bootstrap up-bucket does not match the pairing code", "The pairing string does not match what the Mac prepared.")]
+    [InlineData("bootstrap authentication failed", "The pairing string does not match what IVY prepared.")]
+    [InlineData("bootstrap up-bucket does not match the pairing code", "The pairing string does not match what IVY prepared.")]
     public void Pairing_exceptions_map_to_a_message_and_a_hint(string reason, string message)
     {
         var e = PairingErrors.Describe(new PairingException(reason));

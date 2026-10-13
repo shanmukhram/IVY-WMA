@@ -77,7 +77,7 @@
             <Border Style="{StaticResource CardStyle}">
                 <StackPanel Spacing="12">
                     <TextBlock Style="{StaticResource SecondaryTextStyle}"
-                               Text="New images in these folders upload in full; the Mac reads their text. The Windows Screenshots folder is watched by default." />
+                               Text="New images in these folders upload in full; IVY reads their text. The Windows Screenshots folder is watched by default." />
                     <ListView x:Name="ScreenshotRootsList" Style="{StaticResource ListBoxStyle}"
                               ItemsSource="{x:Bind ViewModel.Settings.ScreenshotRoots.Items}"
                               AutomationProperties.Name="Screenshot folders" />

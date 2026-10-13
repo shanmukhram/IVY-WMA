@@ -132,7 +132,7 @@ public sealed class CommandHistory
     {
         "running" => "In progress",
         "done" => "Done",
-        "uploaded" => "Uploaded to the Mac",
+        "uploaded" => "Uploaded to IVY",
         "not_found" => "File not found",
         "access_denied" => "Access denied",
         "too_large" => "Too large",

@@ -12,7 +12,7 @@
     <ScrollViewer>
         <StackPanel MaxWidth="{StaticResource PageMaxWidth}" Margin="{StaticResource PageMargin}" Spacing="8">
             <TextBlock Text="Overview" Style="{StaticResource PageTitleStyle}" />
-            <TextBlock Text="What this PC captures and sends to your Mac." Style="{StaticResource PageSubtitleStyle}" />
+            <TextBlock Text="What this PC captures and sends to IVY." Style="{StaticResource PageSubtitleStyle}" />
 
             <!-- ============ Problems ============ -->
             <InfoBar IsClosable="False"
@@ -77,7 +77,7 @@
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="Auto" />
                         </Grid.RowDefinitions>
-                        <TextBlock Grid.Row="0" Grid.Column="0" Text="Paired to Mac" Style="{StaticResource FieldLabelStyle}" />
+                        <TextBlock Grid.Row="0" Grid.Column="0" Text="Paired to IVY" Style="{StaticResource FieldLabelStyle}" />
                         <TextBlock Grid.Row="0" Grid.Column="1" Text="{x:Bind ViewModel.Overview.MacFingerprint, Mode=OneWay}" Style="{StaticResource MonoValueStyle}" />
                         <TextBlock Grid.Row="0" Grid.Column="2" Text="This device" Style="{StaticResource FieldLabelStyle}" />
                         <TextBlock Grid.Row="0" Grid.Column="3" Text="{x:Bind ViewModel.Overview.DeviceFingerprint, Mode=OneWay}" Style="{StaticResource MonoValueStyle}" />
