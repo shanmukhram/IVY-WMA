@@ -14,7 +14,7 @@ import { Link } from "../components/Controls.tsx";
 import { Empty, ErrorLine, Notice } from "../components/Feedback.tsx";
 import { RecordSheet, type Item } from "./records.tsx";
 
-export interface AiContext { searchQuery?: string; filters?: Record<string, string>; date?: string; timeline?: boolean; tz?: string }
+export interface AiContext { searchQuery?: string; filters?: Record<string, string>; date?: string; timeline?: boolean | { date?: string; device?: string; type?: string }; tz?: string }
 export interface AiTurn {
   conversationId: string; kind?: string; model?: string;
   answer: string;

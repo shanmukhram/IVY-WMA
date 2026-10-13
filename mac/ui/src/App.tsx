@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { ApiError, errText } from "./api.ts";
 import { useApi, useEvents, useLoad } from "./ctx.tsx";
-import { navigate, useLocation } from "./router.ts";
+import { SCOPE_PARAM, navigate, useLocation } from "./router.ts";
 import { Sidebar, LastSync } from "./components/Sidebar.tsx";
 import { Icon } from "./components/Icon.tsx";
 import { Empty } from "./components/Feedback.tsx";
@@ -20,6 +20,7 @@ import { BinView } from "./views/Bin.tsx";
 import { ActivityPanel, useActivity } from "./views/Activity.tsx";
 import { AiView } from "./views/Ai.tsx";
 import { DevicesContext } from "./views/records.tsx";
+import { ScopeBar } from "./scope.tsx";
 
 type Boot = { kind: "checking" } | { kind: "token"; error?: string } | { kind: "error"; error: string } | { kind: "keystore"; status: KeystoreStatus };
 
@@ -114,9 +115,18 @@ function Shell({ onLocked }: { onLocked: () => void }) {
   const [syncMsg, setSyncMsg] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
   const events = useActivity();
-  const stats = useLoad<any>((a) => a.get("/api/stats"), []);
+  const { query } = useLocation();
+  const scope = query.get(SCOPE_PARAM) || undefined;
+  const stats = useLoad<any>((a) => a.get("/api/stats", { device: scope }), [scope]);
   const devs = useLoad<any>((a) => a.get("/api/devices"), []);
-  useEvents(() => devs.reload(), ["pairing.completed", "device.revoked"]);
+  useEvents((ev) => {
+    devs.reload();
+    // a forgotten device no longer exists: a scope that pointed at it returns to every device
+    if (ev.type === "device.forgotten" && ev.data.deviceId && new URLSearchParams(location.search).get(SCOPE_PARAM) === ev.data.deviceId) {
+      const q = new URLSearchParams(location.search); q.delete(SCOPE_PARAM);
+      navigate(`${location.pathname}${q.toString() ? `?${q}` : ""}`, true, false);
+    }
+  }, ["pairing.completed", "device.revoked", "device.forgotten"]);
   useEvents(() => stats.reload(), ["ingest.poll"]);
   const lastOk = ((stats.data?.lastSync ?? []) as Array<{ lastOkAt?: string | null }>).map((b) => b.lastOkAt).filter(Boolean).sort().at(-1) ?? null;
 
@@ -165,7 +175,7 @@ function Shell({ onLocked }: { onLocked: () => void }) {
       <a className="skip-link" href="#main" onClick={(e) => { e.preventDefault(); document.getElementById("main")?.focus(); }}>Skip to content</a>
       <div className="shell">
         <Sidebar footer={footer} />
-        <main className="main" id="main" tabIndex={-1}><Router /></main>
+        <main className="main" id="main" tabIndex={-1}><ScopeBar /><div className="main-body"><Router /></div></main>
         {feedOpen && <ActivityPanel events={events} onClose={() => setFeedOpen(false)} />}
       </div>
     </DevicesContext.Provider>

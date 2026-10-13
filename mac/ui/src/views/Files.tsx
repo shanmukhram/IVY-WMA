@@ -3,14 +3,18 @@ import { useEffect, useState, type FormEvent } from "react";
 import { errText } from "../api.ts";
 import { useApi, useEvents, useLoad } from "../ctx.tsx";
 import { href, navigate, useLocation } from "../router.ts";
+import { useScope } from "../scope.tsx";
 import { bytes } from "../format.ts";
 import { SearchField } from "../components/Controls.tsx";
 import { Badge, Empty, ErrorLine, Pager, Progress, Time } from "../components/Feedback.tsx";
 import { AVAILABILITY, AVAILABILITY_SHORT, deviceName, type Item } from "./records.tsx";
 import { applyEvent, describe, fromCommand, type CommandView, type RequestState } from "../request.ts";
 
-export function FilesView({ device, embedded }: { device?: string; embedded?: boolean } = {}) {
+export function FilesView({ device: fixed, embedded }: { device?: string; embedded?: boolean } = {}) {
   const api = useApi();
+  // the device comes from the page that embeds this view, or else from the app's device scope
+  const { scope } = useScope();
+  const device = fixed ?? scope ?? undefined;
   const loc = useLocation();
   const [local, setLocal] = useState({ q: "", page: 1 });
   const q = embedded ? local.q : loc.query.get("q") ?? "";

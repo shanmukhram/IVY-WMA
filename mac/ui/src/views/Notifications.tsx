@@ -2,14 +2,18 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { useLoad } from "../ctx.tsx";
 import { href, navigate, useLocation } from "../router.ts";
+import { useScope } from "../scope.tsx";
 import { dayKey, dayLabel, shortWhen } from "../format.ts";
 import { AppIcon } from "../components/AppIcon.tsx";
 import { SearchField } from "../components/Controls.tsx";
 import { Empty, ErrorLine, Notice, Pager } from "../components/Feedback.tsx";
 import { RecordCard, type Item } from "./records.tsx";
 
-export function NotificationsView({ device, embedded }: { device?: string; embedded?: boolean } = {}) {
+export function NotificationsView({ device: fixed, embedded }: { device?: string; embedded?: boolean } = {}) {
   const loc = useLocation();
+  // the device comes from the page that embeds this view, or else from the app's device scope
+  const { scope } = useScope();
+  const device = fixed ?? scope ?? undefined;
   const [local, setLocal] = useState({ app: "", q: "", page: 1 });
   const app = embedded ? local.app : loc.query.get("app") ?? "";
   const q = embedded ? local.q : loc.query.get("q") ?? "";

@@ -7,6 +7,7 @@ import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "rea
 import { errText } from "../api.ts";
 import { useApi, useLoad } from "../ctx.tsx";
 import { href, navigate, useLocation } from "../router.ts";
+import { ScopeSelect } from "../scope.tsx";
 import { TYPE_PLURAL, platformLabel } from "../format.ts";
 import { Icon, TYPE_ICON } from "../components/Icon.tsx";
 import { Field, SearchField } from "../components/Controls.tsx";
@@ -114,10 +115,7 @@ export function SearchView() {
               <button type="submit" className="btn btn-primary btn-lg">Search</button>
             </form>
             <div className="filter-bar" aria-label="Filters" role="group">
-              <select className="select chip-select" aria-label="Device" value={params.device} onChange={(e) => go({ device: e.target.value || undefined })}>
-                <option value="">Any device</option><option value="windows">Windows</option><option value="android">Android</option>
-                {devices.map((d) => <option key={d.id} value={d.id}>{d.role} {d.id.slice(0, 8)}</option>)}
-              </select>
+              <ScopeSelect className="select chip-select" />
               <select className="select" aria-label="App" value={params.app} onChange={(e) => go({ app: e.target.value || undefined })}>
                 <option value="">Any app</option>
                 {(facets.data?.apps ?? []).map((a: string) => <option key={a} value={a}>{platformLabel(a) || a}</option>)}
@@ -151,7 +149,7 @@ export function SearchView() {
                   {TYPE_PLURAL[t]}{res && count(t) ? <span style={{ opacity: 0.7 }}> {count(t)}</span> : null}
                 </button>
               ))}
-              {anyFilter && <button type="button" className="btn btn-plain btn-sm" onClick={() => navigate(href("/", { q }))}>Clear filters</button>}
+              {anyFilter && <button type="button" className="btn btn-plain btn-sm" onClick={() => navigate(href("/", { q }), false, false)}>Clear filters</button>}
             </div>
           </div>
 

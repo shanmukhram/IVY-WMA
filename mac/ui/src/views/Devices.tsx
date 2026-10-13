@@ -1,9 +1,13 @@
-/** Devices: paired devices, pairing (QR + pairing string in a sheet), revoke with confirmation. */
+/**
+ * Devices: paired devices, pairing (QR + pairing string in a sheet), revoke with confirmation, and forget:
+ * remove an old device and everything it captured from this Mac, confirmed with its fingerprint.
+ */
 import { useEffect, useState } from "react";
 import QRCode from "qrcode";
-import { errText } from "../api.ts";
+import { ApiError, errText } from "../api.ts";
 import { useApi, useEvents, useLoad, useServices } from "../ctx.tsx";
-import { ago, roleLabel } from "../format.ts";
+import { ago, bytes, roleLabel } from "../format.ts";
+import { SCOPE_PARAM, navigate } from "../router.ts";
 import { Icon } from "../components/Icon.tsx";
 import { Empty, ErrorLine, Notice, Time } from "../components/Feedback.tsx";
 import { Sheet } from "../components/Overlay.tsx";
@@ -24,6 +28,7 @@ export function DevicesView() {
   const [result, setResult] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [confirmRevoke, setConfirmRevoke] = useState<any>(null);
+  const [forgetting, setForgetting] = useState<any>(null);
 
   useEvents((ev) => {
     if (ev.type === "pairing.completed" && pairing && ev.data.pairingId === pairing.pairingId) {
@@ -33,7 +38,7 @@ export function DevicesView() {
     if ((ev.type === "pairing.expired" || ev.type === "pairing.cancelled") && pairing && ev.data.pairingId === pairing.pairingId) { setResult(`Pairing code ${ev.type.slice(8)}.`); setPairing(null); }
     if (ev.type === "pairing.rejected") setResult(`A device answer was rejected: ${ev.data.reason ?? "unknown reason"}`);
     devs.reload();
-  }, ["pairing.", "device.revoked"]);
+  }, ["pairing.", "device.revoked", "device.forgotten"]);
 
   const start = async (role: "windows" | "android") => {
     setErr(null); setResult(null);
@@ -42,7 +47,13 @@ export function DevicesView() {
   const cancel = async () => { if (!pairing) return; try { await api.del(`/api/pairings/${pairing.pairingId}`); } catch { /* already gone */ } setPairing(null); };
   const revoke = async (id: string) => {
     setConfirmRevoke(null);
-    try { await api.del(`/api/devices/${id}`); setResult("Device revoked. Its R2 tokens stay valid until you rotate them in Cloudflare."); devs.reload(); } catch (e) { setErr(errText(e)); }
+    try { await api.del(`/api/devices/${id}`); setResult("Device revoked. What it captured stays in the archive. Its R2 tokens stay valid until you rotate them in Cloudflare."); devs.reload(); } catch (e) { setErr(errText(e)); }
+  };
+  const forgotten = (id: string) => {
+    devs.reload();
+    // the device scope pointed at the device that is gone: return to every device
+    const q = new URLSearchParams(location.search);
+    if (q.get(SCOPE_PARAM) === id) { q.delete(SCOPE_PARAM); navigate(`${location.pathname}${q.toString() ? `?${q}` : ""}`, true, false); }
   };
 
   const d = devs.data;
@@ -77,7 +88,10 @@ export function DevicesView() {
                   <div className="fingerprint small">{x.fingerprint}</div>
                   <div className="row-sub">Paired <Time at={x.pairedAt} /> · last seen {ago(x.lastSeen)} · last report {ago(x.lastReportAt)} · app {x.appVersion ?? "—"}</div>
                 </div>
-                <button className="btn btn-sm btn-danger" onClick={() => setConfirmRevoke(x)}>Revoke</button>
+                <div className="row">
+                  <button className="btn btn-sm btn-danger" onClick={() => setConfirmRevoke(x)}>Revoke</button>
+                  <button className="btn btn-sm btn-danger" onClick={() => setForgetting(x)}>Forget…</button>
+                </div>
               </div>
             ))}</div>
           )}
@@ -89,9 +103,11 @@ export function DevicesView() {
         <Sheet title={`Revoke ${roleLabel(confirmRevoke.role)}?`} label="Confirm revoke" onClose={() => setConfirmRevoke(null)}
           footer={<><button className="btn" onClick={() => setConfirmRevoke(null)}>Keep</button><button className="btn btn-danger-fill" onClick={() => void revoke(confirmRevoke.id)}>Confirm revoke</button></>}>
           <p className="fingerprint">{confirmRevoke.fingerprint}</p>
+          <p>Revoke stops this device: the Mac drops its key, ignores its new uploads and sends it no more commands. Everything it already captured stays in the archive on this Mac. To remove that as well, use Forget.</p>
           <Notice tone="warn">{confirmRevoke.revokeWarning}</Notice>
         </Sheet>
       )}
+      {forgetting && <ForgetSheet device={forgetting} onClose={() => setForgetting(null)} onForgotten={forgotten} />}
     </div>
   );
 }
@@ -140,6 +156,114 @@ export function PairingSheet({ p, onCancel }: { p: Pairing; onCancel: () => void
         </div>
         <Notice tone="warn">The pairing string carries a one-time secret and a read token for the device's command bucket. Do not share it.</Notice>
       </section>
+    </Sheet>
+  );
+}
+
+/** What GET /api/devices/:id/footprint reports: what a forget removes from the Mac and what stays in R2. */
+interface Footprint {
+  deviceId: string; role: string; fingerprint: string;
+  counts: Record<string, number>;
+  shared: { messagesKept: number; conversationsKept: number };
+  binRows: number; cacheBytes: number;
+  leftInR2: { objects: number; bytes: number };
+}
+interface ForgetResult {
+  removed: Record<string, number>; shared: Footprint["shared"]; binPurged: number;
+  cacheBytesFreed: number; leftInR2Bytes: number; leftInR2Objects: number; r2Note: string; tokenWarning: string;
+}
+
+const num = (n: number | undefined) => (n ?? 0).toLocaleString("en-US");
+const plural = (n: number, one: string, many = `${one}s`) => `${num(n)} ${n === 1 ? one : many}`;
+/** The service compares the confirmation this way: surrounding spaces and letter case are ignored. */
+const normFp = (s: string) => s.trim().toUpperCase();
+
+/** "Removed 1,250 messages, 160,000 files, …; 3.2 GB of media stays in R2." */
+export function forgetSummary(r: ForgetResult): string {
+  const c = r.removed ?? {};
+  const parts = ([
+    [c.messages, "message"], [c.conversations, "conversation"], [c.files, "file"], [c.media, "photo or screenshot", "photos and screenshots"],
+    [c.notifications, "notification"], [c.calls, "call"], [c.usageEvents, "app usage event"],
+  ] as Array<[number | undefined, string, string?]>).filter(([n]) => (n ?? 0) > 0).map(([n, one, many]) => plural(n!, one, many));
+  const r2 = r.leftInR2Objects > 0 ? `${bytes(r.leftInR2Bytes)} of media stays in R2` : "nothing of this device's media was kept in R2";
+  return `Removed ${parts.length ? parts.join(", ") : "no records"} and freed ${bytes(r.cacheBytesFreed)} of local cache; ${r2}.`;
+}
+
+function forgetError(e: unknown): string {
+  if (e instanceof ApiError && e.status === 400 && e.code === "bad_confirm") return "That is not this device's fingerprint. Type it exactly as shown; letter case and spaces at either end do not matter.";
+  if (e instanceof ApiError && e.status === 404) return "This device is no longer paired. It may already have been forgotten or revoked; reload the list.";
+  return errText(e);
+}
+
+/** Forget a device: show what goes and what stays, confirm with the fingerprint, then show what was removed. */
+export function ForgetSheet({ device, onClose, onForgotten }: { device: { id: string; role: string; fingerprint: string }; onClose: () => void; onForgotten: (id: string) => void }) {
+  const api = useApi();
+  const fp = useLoad<Footprint>((a) => a.get(`/api/devices/${encodeURIComponent(device.id)}/footprint`), [device.id]);
+  const [typed, setTyped] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [done, setDone] = useState<ForgetResult | null>(null);
+  const matches = typed.trim() !== "" && normFp(typed) === normFp(device.fingerprint);
+  const f = fp.data;
+  const c = f?.counts ?? {};
+
+  const forget = async () => {
+    setBusy(true); setErr(null);
+    try {
+      const r = await api.del<ForgetResult>(`/api/devices/${encodeURIComponent(device.id)}?wipe=1`, { confirm: typed.trim() });
+      setDone(r);
+      onForgotten(device.id);
+    } catch (e) { setErr(forgetError(e)); } finally { setBusy(false); }
+  };
+
+  const title = `Forget ${roleLabel(device.role)}?`;
+  if (done) {
+    return (
+      <Sheet title={`${roleLabel(device.role)} forgotten`} label="Forget device" onClose={onClose} footer={<button className="btn btn-primary" onClick={onClose}>Done</button>}>
+        <Notice tone="ok" role="status">{forgetSummary(done)}</Notice>
+        {done.binPurged > 0 && <p className="small muted">{plural(done.binPurged, "item")} of this device in the recovery bin were removed too.</p>}
+        <p className="small">{done.r2Note}</p>
+        <Notice tone="warn">{done.tokenWarning}</Notice>
+      </Sheet>
+    );
+  }
+  return (
+    <Sheet title={title} label="Forget device" onClose={onClose}
+      footer={<><button className="btn" onClick={onClose}>Keep</button><button className="btn btn-danger-fill" disabled={!matches || !f || busy} onClick={() => void forget()}>{busy ? "Forgetting…" : "Forget this device"}</button></>}>
+      <p>Forgetting removes this device and everything it captured from the archive on this Mac. It cannot be undone. Revoke instead if you want to keep what it captured.</p>
+      {fp.loading && !f && <p className="muted small" role="status">Counting what this device captured…</p>}
+      {fp.error ? <Notice tone="error" role="alert">{forgetError(fp.error)}</Notice> : null}
+      {f && (
+        <>
+          <section aria-label="Removed from this Mac" className="stack-sm">
+            <h3>Removed from this Mac</h3>
+            <dl className="kv" data-testid="forget-footprint">
+              <dt>Messages</dt><dd className="tnum">{num(c.messages)}{f.shared.messagesKept > 0 ? ` (${plural(f.shared.messagesKept, "message")} kept, because another device also captured them)` : ""}</dd>
+              <dt>Conversations</dt><dd className="tnum">{num(c.conversations)}{f.shared.conversationsKept > 0 ? ` (${plural(f.shared.conversationsKept, "conversation")} kept, with the messages another device also captured)` : ""}</dd>
+              <dt>Files</dt><dd className="tnum">{num(c.files)}</dd>
+              <dt>Photos and screenshots</dt><dd className="tnum">{num(c.media)}</dd>
+              <dt>Notifications</dt><dd className="tnum">{num(c.notifications)}</dd>
+              <dt>Calls</dt><dd className="tnum">{num(c.calls)}</dd>
+              <dt>App usage events</dt><dd className="tnum">{num(c.usageEvents)}</dd>
+              <dt>Local cache freed</dt><dd className="tnum">{bytes(f.cacheBytes)}</dd>
+            </dl>
+            {f.binRows > 0 && <p className="small muted">{plural(f.binRows, "item")} of this device in the recovery bin are removed too and cannot be restored.</p>}
+          </section>
+          <section aria-label="Stays in R2" className="stack-sm">
+            <h3>Stays in R2</h3>
+            <p data-testid="forget-r2">{f.leftInR2.objects > 0 ? `${plural(f.leftInR2.objects, "media original")} (${bytes(f.leftInR2.bytes)}) stay in your R2 bucket.` : "This device has no media originals kept in R2."}</p>
+            <p className="small muted">R2 is not changed: nothing there is listed or deleted, and the Mac ignores anything this device left there. The device's R2 token still works until you rotate it in Cloudflare.</p>
+          </section>
+          <label className="field">
+            <span className="field-label">Type the fingerprint to confirm</span>
+            <span className="row" style={{ flexWrap: "wrap" }}>
+              <input className="input" aria-label="Type the fingerprint to confirm" autoComplete="off" spellCheck={false} value={typed} onChange={(e) => { setTyped(e.target.value); setErr(null); }} style={{ flex: 1, minWidth: 200 }} />
+              <span className="fingerprint" data-testid="forget-fingerprint">{device.fingerprint}</span>
+            </span>
+          </label>
+        </>
+      )}
+      {err && <Notice tone="error" role="alert">{err}</Notice>}
     </Sheet>
   );
 }

@@ -22,7 +22,7 @@ export function mockApi(routes: Record<string, Handler | unknown>): MockApi {
     get: (p, q) => run("GET", p, q ?? {}) as any,
     post: (p, b) => run("POST", p, b) as any,
     put: (p, b) => run("PUT", p, b) as any,
-    del: (p) => run("DELETE", p, undefined) as any,
+    del: (p, b) => run("DELETE", p, b) as any,
   };
   return api;
 }

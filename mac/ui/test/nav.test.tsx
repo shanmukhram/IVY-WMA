@@ -40,7 +40,7 @@ describe("sidebar navigation", () => {
     expect(win).toHaveAttribute("aria-expanded", "true");
     const group = within(nav).getByRole("group", { name: "Windows" });
     expect(within(group).getAllByRole("link").map((l) => l.getAttribute("aria-label"))).toEqual(
-      ["Windows overview", "Windows Files", "Windows Browse PC", "Windows Screenshots", "Windows Usage", "Windows Notifications", "Windows Telegram", "Windows LINE"]);
+      ["Windows overview", "Windows device AAAA-BBBB-CCCC-DDDD", "Windows Files", "Windows Browse PC", "Windows Screenshots", "Windows Usage", "Windows Notifications", "Windows Telegram", "Windows LINE"]);
     await u.click(within(nav).getByRole("button", { name: "Android" }));
     const android = within(nav).getByRole("group", { name: "Android" });
     expect(within(android).getAllByRole("link").map((l) => l.getAttribute("aria-label"))).toEqual(
@@ -77,7 +77,9 @@ describe("sidebar navigation", () => {
   it("a device with nothing paired says so honestly", async () => {
     renderWith(<App />, mockApi({ ...shellRoutes, ...unlocked }), { path: "/device/android/notifications" });
     expect(await screen.findByText(/Nothing from Android yet: pair the phone under Devices/)).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Pair under Devices" })).toHaveAttribute("href", "/devices");
+    // the per-role page sets the device scope to its role, and links keep it
+    await waitFor(() => expect(location.search).toBe("?device=android"));
+    expect(screen.getByRole("link", { name: "Pair under Devices" })).toHaveAttribute("href", "/devices?device=android");
   });
 
   it("the activity panel slides over, newest first", async () => {

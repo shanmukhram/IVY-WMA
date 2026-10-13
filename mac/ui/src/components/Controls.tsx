@@ -1,6 +1,6 @@
 /** Form controls: switch, segmented control, search field, labeled field, link. */
 import type { ReactNode, InputHTMLAttributes } from "react";
-import { navigate } from "../router.ts";
+import { navigate, withScope } from "../router.ts";
 import { Icon } from "./Icon.tsx";
 
 export function Switch({ checked, onChange, label, disabled }: { checked: boolean; onChange: (v: boolean) => void; label: string; disabled?: boolean }) {
@@ -44,7 +44,7 @@ export function Field({ label, hint, children }: { label: string; hint?: ReactNo
 /** In-app link: pushState navigation, cmd/ctrl-click keeps the browser behaviour. */
 export function Link({ to, children, className, ...rest }: { to: string; children: ReactNode; className?: string } & Omit<React.AnchorHTMLAttributes<HTMLAnchorElement>, "href">) {
   return (
-    <a href={to} className={className} {...rest}
+    <a href={withScope(to)} className={className} {...rest}
       onClick={(e) => { rest.onClick?.(e); if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.shiftKey) return; e.preventDefault(); navigate(to); }}>
       {children}
     </a>

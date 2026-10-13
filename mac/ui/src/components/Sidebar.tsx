@@ -1,5 +1,5 @@
 /** macOS-style source list: sections, collapsible groups, selection highlight, footer actions. */
-import { useEffect, useState, type ReactNode } from "react";
+import { useContext, useEffect, useState, type ReactNode } from "react";
 import { useDebounced, useEvents, useLoad } from "../ctx.tsx";
 import { href, useLocation } from "../router.ts";
 import { DEVICE_SOURCES, ROLES, type Role } from "../nav.ts";
@@ -8,6 +8,9 @@ import { Icon, type IconName } from "./Icon.tsx";
 import { Link } from "./Controls.tsx";
 import { Dot } from "./Feedback.tsx";
 import { AppIcon } from "./AppIcon.tsx";
+import { DevicesContext } from "../views/records.tsx";
+import { deviceLabel, scopedUrl } from "../scope.tsx";
+import { SCOPE_PARAM } from "../router.ts";
 
 export interface ChatSource { source: string; role: string; collector: string; platform: string; conversations: number; messages: number; lastMessageAt: string | null }
 
@@ -44,10 +47,13 @@ function Item({ to, icon, app, label, current, sub, aria, trailing, describedBy 
 
 export function Sidebar({ footer }: { footer: ReactNode }) {
   const { path, query } = useLocation();
-  const sources = useLoad<{ sources: ChatSource[] }>((a) => a.get("/api/views/sources"), []);
+  const paired = useContext(DevicesContext) ?? [];
+  const scope = query.get(SCOPE_PARAM) || undefined;
+  // the chat-source counts follow the device scope; coverage stays whole so every device keeps its status dot
+  const sources = useLoad<{ sources: ChatSource[] }>((a) => a.get("/api/views/sources", { device: scope }), [scope]);
   const cov = useLoad<any>((a) => a.get("/api/coverage"), []);
   const reload = useDebounced(() => { sources.reload(); cov.reload(); }, 3000);
-  useEvents(() => reload(), ["ingest.committed", "coverage.changed", "pairing.completed", "device.revoked"]);
+  useEvents(() => reload(), ["ingest.committed", "coverage.changed", "pairing.completed", "device.revoked", "device.forgotten"]);
 
   const is = (p: string) => path === p;
   const starts = (p: string) => path === p || path.startsWith(p + "/");
@@ -56,6 +62,8 @@ export function Sidebar({ footer }: { footer: ReactNode }) {
     const devs = ((cov.data?.devices ?? []) as Array<{ role: string; status: string }>).filter((d) => d.role === role);
     return devs.length ? devs[0]!.status : null;
   };
+  const statusOf = (id: string): string | null =>
+    ((cov.data?.devices ?? []) as Array<{ deviceId: string; status: string }>).find((d) => d.deviceId === id)?.status ?? null;
 
   return (
     <nav className="sidebar" aria-label="Sidebar">
@@ -87,8 +95,17 @@ export function Sidebar({ footer }: { footer: ReactNode }) {
           const st = devStatus(role);
           return (
             <Group key={role} id={role} title={roleLabel(role)} defaultOpen={false} forceOpen={starts(`/device/${role}`)}>
-              <Item to={`/device/${role}`} icon={role === "windows" ? "laptop" : "phone"} label="Overview" aria={`${roleLabel(role)} overview`}
+              <Item to={href(`/device/${role}`, { [SCOPE_PARAM]: role })} icon={role === "windows" ? "laptop" : "phone"} label="Overview" aria={`${roleLabel(role)} overview`}
                 current={is(`/device/${role}`)} trailing={st ? <span className="nav-dot"><Dot s={st} label={`${role} ${st}`} /></span> : <span className="nav-count">not paired</span>} />
+              {paired.filter((d) => d.role === role).map((d) => {
+                const label = deviceLabel(d);
+                const ds = statusOf(d.id);
+                // choosing a device sets the scope and stays on the current view (Search from Devices or Settings)
+                return (
+                  <Item key={d.id} to={scopedUrl(d.id, path, query, paired)} icon={role === "windows" ? "laptop" : "phone"} label={label} aria={`${roleLabel(role)} device ${label}`}
+                    current={scope === d.id} trailing={ds ? <span className="nav-dot"><Dot s={ds} label={`${label} ${ds}`} /></span> : <span className="nav-count">no report</span>} />
+                );
+              })}
               {DEVICE_SOURCES[role].map((s) => (
                 <Item key={s.key} sub to={`/device/${role}/${s.key}`} icon={s.icon} app={s.view.kind === "chats" ? s.view.platform : undefined} label={s.label} aria={`${roleLabel(role)} ${s.label}`} current={is(`/device/${role}/${s.key}`)} />
               ))}

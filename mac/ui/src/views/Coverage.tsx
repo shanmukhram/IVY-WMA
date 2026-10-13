@@ -2,6 +2,7 @@
 import { useState } from "react";
 import { errText } from "../api.ts";
 import { useApi, useDebounced, useEvents, useLoad } from "../ctx.tsx";
+import { useScope } from "../scope.tsx";
 import { ago, bytes, fmtTime, hm, roleLabel, collectorLabel } from "../format.ts";
 import { Icon } from "../components/Icon.tsx";
 import { SourceTile } from "../components/AppIcon.tsx";
@@ -21,11 +22,13 @@ const KIND_LABEL: Record<string, string> = { metadata: "metadata", media: "media
 
 export function CoverageView() {
   const api = useApi();
-  const cov = useLoad<any>((a) => a.get("/api/coverage"), []);
+  const { scope } = useScope();
+  const device = scope ?? undefined;
+  const cov = useLoad<any>((a) => a.get("/api/coverage", { device }), [device]);
   const quar = useLoad<any>((a) => a.get("/api/quarantine"), []);
-  const stats = useLoad<any>((a) => a.get("/api/stats"), []);
+  const stats = useLoad<any>((a) => a.get("/api/stats", { device }), [device]);
   const reload = useDebounced(() => { cov.reload(); quar.reload(); stats.reload(); }, 800);
-  useEvents(() => reload(), ["coverage.changed", "ingest.", "blob.", "command.", "pairing.completed", "device.revoked"]);
+  useEvents(() => reload(), ["coverage.changed", "ingest.", "blob.", "command.", "pairing.completed", "device.revoked", "device.forgotten"]);
   const [msg, setMsg] = useState<string | null>(null);
   const c = cov.data;
 

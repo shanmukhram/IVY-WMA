@@ -507,7 +507,12 @@ button.nav-heading:hover { color: var(--label-2); }
 .sidebar-foot .btn { background: color-mix(in srgb, var(--bg-elevated) 70%, transparent); }
 .sidebar-foot .sync-line { font-size: var(--text-xs); color: var(--label-3); padding: 0 var(--sp-1); min-height: 16px; }
 
-.main { min-width: 0; min-height: 0; overflow: auto; background: var(--bg); position: relative; }
+.main { min-width: 0; min-height: 0; overflow: hidden; background: var(--bg); position: relative; display: flex; flex-direction: column; }
+.main-body { flex: 1; min-height: 0; overflow: auto; position: relative; }
+/* device scope chip: one quiet line above the page while a scope is set */
+.scope-bar { flex: none; display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; padding: var(--sp-2) var(--page-x); border-bottom: 0.5px solid var(--separator-strong); background: var(--bg-bar); }
+.scope-chip { color: var(--label); background: var(--accent-soft); }
+.scope-chip > svg { color: var(--link); }
 .page { padding: var(--sp-8) var(--page-x) var(--sp-12); max-width: 1180px; margin: 0 auto; }
 .page-wide { max-width: none; }
 .page-head { display: flex; align-items: flex-end; gap: var(--sp-4); margin-bottom: var(--sp-6); flex-wrap: wrap; }
@@ -923,6 +928,6 @@ a.collector:hover { box-shadow: var(--shadow-sm); }
 .status-card h2.status-title { font-size: var(--text-lg); font-weight: 600; }
 /* focus never hidden under sticky headers or the floating picker bar */
 .media-grid .tile { scroll-margin-top: 112px; scroll-margin-bottom: 96px; }
-.main { scroll-padding-top: 56px; }
+.main-body { scroll-padding-top: 56px; }
 .card-body .group-title { margin-left: 0; }
 .profile .group-title { margin-left: var(--sp-3); }

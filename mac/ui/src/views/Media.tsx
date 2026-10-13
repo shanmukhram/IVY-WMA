@@ -7,6 +7,7 @@ import { useEffect, useMemo, useState } from "react";
 import { errText } from "../api.ts";
 import { useApi, useDebounced, useEvents, useLoad } from "../ctx.tsx";
 import { href, navigate, useLocation } from "../router.ts";
+import { ScopeSelect, useScope } from "../scope.tsx";
 import { dayKey, dayLabel, fmtTime, platformLabel } from "../format.ts";
 import { Icon } from "../components/Icon.tsx";
 import { Link, Segmented } from "../components/Controls.tsx";
@@ -20,15 +21,17 @@ export interface MediaProps { device?: string; kind?: "screenshot" | "photo"; em
 export function MediaView(props: MediaProps = {}) {
   const api = useApi();
   const loc = useLocation();
-  const [st, setSt] = useState({ kind: props.kind ?? "", device: props.device ?? "", page: 1 });
+  const [st, setSt] = useState({ kind: props.kind ?? "", page: 1 });
   // standalone: the URL holds the filters (shareable, back button); embedded in a device view: local state
   const kind = props.embedded ? st.kind : props.kind ?? loc.query.get("kind") ?? "";
-  const device = props.embedded ? st.device : loc.query.get("device") ?? "";
+  // the device comes from the page that embeds this view, or else from the app's device scope
+  const { scope } = useScope();
+  const device = props.device ?? scope ?? "";
   const page = props.embedded ? st.page : Number(loc.query.get("page") ?? 1) || 1;
   const focus = props.embedded ? null : loc.query.get("focus");
-  const set = (patch: Partial<{ kind: string; device: string; page: number; focus: string | null }>) => {
+  const set = (patch: Partial<{ kind: string; page: number; focus: string | null }>) => {
     if (props.embedded) { setSt((s) => ({ ...s, ...patch } as typeof s)); return; }
-    navigate(href("/media", { kind, device, page: page > 1 ? page : undefined, focus: focus ?? undefined, ...patch, ...(patch.focus === null ? { focus: undefined } : {}) }));
+    navigate(href("/media", { kind, page: page > 1 ? page : undefined, focus: focus ?? undefined, ...patch, ...(patch.focus === null ? { focus: undefined } : {}) }));
   };
 
   const r = useLoad<any>((a) => a.get("/api/views/records", { type: kind || "screenshot,photo", device, page, pageSize: PAGE }), [kind, device, page]);
@@ -83,11 +86,7 @@ export function MediaView(props: MediaProps = {}) {
       <div className="media-toolbar" style={props.embedded ? { position: "static", padding: "0 0 12px", background: "none", border: 0, backdropFilter: "none" } : undefined}>
         {!props.embedded && <h1>Media</h1>}
         {!props.kind && <Segmented label="Kind" value={kind} onChange={(v) => set({ kind: v, page: 1 })} options={[["", "All"], ["screenshot", "Screenshots"], ["photo", "Photos"]]} />}
-        {!props.device && (
-          <select className="select" aria-label="Device" value={device} onChange={(e) => set({ device: e.target.value, page: 1 })}>
-            <option value="">All devices</option><option value="windows">Windows</option><option value="android">Android</option>
-          </select>
-        )}
+        {!props.device && <ScopeSelect />}
         <span className="spacer" />
         {r.data && <span className="small faint">{r.data.total} item(s)</span>}
         <button className="btn" aria-pressed={picking} onClick={() => { setPicking((v) => !v); setSel(new Set()); }}>{picking ? "Done" : "Select"}</button>

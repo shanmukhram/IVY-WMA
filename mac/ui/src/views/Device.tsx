@@ -1,7 +1,8 @@
 /** Per-device view: the device's status card, then the chosen source filtered to that device. */
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useDebounced, useEvents, useLoad } from "../ctx.tsx";
-import { useLocation } from "../router.ts";
+import { SCOPE_PARAM, navigate, useLocation } from "../router.ts";
+import { isRole, scopeRole, useScope } from "../scope.tsx";
 import { DEVICE_SOURCES, type DeviceSource, type Role } from "../nav.ts";
 import { ago, roleLabel, collectorLabel } from "../format.ts";
 import { Icon } from "../components/Icon.tsx";
@@ -67,15 +68,17 @@ function RecordsList({ type, device, empty }: { type: string; device: string; em
   );
 }
 
-function SourceContent({ role, s }: { role: Role; s: DeviceSource }) {
+/** `device` is the role, or one paired device of that role when the scope names one. */
+function SourceContent({ role, device, s }: { role: Role; device: string; s: DeviceSource }) {
   const v = s.view;
   const none = `Nothing from ${roleLabel(role)} here yet.`;
-  if (v.kind === "files") return <FilesView device={role} embedded />;
-  if (v.kind === "browse") return <BrowseView role={role} />;
-  if (v.kind === "media") return <MediaView device={role} kind={v.mediaKind} embedded emptyText={none} />;
-  if (v.kind === "records") return <RecordsList type={v.type} device={role} empty={v.empty} />;
-  if (v.kind === "notifications") return <NotificationsView device={role} embedded />;
-  return <ConversationsView key={`${role}:${s.key}`} embedded source={v.source} role={v.source ? undefined : role} platform={v.platform} title={`${s.label} · ${roleLabel(role)}`}
+  const one = device !== role ? device : undefined;
+  if (v.kind === "files") return <FilesView device={device} embedded />;
+  if (v.kind === "browse") return <BrowseView key={device} role={role} deviceId={one} />;
+  if (v.kind === "media") return <MediaView key={device} device={device} kind={v.mediaKind} embedded emptyText={none} />;
+  if (v.kind === "records") return <RecordsList type={v.type} device={device} empty={v.empty} />;
+  if (v.kind === "notifications") return <NotificationsView device={device} embedded />;
+  return <ConversationsView key={`${device}:${s.key}`} embedded source={v.source} role={v.source ? undefined : role} platform={v.platform} title={`${s.label} · ${roleLabel(role)}`}
     emptyText={`No ${s.label} conversations from ${roleLabel(role)} yet. ${s.captures}`} />;
 }
 
@@ -83,10 +86,20 @@ export function DeviceView() {
   const { path } = useLocation();
   const [, , roleRaw, key] = path.split("/");
   const role = (roleRaw === "android" ? "android" : "windows") as Role;
+  // this page is scoped to its role, or to one device of the role when the scope already names one
+  const { scope, devices: paired } = useScope();
+  const inRole = !!scope && (scope === role || scopeRole(scope, paired) === role);
+  useEffect(() => {
+    if (inRole) return;
+    if (scope && !isRole(scope) && !paired) return; // wait for the device list before deciding
+    const q = new URLSearchParams(location.search); q.set(SCOPE_PARAM, role);
+    navigate(`${location.pathname}?${q.toString()}`, true, false);
+  }, [inRole, scope, paired, role]);
+  const device = inRole ? scope! : role;
   const cov = useLoad<any>((a) => a.get("/api/coverage"), []);
   const reload = useDebounced(cov.reload, 1500);
   useEvents(() => reload(), ["coverage.changed", "ingest.", "pairing.completed", "device.revoked"]);
-  const devices = ((cov.data?.devices ?? []) as any[]).filter((d) => d.role === role);
+  const devices = ((cov.data?.devices ?? []) as any[]).filter((d) => d.role === role && (device === role || d.deviceId === device));
   const source = key ? DEVICE_SOURCES[role].find((s) => s.key === key) : undefined;
   const collectors = devices.flatMap((d) => d.collectors as any[]);
   const forSource = source ? collectors.filter((c) => (COLLECTOR_NAMES[source.key] ?? [source.key]).includes(c.name)) : [];
@@ -137,7 +150,7 @@ export function DeviceView() {
           {source && (
             <>
               {forSource.length > 0 && <div className="cov-grid">{forSource.map((c) => <CollectorLine key={c.name} c={c} />)}</div>}
-              <SourceContent role={role} s={source} />
+              <SourceContent role={role} device={device} s={source} />
             </>
           )}
         </div>

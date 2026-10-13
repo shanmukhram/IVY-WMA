@@ -14,7 +14,8 @@ export interface Api {
   get<T = any>(path: string, query?: Query): Promise<T>;
   post<T = any>(path: string, body?: unknown): Promise<T>;
   put<T = any>(path: string, body?: unknown): Promise<T>;
-  del<T = any>(path: string): Promise<T>;
+  /** `body` is sent as JSON when given (DELETE /api/devices/:id?wipe=1 carries { confirm }). */
+  del<T = any>(path: string, body?: unknown): Promise<T>;
 }
 
 export function qs(query?: Query): string {
@@ -46,7 +47,7 @@ export function httpApi(base = "", onStatus?: (status: number) => void): Api {
     get: (p, q) => call("GET", p + qs(q)),
     post: (p, b) => call("POST", p, b ?? {}),
     put: (p, b) => call("PUT", p, b ?? {}),
-    del: (p) => call("DELETE", p),
+    del: (p, b) => call("DELETE", p, b),
   };
 }
 

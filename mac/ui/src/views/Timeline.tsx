@@ -6,6 +6,7 @@
 import { useMemo, useState } from "react";
 import { useLoad, useEvents, useDebounced } from "../ctx.tsx";
 import { href, navigate, useLocation } from "../router.ts";
+import { ScopeSelect } from "../scope.tsx";
 import { TYPE_LABEL, TYPE_PLURAL, hm, localDate, longDate, platformLabel, roleLabel } from "../format.ts";
 import { Icon } from "../components/Icon.tsx";
 import { Link } from "../components/Controls.tsx";
@@ -165,9 +166,7 @@ export function TimelineView() {
         <input className="input" type="date" aria-label="Pick a date" value={date} onChange={(e) => go({ date: e.target.value || undefined, page: undefined })} />
         {!isToday && <button className="btn" onClick={() => go({ date: undefined, page: undefined })}>Today</button>}
         <span className="spacer" />
-        <select className="select" aria-label="Device" value={device} onChange={(e) => go({ device: e.target.value || undefined, page: undefined })}>
-          <option value="">All devices</option><option value="windows">Windows</option><option value="android">Android</option>
-        </select>
+        <ScopeSelect />
         <select className="select" aria-label="Type" value={type} onChange={(e) => go({ type: e.target.value || undefined, page: undefined })}>
           <option value="">All types</option>{TYPES.map((x) => <option key={x} value={x}>{TYPE_PLURAL[x]}</option>)}
         </select>
@@ -200,7 +199,7 @@ export function TimelineView() {
           )}
           {!data && !t.error && <Empty icon="timeline" title="Loading the day…" />}
         </div>
-        <AiDrawer open={aiOpen} onClose={() => setAiOpen(false)} context={{ date, timeline: true, tz }} label="AI overview of this day" />
+        <AiDrawer open={aiOpen} onClose={() => setAiOpen(false)} context={{ date, timeline: device ? { date, device, type: type || undefined } : true, tz }} label="AI overview of this day" />
       </div>
     </div>
   );

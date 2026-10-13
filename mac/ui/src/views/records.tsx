@@ -23,7 +23,7 @@ export interface Item {
   /** set on a message that is a call event; body is then already the call label */
   call?: MsgCall | null;
 }
-export interface DeviceLite { id: string; role: string }
+export interface DeviceLite { id: string; role: string; fingerprint?: string; name?: string | null }
 
 export const AVAILABILITY: Record<string, string> = {
   reference: "reference only (original on the device)",

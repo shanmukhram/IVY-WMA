@@ -23,6 +23,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useApi, useDebounced, useEvents, useLoad } from "../ctx.tsx";
 import type { ServiceEvent } from "../events.ts";
 import { href, navigate, useLocation } from "../router.ts";
+import { useScope } from "../scope.tsx";
 import { COVERAGE_LABEL, dayKey, dayLabel, fmtTime, friendlyTime, hm, platformLabel, shortWhen, sourceLabel } from "../format.ts";
 import { Avatar } from "../components/Avatar.tsx";
 import { AppIcon } from "../components/AppIcon.tsx";
@@ -181,8 +182,9 @@ export function ConversationsView(scope: ChatsScope = {}) {
   const [profileOpen, setProfileOpen] = useState(false);
   const [lineOpen, setLineOpen] = useState<null | "hidden" | "blocked" | "settings">(null);
   const [listing, setListing] = useListingFilter();
-  const list = useLoad<any>((a) => a.get("/api/views/chats", { source, role, platform, q: q.trim() || undefined, listing: listing === "all" ? undefined : listing }),
-    [source, role, platform, q, listing]);
+  const device = useScope().scope ?? undefined;
+  const list = useLoad<any>((a) => a.get("/api/views/chats", { source, role, device, platform, q: q.trim() || undefined, listing: listing === "all" ? undefined : listing }),
+    [source, role, device, platform, q, listing]);
   const reload = useDebounced(list.reload, 1500);
   useEvents(() => reload(), ["ingest.committed"]);
   const chats = (list.data?.items ?? []) as Chat[];
@@ -267,7 +269,8 @@ function Thread({ id, around, hintAvatar, onOpenProfile, onJumpLatest }: { id: s
   const [before, setBefore] = useState(40);
   const [after, setAfter] = useState(40);
   const url = `/api/views/chats/${encodeURIComponent(id)}/messages`;
-  const r = useLoad<any>((a) => a.get(url, { around: around ?? undefined, before, after }), [id, around, before, after]);
+  const device = useScope().scope ?? undefined;
+  const r = useLoad<any>((a) => a.get(url, { around: around ?? undefined, before, after, device }), [id, around, before, after, device]);
   const windowMsgs = (r.data?.messages ?? []) as Msg[];
   const [earlier, setEarlier] = useState<Msg[]>([]);
   const msgs = useMemo(() => {
@@ -362,7 +365,7 @@ function Thread({ id, around, hintAvatar, onOpenProfile, onJumpLatest }: { id: s
       const add: Msg[] = [];
       let cursor = from;
       for (;;) {
-        const page = await api.get<any>(url, { around: cursor, before: 0, after: MAX_WINDOW });
+        const page = await api.get<any>(url, { around: cursor, before: 0, after: MAX_WINDOW, device });
         if (!alive.current) return;
         const got = ((page?.messages ?? []) as Msg[]).filter((m) => m.id !== cursor);
         add.push(...got.filter((m) => !inWindow.has(m.id)));
@@ -384,7 +387,7 @@ function Thread({ id, around, hintAvatar, onOpenProfile, onJumpLatest }: { id: s
     try {
       for (;;) {
         const oldest = list[0]!.id;
-        const page = await api.get<any>(url, { around: oldest, before: MAX_WINDOW, after: 0 });
+        const page = await api.get<any>(url, { around: oldest, before: MAX_WINDOW, after: 0, device });
         if (!alive.current) return;
         const got = (page?.messages ?? []) as Msg[];
         if (!got.some((m) => m.id === oldest)) throw new Error("The oldest shown message is no longer in the archive; reopen the chat and try again.");
@@ -543,7 +546,8 @@ function Lightbox({ images, index, onIndex, onClose }: { images: Array<{ url: st
 }
 
 function ProfileSheet({ id, onClose }: { id: string; onClose: () => void }) {
-  const p = useLoad<any>((a) => a.get(`/api/views/chats/${encodeURIComponent(id)}/profile`), [id]);
+  const device = useScope().scope ?? undefined;
+  const p = useLoad<any>((a) => a.get(`/api/views/chats/${encodeURIComponent(id)}/profile`, { device }), [id, device]);
   const d = p.data;
   const c = d?.conversation;
   const name = c ? chatName(c) : "Profile";
