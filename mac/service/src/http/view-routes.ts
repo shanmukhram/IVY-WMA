@@ -4,15 +4,21 @@
  * from server.ts with one line, so they sit behind the same guards as every other
  * content route (token, loopback Host, same-site Origin, 423 while locked).
  *
- *   GET /api/views/sources
+ * Every listing takes the dashboard's device scope, device=<id|windows|android> (see
+ * deviceScope in query/types.ts): absent means every device. A conversation is in a scope
+ * when any of its messages came from a device in it; its thread and profile are then shown
+ * whole (the conversation is one record) with the per-source coverage labels unchanged, and
+ * a conversation outside the scope answers 404.
+ *
+ *   GET /api/views/sources?device=
  *       capture sources of conversations (message_sources.source_session, e.g.
  *       windows:telegram-desktop), per platform: conversations, messages, last message
- *   GET /api/views/chats?source=&role=&platform=&q=&listing=&page=&pageSize=
+ *   GET /api/views/chats?source=&role=&device=&platform=&q=&listing=&page=&pageSize=
  *       conversations seen by a source (or by any source of a role), newest first,
  *       with the last message preview, counts, first/last message time, coverage and
  *       listing (normal | archived | hidden | null when no source has said);
  *       listing=normal|archived|hidden|all filters (default all; normal includes null)
- *   GET /api/views/chats/:id/profile
+ *   GET /api/views/chats/:id/profile?device=
  *       profile pane: counts, first/last message, coverage and counts per source,
  *       top senders, edited / deleted-at-source / attachment counts
  *   GET /api/views/records?type=a,b&device=<id|windows|android>&app=&page=&pageSize=
@@ -29,7 +35,7 @@
 import type { FastifyInstance } from "fastify";
 import type { Service } from "../service.ts";
 import { enrich, itemView, type BaseItem } from "../query/details.ts";
-import { ITEM_TYPES, TYPE_DEFS, filterSql, selectList, type ItemType } from "../query/types.ts";
+import { ITEM_TYPES, TYPE_DEFS, conversationScope, deviceScope, filterSql, isDeviceRole, selectList, type ItemType } from "../query/types.ts";
 import { coverageView } from "../query/sources.ts";
 import { callView, type CallCols } from "../util/call.ts";
 
@@ -42,12 +48,6 @@ const SOURCE_RE = /^(windows|android):[a-z0-9][a-z0-9._-]*$/;
 const ROLE_RE = /^(windows|android)$/;
 const LISTINGS = ["all", "normal", "archived", "hidden"] as const;
 
-/** Device filter shared by the routes: a role matches every device of that role. */
-function deviceWhere(col: string, device: string | undefined): { sql: string; args: unknown[] } | null {
-  if (!device) return null;
-  if (ROLE_RE.test(device)) return { sql: `${col} IN (SELECT id FROM devices WHERE role = ?)`, args: [device] };
-  return { sql: `${col} = ?`, args: [device] };
-}
 
 /** The source session of the LINE for Windows collector. */
 export const LINE_WINDOWS_SOURCE = "windows:line-desktop";
@@ -72,8 +72,15 @@ export function attachmentStatusSql(a = "a"): string {
 
 export function registerViewRoutes(app: FastifyInstance, svc: Service): void {
   const db = () => svc.ctx.db;
+  /** A conversation is in the device scope (always, when unscoped). */
+  const inScope = (id: string, device: string | undefined) => {
+    const s = conversationScope("c", device);
+    return !s || !!db().prepare(`SELECT 1 FROM conversations c WHERE c.id = ? AND ${s.sql}`).get(id, ...s.args);
+  };
 
-  app.get("/api/views/sources", async () => {
+  app.get("/api/views/sources", async (req) => {
+    const device = (req.query as { device?: string }).device;
+    const src = deviceScope("ms.device_id", device);
     const rows = db().prepare(`
       SELECT ms.source_session AS source, c.platform AS platform,
              COUNT(DISTINCT c.id) AS conversations, COUNT(DISTINCT m.id) AS messages, MAX(m.sent_at) AS lastMessageAt,
@@ -81,16 +88,23 @@ export function registerViewRoutes(app: FastifyInstance, svc: Service): void {
       FROM message_sources ms
       JOIN messages m ON m.id = ms.message_id AND m.deleted_at IS NULL
       JOIN conversations c ON c.id = m.conversation_id AND c.deleted_at IS NULL
+      ${src ? `WHERE ${src.sql}` : ""}
       GROUP BY ms.source_session, c.platform
-      ORDER BY ms.source_session, c.platform`).all() as Array<{ source: string; platform: string; conversations: number; messages: number; lastMessageAt: string | null; deviceId: string | null }>;
+      ORDER BY ms.source_session, c.platform`).all(...(src?.args ?? [])) as Array<{ source: string; platform: string; conversations: number; messages: number; lastMessageAt: string | null; deviceId: string | null }>;
     // a source that claimed coverage for a conversation but delivered no message yet still counts
-    const claimed = db().prepare(`SELECT platform, coverage_by_source FROM conversations WHERE deleted_at IS NULL`).all() as Array<{ platform: string; coverage_by_source: string }>;
+    // under a device scope: only claims by a source of the scope's role, on conversations of a device in the scope
+    const own = deviceScope("c.device_id", device), conv = conversationScope("c", device);
+    const scopeRole = !device ? null : isDeviceRole(device) ? device
+      : ((db().prepare("SELECT role FROM devices WHERE id = ?").get(device) as { role: string } | undefined)?.role ?? "");
+    const claimed = db().prepare(`SELECT platform, coverage_by_source FROM conversations c WHERE deleted_at IS NULL
+                                  ${own && conv ? `AND (${own.sql} OR ${conv.sql})` : ""}`).all(...(own && conv ? [...own.args, ...conv.args] : [])) as Array<{ platform: string; coverage_by_source: string }>;
     const seen = new Set(rows.map((r) => `${r.source}|${r.platform}`));
     const extra = new Map<string, { source: string; platform: string; conversations: number }>();
     for (const c of claimed) {
       for (const s of Object.keys(coverageView(c.coverage_by_source).coverageBySource)) {
         const k = `${s}|${c.platform}`;
         if (seen.has(k)) continue;
+        if (scopeRole !== null && !s.startsWith(`${scopeRole}:`)) continue;
         const e = extra.get(k) ?? { source: s, platform: c.platform, conversations: 0 };
         e.conversations++;
         extra.set(k, e);
@@ -106,9 +120,11 @@ export function registerViewRoutes(app: FastifyInstance, svc: Service): void {
   });
 
   app.get("/api/views/chats", async (req, reply) => {
-    const q = req.query as { source?: string; role?: string; platform?: string; q?: string; listing?: string; page?: string; pageSize?: string };
+    const q = req.query as { source?: string; role?: string; device?: string; platform?: string; q?: string; listing?: string; page?: string; pageSize?: string };
     const pageSize = int(q.pageSize, 200, 1, 500), page = int(q.page, 1, 1, 1e9);
     const where = ["c.deleted_at IS NULL"]; const args: unknown[] = [];
+    const scope = conversationScope("c", q.device);
+    if (scope) { where.push(scope.sql); args.push(...scope.args); }
     if (q.source) {
       if (!SOURCE_RE.test(q.source)) return reply.status(400).send({ error: "bad_source", message: "source must be <role>:<collector>" });
       where.push(`(json_type(c.coverage_by_source, ?) IS NOT NULL OR EXISTS (SELECT 1 FROM message_sources ms JOIN messages m ON m.id = ms.message_id
@@ -168,7 +184,7 @@ export function registerViewRoutes(app: FastifyInstance, svc: Service): void {
                                    chat_title AS chatTitle, participant_count AS participantCount, chat_type AS chatType, created_at AS createdAt,
                                    avatar_local_path AS avatarLocalPath, listing
                             FROM conversations WHERE id = ? AND deleted_at IS NULL`).get(id) as (Record<string, unknown> & { coverage_by_source: string; avatarLocalPath: string | null; kind: string }) | undefined;
-    if (!c) return reply.status(404).send({ error: "not_found", message: "no such conversation" });
+    if (!c || !inScope(id, (req.query as { device?: string }).device)) return reply.status(404).send({ error: "not_found", message: "no such conversation" });
     const { coverage_by_source, avatarLocalPath, ...conv } = c;
     const stats = db().prepare(`SELECT COUNT(*) AS messages, MIN(sent_at) AS firstMessageAt, MAX(sent_at) AS lastMessageAt,
                                        SUM(edited_at IS NOT NULL) AS edited, SUM(source_status = 'deleted_at_source') AS deletedAtSource,
@@ -211,11 +227,11 @@ export function registerViewRoutes(app: FastifyInstance, svc: Service): void {
   // messages around a pivot (around=<id>, else the newest) with before/after counts.
   app.get("/api/views/chats/:id/messages", async (req, reply) => {
     const id = (req.params as { id: string }).id;
-    const q = req.query as { around?: string; before?: string; after?: string };
+    const q = req.query as { around?: string; before?: string; after?: string; device?: string };
     const c = db().prepare(`SELECT id, platform, account, conv_key AS convKey, peer, kind, coverage, coverage_by_source,
                                    chat_title AS chatTitle, participant_count AS participantCount, chat_type AS chatType, avatar_local_path AS avatarLocalPath, listing
                             FROM conversations WHERE id = ? AND deleted_at IS NULL`).get(id) as (Record<string, unknown> & { coverage_by_source: string; avatarLocalPath: string | null }) | undefined;
-    if (!c) return reply.status(404).send({ error: "not_found", message: "no such conversation" });
+    if (!c || !inScope(id, q.device)) return reply.status(404).send({ error: "not_found", message: "no such conversation" });
     const { coverage_by_source, avatarLocalPath, ...convCols } = c;
     const conversation = {
       ...convCols, ...coverageView(coverage_by_source),
@@ -277,7 +293,7 @@ export function registerViewRoutes(app: FastifyInstance, svc: Service): void {
   });
 
   app.get("/api/views/notification-apps", async (req) => {
-    const dw = deviceWhere("device_id", (req.query as { device?: string }).device);
+    const dw = deviceScope("device_id", (req.query as { device?: string }).device);
     const rows = db().prepare(`SELECT app, source, COUNT(*) AS count, MAX(posted_at) AS latest FROM notifications
                                WHERE deleted_at IS NULL${dw ? ` AND ${dw.sql}` : ""} GROUP BY app, source ORDER BY latest DESC`).all(...(dw?.args ?? []));
     return { apps: rows };

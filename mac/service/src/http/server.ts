@@ -19,6 +19,7 @@ import { timingSafeEqual } from "node:crypto";
 import { ZodError } from "zod";
 import type { Service } from "../service.ts";
 import { KeystoreError } from "../keystore/keystore.ts";
+import { ForgetError, forgetDevice, forgetFootprint } from "../devices/forget.ts";
 import { PairingError, cancelPairing, getDevice, listDevices, listPairings, revokeDevice, startPairing } from "../pairing/pairing.ts";
 import { CommandError, cancelCommand, commandView, getCommand, issueCommand, listCommands, requestFile } from "../commands/commands.ts";
 import { search, SearchError } from "../query/search.ts";
@@ -29,7 +30,7 @@ import { BinError, isBinType, listBin, purge, restore, retentionDays, setRetenti
 import { redact } from "../r2/config.ts";
 import { auditBuckets, BUCKET_IDS, type BucketId } from "../r2/audit.ts";
 import { enrich, itemView } from "../query/details.ts";
-import { ITEM_TYPES, TYPE_DEFS, selectList, type ItemType } from "../query/types.ts";
+import { ITEM_TYPES, TYPE_DEFS, conversationScope, deviceScope, messageScope, selectList, type ItemType } from "../query/types.ts";
 import { parseBound } from "../util/time.ts";
 import { setSetting } from "../db/index.ts";
 import { archiveStats, blobProgress, evictCachedOriginal, getArchive, keepMediaInR2, refetchArchived, type BlobRow } from "../ingest/blobs.ts";
@@ -260,7 +261,27 @@ export async function buildServer(svc: Service): Promise<FastifyInstance> {
     if (!d) throw new HttpError(404, "not_found", "no such device");
     return deviceView(d);
   });
-  app.delete("/api/devices/:id", async (req) => revokeDevice(ctx, (req.params as { id: string }).id));
+  // DELETE without ?wipe: revoke only (the captured records stay). With ?wipe=1 and { confirm: <fingerprint> }:
+  // forget the device, removing everything it contributed from the vault and the local cache (devices/forget.ts).
+  // R2 is not touched; whatever the device left there is ignored by ingest.
+  app.delete("/api/devices/:id", async (req) => {
+    const id = (req.params as { id: string }).id;
+    const wipe = (req.query as { wipe?: string }).wipe;
+    if (wipe === undefined || wipe === "0" || wipe === "false") return revokeDevice(ctx, id);
+    const confirm = (req.body as { confirm?: unknown } | undefined)?.confirm;
+    try {
+      return await svc.ingester.exclusive(() => forgetDevice(ctx, id, confirm));
+    } catch (e) {
+      if (e instanceof ForgetError) throw new HttpError(e.code === "not_found" ? 404 : 400, e.code, e.message);
+      throw e;
+    }
+  });
+  // What a forget would remove (counts per table, shared records kept, local cache bytes, media left in R2).
+  app.get("/api/devices/:id/footprint", async (req) => {
+    const f = forgetFootprint(ctx, (req.params as { id: string }).id);
+    if (!f) throw new HttpError(404, "not_found", "no such device");
+    return f;
+  });
   // Read-only device file browser (catalog + indexed files). Immediate children of a directory, or
   // the top-level roots/drives with no path. See query/browse.ts for the derived-folder logic.
   app.get("/api/devices/:id/browse", async (req) => {
@@ -382,14 +403,23 @@ export async function buildServer(svc: Service): Promise<FastifyInstance> {
     const q = req.query as Record<string, string | undefined>;
     return timeline(ctx, { date: q.date, from: q.from, to: q.to, tz: q.tz, device: q.device, types: types(q.type), page: num(q.page), pageSize: num(q.pageSize) });
   });
-  app.get("/api/coverage", async () => coverage(ctx));
-  app.get("/api/stats", async () => {
-    const c = (t: string) => (ctx.db.prepare(`SELECT COUNT(*) AS n FROM ${t} WHERE deleted_at IS NULL`).get() as { n: number }).n;
+  app.get("/api/coverage", async (req) => coverage(ctx, Date.now(), { device: (req.query as { device?: string }).device }));
+  app.get("/api/stats", async (req) => {
+    // device=<id|windows|android> scopes every count the same way the views are scoped (query/types.ts)
+    const device = (req.query as { device?: string }).device;
+    const c = (t: string) => {
+      const s = deviceScope("device_id", device);
+      return (ctx.db.prepare(`SELECT COUNT(*) AS n FROM ${t} WHERE deleted_at IS NULL${s ? ` AND ${s.sql}` : ""}`).get(...(s?.args ?? [])) as { n: number }).n;
+    };
+    const ms = messageScope("m", "cv", device);
+    const messages = (ctx.db.prepare(`SELECT COUNT(*) AS n FROM messages m JOIN conversations cv ON cv.id = m.conversation_id
+                                      WHERE m.deleted_at IS NULL${ms ? ` AND ${ms.sql}` : ""}`).get(...(ms?.args ?? [])) as { n: number }).n;
     // the files count is collected content only: browse-only catalog entries (not yet fetched) are excluded
-    const files = (ctx.db.prepare("SELECT COUNT(*) AS n FROM files WHERE deleted_at IS NULL AND (catalog = 0 OR local_path IS NOT NULL)").get() as { n: number }).n;
+    const fs = deviceScope("device_id", device);
+    const files = (ctx.db.prepare(`SELECT COUNT(*) AS n FROM files WHERE deleted_at IS NULL AND (catalog = 0 OR local_path IS NOT NULL)${fs ? ` AND ${fs.sql}` : ""}`).get(...(fs?.args ?? [])) as { n: number }).n;
     const polls = ctx.db.prepare("SELECT key, value FROM settings WHERE key LIKE 'poll:%'").all() as Array<{ key: string; value: string }>;
     return {
-      counts: { messages: c("messages"), notifications: c("notifications"), media: c("media"), files, usage: c("usage_events"), calls: c("calls") },
+      counts: { messages, notifications: c("notifications"), media: c("media"), files, usage: c("usage_events"), calls: c("calls") },
       lastSync: polls.map((p) => ({ bucket: p.key.slice(5), ...(JSON.parse(p.value) as object) })),
     };
   });
@@ -405,10 +435,13 @@ export async function buildServer(svc: Service): Promise<FastifyInstance> {
   });
   app.get("/api/conversations/:id/messages", async (req) => {
     const id = (req.params as { id: string }).id;
-    const q = req.query as { around?: string; before?: string; after?: string };
+    const q = req.query as { around?: string; before?: string; after?: string; device?: string };
     const row = ctx.db.prepare(`SELECT id, platform, account, conv_key, peer, kind, coverage, coverage_by_source, chat_title, participant_count, chat_type, deleted_at
                                 FROM conversations WHERE id = ?`).get(id) as (Record<string, unknown> & { coverage_by_source: string }) | undefined;
     if (!row) throw new HttpError(404, "not_found", "no such conversation");
+    // under a device scope a conversation no device of the scope delivered is not shown; one that is, is shown whole
+    const cs = conversationScope("c", q.device);
+    if (cs && !ctx.db.prepare(`SELECT 1 FROM conversations c WHERE c.id = ? AND ${cs.sql}`).get(id, ...cs.args)) throw new HttpError(404, "not_found", "no such conversation");
     const { coverage_by_source, ...convCols } = row;
     const conv = { ...convCols, ...coverageView(coverage_by_source) };
     const before = Math.min(num(q.before) ?? 20, 200), after = Math.min(num(q.after) ?? 20, 200);
@@ -427,7 +460,8 @@ export async function buildServer(svc: Service): Promise<FastifyInstance> {
     // catalog entries (browse-only, not yet fetched) are not part of the main files list (see the
     // device browse routes); a fetched catalog file has local_path set and is listed normally
     const where = ["deleted_at IS NULL", "(catalog = 0 OR local_path IS NOT NULL)"]; const args: unknown[] = [];
-    if (q.device) { where.push("device_id = ?"); args.push(q.device); }
+    const ds = deviceScope("device_id", q.device);
+    if (ds) { where.push(ds.sql); args.push(...ds.args); }
     if (q.status) { where.push("status = ?"); args.push(q.status); }
     const total = (ctx.db.prepare(`SELECT COUNT(*) AS n FROM files WHERE ${where.join(" AND ")}`).get(...args) as { n: number }).n;
     const rows = ctx.db.prepare(`SELECT 'file' AS type, rid, id, device_id, NULL AS app, COALESCE(mtime, event_time) AS event_time, 'mtime' AS time_field, captured_at, name AS title, path AS body, NULL AS person

@@ -4,11 +4,13 @@
  * behind the same guards: bearer/cookie token, loopback Host, same-site Origin,
  * and 423 while the vault is locked.
  *
- *   GET /api/conversations?platform=&page=&pageSize=      conversation list with coverage badge and its sources (C9, WX1)
+ *   GET /api/conversations?platform=&device=&page=&pageSize=      conversation list with coverage badge and its sources (C9, WX1)
  *   GET /api/attachments?message=<id,id,...>              attachments for messages, with status (C4)
- *   GET /api/notifications/apps                           per-app counts (N2)
- *   GET /api/notifications?app=&page=&pageSize=           newest first; every item is a partial record (N4)
- *   GET /api/media?kind=screenshot|photo&page=&pageSize=  grid listing with OCR text (M1-M3)
+ *   GET /api/notifications/apps?device=                   per-app counts (N2)
+ *   GET /api/notifications?app=&device=&page=&pageSize=   newest first; every item is a partial record (N4)
+ *   GET /api/media?kind=screenshot|photo&device=&page=&pageSize=  grid listing with OCR text (M1-M3)
+ *
+ * device=<id|windows|android> is the dashboard's device scope (query/types.ts); absent means all.
  *   GET /api/media/:id/origin                             evidenced vs inferred origin links (M6)
  *   GET /api/facets                                       values for the search filter rail (Q3)
  *   GET /api/ui-settings, PUT /api/ui-settings {key: value}   UI-owned settings (ai.cloudEnabled)
@@ -16,7 +18,7 @@
 import type { FastifyInstance } from "fastify";
 import type { Service } from "../service.ts";
 import { enrich, itemView, type BaseItem } from "../query/details.ts";
-import { TYPE_DEFS, selectList } from "../query/types.ts";
+import { TYPE_DEFS, conversationScope, deviceScope, selectList } from "../query/types.ts";
 import { getSetting, setSetting } from "../db/index.ts";
 import { coverageView } from "../query/sources.ts";
 import { attachmentStatusSql } from "./view-routes.ts";
@@ -44,10 +46,12 @@ export function registerUiRoutes(app: FastifyInstance, svc: Service): void {
   const db = () => svc.ctx.db;
 
   app.get("/api/conversations", async (req) => {
-    const q = req.query as { platform?: string; page?: string; pageSize?: string };
+    const q = req.query as { platform?: string; device?: string; page?: string; pageSize?: string };
     const pageSize = int(q.pageSize, 100, 1, 500), page = int(q.page, 1, 1, 1e9);
     const where = ["c.deleted_at IS NULL"]; const args: unknown[] = [];
     if (q.platform) { where.push("lower(c.platform) = lower(?)"); args.push(q.platform); }
+    const cs = conversationScope("c", q.device);
+    if (cs) { where.push(cs.sql); args.push(...cs.args); }
     const w = where.join(" AND ");
     const total = (db().prepare(`SELECT COUNT(*) AS n FROM conversations c WHERE ${w}`).get(...args) as { n: number }).n;
     const rows = db().prepare(`
@@ -58,7 +62,7 @@ export function registerUiRoutes(app: FastifyInstance, svc: Service): void {
       FROM conversations c WHERE ${w}
       ORDER BY lastMessageAt IS NULL, lastMessageAt DESC, c.rid DESC LIMIT ? OFFSET ?`).all(...args, pageSize, (page - 1) * pageSize) as Array<Record<string, unknown> & { coverage_by_source: string }>;
     const items = rows.map(({ coverage_by_source, ...c }) => ({ ...c, ...coverageView(coverage_by_source) }));
-    const platforms = db().prepare("SELECT platform, coverage, COUNT(*) AS n FROM conversations WHERE deleted_at IS NULL GROUP BY platform, coverage ORDER BY platform").all();
+    const platforms = db().prepare(`SELECT platform, coverage, COUNT(*) AS n FROM conversations c WHERE deleted_at IS NULL${cs ? ` AND ${cs.sql}` : ""} GROUP BY platform, coverage ORDER BY platform`).all(...(cs?.args ?? []));
     return { total, page, pageSize, pages: Math.max(1, Math.ceil(total / pageSize)), items, platforms };
   });
 
@@ -70,17 +74,22 @@ export function registerUiRoutes(app: FastifyInstance, svc: Service): void {
     return { items: rows };
   });
 
-  app.get("/api/notifications/apps", async () => ({
-    apps: db().prepare(`SELECT app, source, COUNT(*) AS count, MAX(posted_at) AS latest FROM notifications WHERE deleted_at IS NULL
-                        GROUP BY app, source ORDER BY latest DESC`).all(),
-  }));
+  app.get("/api/notifications/apps", async (req) => {
+    const ds = deviceScope("device_id", (req.query as { device?: string }).device);
+    return {
+      apps: db().prepare(`SELECT app, source, COUNT(*) AS count, MAX(posted_at) AS latest FROM notifications WHERE deleted_at IS NULL${ds ? ` AND ${ds.sql}` : ""}
+                          GROUP BY app, source ORDER BY latest DESC`).all(...(ds?.args ?? [])),
+    };
+  });
 
   app.get("/api/notifications", async (req) => {
-    const q = req.query as { app?: string; page?: string; pageSize?: string };
+    const q = req.query as { app?: string; device?: string; page?: string; pageSize?: string };
     const pageSize = int(q.pageSize, 50, 1, 500), page = int(q.page, 1, 1, 1e9);
     const d = TYPE_DEFS.notification;
     const where = ["x.deleted_at IS NULL"]; const args: unknown[] = [];
     if (q.app) { where.push("lower(x.app) = lower(?)"); args.push(q.app); }
+    const ds = deviceScope(d.device, q.device);
+    if (ds) { where.push(ds.sql); args.push(...ds.args); }
     const w = where.join(" AND ");
     const total = (db().prepare(`SELECT COUNT(*) AS n FROM notifications x WHERE ${w}`).get(...args) as { n: number }).n;
     const rows = db().prepare(`SELECT ${selectList(d)} FROM ${d.from} WHERE ${w} ORDER BY x.posted_at DESC, x.rid DESC LIMIT ? OFFSET ?`)
@@ -89,13 +98,15 @@ export function registerUiRoutes(app: FastifyInstance, svc: Service): void {
   });
 
   app.get("/api/media", async (req) => {
-    const q = req.query as { kind?: string; page?: string; pageSize?: string };
+    const q = req.query as { kind?: string; device?: string; page?: string; pageSize?: string };
     const pageSize = int(q.pageSize, 60, 1, 500), page = int(q.page, 1, 1, 1e9);
     const kinds = q.kind === "screenshot" || q.kind === "photo" ? [q.kind] : ["screenshot", "photo"];
-    const parts = kinds.map((k) => { const d = TYPE_DEFS[k as "screenshot" | "photo"]; return `SELECT ${selectList(d)} FROM ${d.from} WHERE x.deleted_at IS NULL AND ${d.where}`; });
+    const ds = deviceScope("x.device_id", q.device);
+    const parts = kinds.map((k) => { const d = TYPE_DEFS[k as "screenshot" | "photo"]; return `SELECT ${selectList(d)} FROM ${d.from} WHERE x.deleted_at IS NULL AND ${d.where}${ds ? ` AND ${ds.sql}` : ""}`; });
     const union = parts.map((p) => `SELECT * FROM (${p})`).join(" UNION ALL ");
-    const total = (db().prepare(`SELECT COUNT(*) AS n FROM (${union})`).get() as { n: number }).n;
-    const rows = db().prepare(`SELECT * FROM (${union}) ORDER BY event_time DESC, rid DESC LIMIT ? OFFSET ?`).all(pageSize, (page - 1) * pageSize) as BaseItem[];
+    const args = parts.flatMap(() => ds?.args ?? []);
+    const total = (db().prepare(`SELECT COUNT(*) AS n FROM (${union})`).get(...args) as { n: number }).n;
+    const rows = db().prepare(`SELECT * FROM (${union}) ORDER BY event_time DESC, rid DESC LIMIT ? OFFSET ?`).all(...args, pageSize, (page - 1) * pageSize) as BaseItem[];
     const ocr = new Map<string, string | null>();
     if (rows.length) {
       for (const r of db().prepare(`SELECT id, substr(ocr_text, 1, 4000) AS t FROM media WHERE id IN (${rows.map(() => "?").join(",")})`).all(...rows.map((r) => r.id)) as Array<{ id: string; t: string | null }>) ocr.set(r.id, r.t);

@@ -99,17 +99,61 @@ export interface Filters {
   account?: string;
 }
 
+// ------------------------------------------------------------------ device scope
+//
+// One meaning of `device=<id|windows|android>` for every read API (the dashboard's global
+// device scope):
+//   - absent or empty: no restriction;
+//   - "windows" / "android": every paired device of that role (a role with no paired device
+//     matches nothing, so the view is honestly empty rather than unfiltered);
+//   - anything else: a device id, matched exactly (an unknown id matches nothing).
+// A message is in scope when its own device (messages.device_id, else the conversation's) is,
+// or when any source that delivered it (message_sources.device_id) is. A conversation is in
+// scope when at least one of its live messages is. Records with no device (Activity Vault
+// browsing) are never in a device scope.
+
+export const DEVICE_ROLES = ["windows", "android"] as const;
+export const isDeviceRole = (v: string): v is (typeof DEVICE_ROLES)[number] => (DEVICE_ROLES as readonly string[]).includes(v);
+
+export interface Scoped { sql: string; args: unknown[] }
+
+/** The device scope as a predicate on a SQL expression that yields a device id; null when unscoped. */
+export function deviceScope(col: string, device: string | undefined | null): Scoped | null {
+  if (!device) return null;
+  if (isDeviceRole(device)) return { sql: `${col} IN (SELECT id FROM devices WHERE role = ?)`, args: [device] };
+  return { sql: `${col} = ?`, args: [device] };
+}
+
+/** Message `m` (in conversation `c`) is in scope: its own device or any source's device. */
+export function messageScope(m: string, c: string, device: string | undefined | null): Scoped | null {
+  const own = deviceScope(`COALESCE(${m}.device_id, ${c}.device_id)`, device);
+  const src = deviceScope("dss.device_id", device);
+  if (!own || !src) return null;
+  return {
+    sql: `(${own.sql} OR EXISTS (SELECT 1 FROM message_sources dss WHERE dss.message_id = ${m}.id AND ${src.sql}))`,
+    args: [...own.args, ...src.args],
+  };
+}
+
+/** Conversation `c` is in scope: at least one of its live messages is. */
+export function conversationScope(c: string, device: string | undefined | null): Scoped | null {
+  const ms = messageScope("dsm", c, device);
+  if (!ms) return null;
+  return { sql: `EXISTS (SELECT 1 FROM messages dsm WHERE dsm.conversation_id = ${c}.id AND dsm.deleted_at IS NULL AND ${ms.sql})`, args: ms.args };
+}
+
+/** The device scope for one record type (`x` = its base alias; messages use `c` for the conversation). */
+export function typeScope(d: TypeDef, device: string | undefined | null): Scoped | null {
+  return d.type === "message" ? messageScope("x", "c", device) : deviceScope(d.device, device);
+}
+
 /** WHERE fragments for the common filters; types that lack a column are excluded by a false predicate. */
 export function filterSql(d: TypeDef, f: Filters): { sql: string[]; args: unknown[] } {
   const sql: string[] = ["x.deleted_at IS NULL"];
   const args: unknown[] = [];
   if (d.where) sql.push(d.where);
-  if (f.device) {
-    if (f.device === "windows" || f.device === "android") {
-      sql.push(`${d.device} IN (SELECT id FROM devices WHERE role = ?)`);
-    } else sql.push(`${d.device} = ?`);
-    args.push(f.device);
-  }
+  const scope = typeScope(d, f.device);
+  if (scope) { sql.push(scope.sql); args.push(...scope.args); }
   if (f.app) {
     if (!d.app) sql.push("0");
     else { sql.push(`lower(${d.app}) = lower(?)`); args.push(f.app); }

@@ -12,6 +12,7 @@ import { getSetting } from "../db/index.ts";
 import { msOf, nowIso } from "../util/time.ts";
 import { ROLES } from "../r2/config.ts";
 import { activityVaultCoverage } from "../imports/activity-vault.ts";
+import { deviceScope } from "./types.ts";
 
 export type Dot = "green" | "amber" | "red" | "off";
 
@@ -111,8 +112,15 @@ function importProgress(ctx: Ctx, deviceId: string, c: CollectorRow) {
 
 export interface Problem { severity: "red" | "amber"; source: { deviceId?: string; role?: string; collector?: string; bucket?: string }; message: string }
 
-export function coverage(ctx: Ctx, now = Date.now()) {
-  const devices = ctx.db.prepare("SELECT * FROM devices ORDER BY paired_at").all() as Array<{
+/**
+ * `scope.device` (<id|windows|android>, query/types.ts) narrows the report to the devices in the
+ * dashboard's device scope: their rows, their problems and the overall status. Problems that
+ * belong to no device (vault locked, R2, bucket polls, quarantine per bucket) stay, and the
+ * Activity Vault import, which is not a device, is left out of a scoped report.
+ */
+export function coverage(ctx: Ctx, now = Date.now(), scope: { device?: string } = {}) {
+  const ds = deviceScope("id", scope.device);
+  const devices = ctx.db.prepare(`SELECT * FROM devices${ds ? ` WHERE ${ds.sql}` : ""} ORDER BY paired_at`).all(...(ds?.args ?? [])) as Array<{
     id: string; role: string; fingerprint: string; paired_at: string; last_seen: string | null; last_report_at: string | null;
     app_version: string | null; queue_depth_total: number | null;
   }>;
@@ -187,12 +195,14 @@ export function coverage(ctx: Ctx, now = Date.now()) {
   });
 
   // S7: imports that are not devices (Activity Vault); shown as their own coverage rows
-  const imports = [activityVaultCoverage(ctx, now)];
+  const imports = ds ? [] : [activityVaultCoverage(ctx, now)];
   for (const im of imports) {
     if (im.enabled && (im.status === "red" || im.status === "amber")) problems.push({ severity: im.status, source: { collector: im.source }, message: `${im.name}: ${im.statusReason}` });
   }
 
-  const missingRoles = ROLES.filter((r) => !devices.some((d) => d.role === r));
+  // which roles have no paired device at all is a fact about the vault, the same under any scope
+  const pairedRoles = new Set((ctx.db.prepare("SELECT DISTINCT role FROM devices").all() as Array<{ role: string }>).map((r) => r.role));
+  const missingRoles = ROLES.filter((r) => !pairedRoles.has(r));
   problems.sort((a, b) => (a.severity === b.severity ? 0 : a.severity === "red" ? -1 : 1));
   return {
     at: nowIso(), locked: !unlocked, r2Configured: ctx.r2Configured(),
