@@ -1,7 +1,7 @@
 /**
  * Forget this device: GET /api/devices/:id/footprint says what a forget removes; DELETE /api/devices/:id?wipe=1
  * with the device's fingerprint as `confirm` removes it from the vault and the local cache, keeps the other
- * device's copy of a shared conversation, and never touches R2. Objects the device left in R2 are then ignored
+ * device's copy of a shared conversation, and writes nothing to R2 but the unpair command (its up-bucket is untouched). Objects the device left in R2 are then ignored
  * by ingest (ledger status `ignored`, left in the bucket, no GET once recorded), and a newly paired device of
  * the same role ingests normally.
  */
@@ -99,7 +99,7 @@ describe("GET /api/devices/:id/footprint", () => {
 });
 
 describe("DELETE /api/devices/:id?wipe=1", () => {
-  it("removes exactly that device's rows, keeps the shared conversation for the other device, frees the cache, never touches R2", async () => {
+  it("removes exactly that device's rows, keeps the shared conversation for the other device, frees the cache, and writes to R2 only the unpair command", async () => {
     const { win, and, photo, att } = await seed();
     const winPaths = (db().prepare("SELECT local_path AS p FROM media WHERE device_id = ? UNION SELECT thumb_path FROM media WHERE device_id = ? UNION SELECT local_path FROM attachments")
       .all(win.deviceId, win.deviceId) as Array<{ p: string }>).map((r) => r.p);
@@ -122,7 +122,10 @@ describe("DELETE /api/devices/:id?wipe=1", () => {
     st!.s3.mock.clearRequests();
     const r = await api(st!.svc, "DELETE", `/api/devices/${win.deviceId}?wipe=1`, { confirm: win.fingerprint.toLowerCase() });
     expect(r.status).toBe(200);
-    expect(st!.s3.mock.requests()).toEqual([]); // no list, get, put or delete of any kind
+    // the only R2 call is the unpair command put into the device's cmd-bucket; its up-bucket is not listed, read or changed
+    const unpairId = r.json.unpairCommandId as string;
+    const unpairKey = (db().prepare("SELECT object_key FROM commands WHERE id = ?").get(unpairId) as { object_key: string }).object_key;
+    expect(st!.s3.mock.requests().map((q) => [q.operation, q.bucket, q.key])).toEqual([["PutObject", "ivy-cmd-windows", unpairKey]]);
     expect(st!.s3.mock.listAll(WIN_BUCKET).length).toBe(objects);
     expect(r.json).toMatchObject({
       forgotten: true, deviceId: win.deviceId,
@@ -133,11 +136,14 @@ describe("DELETE /api/devices/:id?wipe=1", () => {
       cacheFilesRemoved: 3,
       leftInR2Bytes: photoBytes.length + attBytes.length,
       tokenWarning: "The device's R2 tokens remain valid until you rotate them in the Cloudflare dashboard.",
+      unpairSent: true, unpairReason: null,
     });
+    expect(r.json.removed.commands).toBe(0); // the unpair command is kept, and not counted as removed
     expect(r.json.binNote).toMatch(/recovery bin/);
 
     // nothing of the device is left in any table keyed by device id (blob tombstones and their ledger rows aside)
-    for (const t of ["devices", "conversations", "messages", "notifications", "media", "calls", "usage_events", "commands", "message_sources",
+    expect(db().prepare("SELECT id, type, status FROM commands WHERE device_id = ?").all(win.deviceId)).toEqual([{ id: unpairId, type: "unpair", status: "sent" }]);
+    for (const t of ["devices", "conversations", "messages", "notifications", "media", "calls", "usage_events", "message_sources",
       "media_archive", "files", "pairings", "collector_state", "collector_history", "quarantine"]) {
       const col = t === "devices" ? "id" : "device_id";
       expect(count(`SELECT COUNT(*) AS n FROM ${t} WHERE ${col} = ?`, win.deviceId), t).toBe(0);

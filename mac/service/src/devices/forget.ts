@@ -1,11 +1,14 @@
 /**
  * Forget a device (Devices page, "Forget this device"): remove one of the owner's own old devices and
  * everything it contributed from the Mac's archive, so the vault holds only what the remaining devices
- * captured. It is a local operation on data/vault.db and the local cache; R2 is never read, listed or
- * changed by it.
+ * captured. It is a local operation on data/vault.db and the local cache, with one exception: before anything
+ * is removed, the device is told to reset by an `unpair` command written to its cmd-bucket (when R2 is
+ * reachable). That command is the only R2 write; the up-buckets are never read, listed or changed by a forget,
+ * and the command object is deleted later, when the device's command_status for it arrives.
  *
  * What goes:
- * - the revoke steps (the device's key, its collector state, its open commands);
+ * - the revoke steps (the device's key, its collector state, its open commands; the unpair command row stays, so
+ *   the device's answer to it can still be matched);
  * - every row keyed by the device: notifications, media, files, calls, usage events, commands, collector
  *   history, quarantine entries, pairings and ingest-ledger rows, including any of them already in the
  *   recovery bin (the point is a clean slate, so the bin is not a way back);
@@ -31,6 +34,7 @@ import type { Ctx } from "../context.ts";
 import type { DB } from "../db/index.ts";
 import { dirs } from "../config.ts";
 import { getDevice, TOKEN_WARNING, type DeviceRow } from "../pairing/pairing.ts";
+import { sendUnpair, type UnpairOutcome } from "../commands/commands.ts";
 import { bestCoverage, parseCoverageBySource, stableJson } from "../query/sources.ts";
 import { removeQuietly } from "../util/fsx.ts";
 import { nowIso } from "../util/time.ts";
@@ -84,6 +88,9 @@ const DEVICE_TABLES: Array<[keyof ForgetCounts, string]> = [
   ["commands", "commands"], ["quarantine", "quarantine"], ["collectorState", "collector_state"], ["collectorHistory", "collector_history"],
   ["pairings", "pairings"], ["ledger", "sync_objects"],
 ];
+
+/** Extra condition per device table: the unpair command sent by this forget (or an earlier revoke) is kept. */
+const KEEP: Partial<Record<string, string>> = { commands: " AND type <> 'unpair'" };
 
 const BIN_TABLES = ["notifications", "media", "files", "calls", "usage_events"];
 
@@ -171,7 +178,7 @@ function planCounts(db: DB, id: string): { counts: ForgetCounts; shared: Footpri
     mediaArchive: n(db, "SELECT COUNT(*) AS n FROM media_archive WHERE oid IN (SELECT oid FROM fx_blobs)"),
     blobs: n(db, "SELECT COUNT(*) AS n FROM blobs WHERE oid IN (SELECT oid FROM fx_blobs)"),
   } as ForgetCounts;
-  for (const [k, t] of DEVICE_TABLES) counts[k] = n(db, `SELECT COUNT(*) AS n FROM ${t} WHERE device_id = ?`, id);
+  for (const [k, t] of DEVICE_TABLES) counts[k] = n(db, `SELECT COUNT(*) AS n FROM ${t} WHERE device_id = ?${KEEP[t] ?? ""}`, id);
   const shared = {
     messagesKept: n(db, "SELECT COUNT(*) AS n FROM fx_msgs") - counts.messages,
     conversationsKept: n(db, "SELECT COUNT(*) AS n FROM fx_convs WHERE removed = 0"),
@@ -220,7 +227,7 @@ export function forgetFootprint(ctx: Ctx, id: string): Footprint | undefined {
   return out;
 }
 
-export interface ForgetResult {
+export interface ForgetResult extends UnpairOutcome {
   forgotten: true;
   deviceId: string;
   removed: ForgetCounts;
@@ -240,14 +247,16 @@ const norm = (s: string) => s.trim().toUpperCase();
 
 /**
  * Forget a device. `confirm` must equal the device's fingerprint (as shown on the Devices page; case and
- * surrounding spaces ignored). Throws ForgetError not_found / bad_confirm. Makes no R2 call of any kind.
+ * surrounding spaces ignored). Throws ForgetError not_found / bad_confirm. Its only R2 call is the unpair command
+ * (sendUnpair); when R2 cannot be reached the forget goes ahead and the result says the device was not told.
  */
-export function forgetDevice(ctx: Ctx, id: string, confirm: unknown): ForgetResult {
+export async function forgetDevice(ctx: Ctx, id: string, confirm: unknown): Promise<ForgetResult> {
   const d = getDevice(ctx, id);
   if (!d) throw new ForgetError("not_found", "no such device");
   if (typeof confirm !== "string" || norm(confirm) !== norm(d.fingerprint)) {
     throw new ForgetError("bad_confirm", "confirm must be the device's fingerprint, exactly as the Devices page shows it");
   }
+  const unpair = await sendUnpair(ctx, d);
   const db = ctx.db;
   const now = nowIso();
   let counts!: ReturnType<typeof planCounts>;
@@ -260,8 +269,9 @@ export function forgetDevice(ctx: Ctx, id: string, confirm: unknown): ForgetResu
     const run = (sql: string) => bind(db, sql, { d: id, now });
 
     // the revoke steps. Open commands are cancelled and then removed with the rest of the device's rows; their
-    // objects in the cmd-bucket are left to its 30-day lifecycle rule, since a forget makes no R2 call
-    cancelled = run("UPDATE commands SET status = 'cancelled', detail = 'device forgotten', status_at = @now WHERE device_id = @d AND status IN ('queued','sent','transferring','uploaded')").changes;
+    // objects in the cmd-bucket are left to its 30-day lifecycle rule. The unpair command is neither cancelled
+    // nor removed: the device's answer to it is still expected
+    cancelled = run("UPDATE commands SET status = 'cancelled', detail = 'device forgotten', status_at = @now WHERE device_id = @d AND type <> 'unpair' AND status IN ('queued','sent','transferring','uploaded')").changes;
 
     // this device's coverage claims per kept conversation (its source sessions there), read before its provenance goes
     const claims = db.prepare(`SELECT DISTINCT m.conversation_id AS conv, s.source_session AS session FROM message_sources s
@@ -287,7 +297,7 @@ export function forgetDevice(ctx: Ctx, id: string, confirm: unknown): ForgetResu
     dropClaims(db, claims);
 
     // rows keyed by the device (the bin's copies included)
-    for (const [, t] of DEVICE_TABLES) db.prepare(`DELETE FROM ${t} WHERE device_id = ?`).run(id);
+    for (const [, t] of DEVICE_TABLES) db.prepare(`DELETE FROM ${t} WHERE device_id = ?${KEEP[t] ?? ""}`).run(id);
 
     // blobs: archive records go; the blob rows stay as ignored tombstones so a re-listed leftover is settled
     // without a download, and their ledger rows (manifest and parts) become ignored
@@ -303,8 +313,11 @@ export function forgetDevice(ctx: Ctx, id: string, confirm: unknown): ForgetResu
     }
 
     db.prepare("DELETE FROM devices WHERE id = ?").run(id);
-    db.prepare(`INSERT INTO forgotten_devices(id, role, fingerprint, forgotten_at) VALUES (?, ?, ?, ?)
-                ON CONFLICT(id) DO UPDATE SET forgotten_at = excluded.forgotten_at`).run(id, d.role, d.fingerprint, now);
+    db.prepare(`INSERT INTO forgotten_devices(id, role, fingerprint, forgotten_at, name, unpair_command_id, unpair_sent_at, unpair_detail, unpair_confirmed_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL)
+                ON CONFLICT(id) DO UPDATE SET forgotten_at = excluded.forgotten_at, name = excluded.name, unpair_command_id = excluded.unpair_command_id,
+                  unpair_sent_at = excluded.unpair_sent_at, unpair_detail = excluded.unpair_detail, unpair_confirmed_at = NULL`)
+      .run(id, d.role, d.fingerprint, now, d.name, unpair.unpairCommandId, unpair.unpairSentAt, unpair.unpairReason);
     dropPlan(db);
   })();
 
@@ -314,7 +327,7 @@ export function forgetDevice(ctx: Ctx, id: string, confirm: unknown): ForgetResu
   }
   const { bytes, files } = removeCacheFiles(ctx, paths);
 
-  ctx.events.emit("device.revoked", { deviceId: id, role: d.role, fingerprint: d.fingerprint });
+  ctx.events.emit("device.revoked", { deviceId: id, role: d.role, fingerprint: d.fingerprint, unpairSent: unpair.unpairSent });
   ctx.events.emit("device.forgotten", { deviceId: id, role: d.role, fingerprint: d.fingerprint, removed: counts.counts, cacheBytesFreed: bytes });
   ctx.events.emit("coverage.changed", { deviceId: id });
   return {
@@ -329,8 +342,9 @@ export function forgetDevice(ctx: Ctx, id: string, confirm: unknown): ForgetResu
     cacheFilesRemoved: files,
     leftInR2Bytes: counts.leftInR2.bytes,
     leftInR2Objects: counts.leftInR2.objects,
-    r2Note: "Nothing in R2 was changed. Objects this device left there are ignored by ingest: never committed, never deleted.",
+    r2Note: "Nothing this device uploaded to R2 was changed. Objects it left there are ignored by ingest: never committed, never deleted.",
     tokenWarning: TOKEN_WARNING,
+    ...unpair,
   };
 }
 

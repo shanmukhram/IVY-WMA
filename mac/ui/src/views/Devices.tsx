@@ -2,6 +2,8 @@
  * Devices: paired devices, pairing (QR + pairing string in a sheet), naming a device, revoke with
  * confirmation, and forget: remove an old device and everything it captured from this Mac, confirmed with
  * its fingerprint. A device's name is kept on this Mac only; the fingerprint stays its stable identifier.
+ * Revoke and forget both tell the device to reset (an unpair command); "Recently removed" lists the devices
+ * removed in the last 30 days and whether each has confirmed the reset.
  */
 import { useEffect, useState } from "react";
 import QRCode from "qrcode";
@@ -41,7 +43,7 @@ export function DevicesView() {
     if ((ev.type === "pairing.expired" || ev.type === "pairing.cancelled") && pairing && ev.data.pairingId === pairing.pairingId) { setResult(`Pairing code ${ev.type.slice(8)}.`); setPairing(null); }
     if (ev.type === "pairing.rejected") setResult(`A device answer was rejected: ${ev.data.reason ?? "unknown reason"}`);
     devs.reload();
-  }, ["pairing.", "device.revoked", "device.forgotten", "device.renamed"]);
+  }, ["pairing.", "device.revoked", "device.forgotten", "device.renamed", "device.unpair_confirmed"]);
 
   const start = async (role: "windows" | "android") => {
     setErr(null); setResult(null);
@@ -50,7 +52,11 @@ export function DevicesView() {
   const cancel = async () => { if (!pairing) return; try { await api.del(`/api/pairings/${pairing.pairingId}`); } catch { /* already gone */ } setPairing(null); };
   const revoke = async (id: string) => {
     setConfirmRevoke(null);
-    try { await api.del(`/api/devices/${id}`); setResult("Device revoked. What it captured stays in the archive. Its R2 tokens stay valid until you rotate them in Cloudflare."); devs.reload(); } catch (e) { setErr(errText(e)); }
+    try {
+      const r = await api.del<UnpairOutcome>(`/api/devices/${id}`);
+      setResult(`Device revoked. What it captured stays in the archive. ${unpairText(r)} Its R2 tokens stay valid until you rotate them in Cloudflare.`);
+      devs.reload();
+    } catch (e) { setErr(errText(e)); }
   };
   const forgotten = (id: string) => {
     devs.reload();
@@ -102,6 +108,7 @@ export function DevicesView() {
           )}
           <p className="group-foot">The code is valid for 10 minutes. After restoring the Mac, initialize with the same passphrase and identity salt and the same Mac key comes back.</p>
         </section>
+        {d && d.removed?.length > 0 && <RemovedList removed={d.removed} />}
       </div>
       {pairing && <PairingSheet p={pairing} onCancel={() => void cancel()} />}
       {confirmRevoke && (
@@ -109,11 +116,64 @@ export function DevicesView() {
           footer={<><button className="btn" onClick={() => setConfirmRevoke(null)}>Keep</button><button className="btn btn-danger-fill" onClick={() => void revoke(confirmRevoke.id)}>Confirm revoke</button></>}>
           <p className="fingerprint">{confirmRevoke.fingerprint}</p>
           <p>Revoke stops this device: the Mac drops its key, ignores its new uploads and sends it no more commands. Everything it already captured stays in the archive on this Mac. To remove that as well, use Forget.</p>
+          <p>{resetSentence(confirmRevoke.role)}</p>
           <Notice tone="warn">{confirmRevoke.revokeWarning}</Notice>
         </Sheet>
       )}
       {forgetting && <ForgetSheet device={forgetting} onClose={() => setForgetting(null)} onForgotten={forgotten} />}
     </div>
+  );
+}
+
+/** What a revoke or forget reports about telling the device to reset. */
+interface UnpairOutcome { unpairSent?: boolean; unpairReason?: string | null }
+
+/** A device the Mac revoked or forgot in the last 30 days (GET /api/devices `removed`). */
+export interface RemovedDevice {
+  id: string; role: string; name: string | null; fingerprint: string; removedAt: string; kind: "revoked" | "forgotten";
+  unpairSentAt: string | null; unpairConfirmedAt: string | null; unpairDetail?: string | null;
+}
+
+const devWord = (role: string) => (role === "windows" ? "PC" : "device");
+
+/** The revoke and forget sheets say what happens on the device. */
+export function resetSentence(role: string): string {
+  const w = devWord(role);
+  return `The ${w} is told to reset and shows its pairing page again; pair it from here when you want it back.`;
+}
+
+/** One line on whether the device was told to reset, for the result of a revoke or forget. */
+export function unpairText(r: UnpairOutcome): string {
+  if (r.unpairSent) return "The device is told to reset; it resets on its next check-in.";
+  return r.unpairReason ?? "The device could not be told to reset.";
+}
+
+export const WAITING_TEXT = (role: string) =>
+  `Waiting for the ${devWord(role)} to reset (it resets on its next check-in, within about 2 minutes while online)`;
+
+/** Devices removed in the last 30 days, each with its reset state: confirmed, waiting, or not told. */
+export function RemovedList({ removed }: { removed: RemovedDevice[] }) {
+  return (
+    <section aria-label="Recently removed">
+      <h2 className="group-title">Recently removed</h2>
+      <div className="group">{removed.map((x) => (
+        <div key={`${x.kind}-${x.id}`} className="group-row" data-testid={`removed-${x.id}`} style={{ alignItems: "flex-start", paddingTop: 10, paddingBottom: 10 }}>
+          <Icon name={x.role === "windows" ? "laptop" : "phone"} />
+          <div className="row-label">
+            <div style={{ fontWeight: 600 }} className={x.name ? undefined : "fingerprint"}>{deviceLabel(x)}</div>
+            <div className="small muted">{roleLabel(x.role)} · {x.kind === "forgotten" ? "Forgotten" : "Revoked"} <Time at={x.removedAt} />{x.name ? <> · fingerprint <span className="fingerprint">{x.fingerprint}</span></> : null}</div>
+            <div className="row-sub" role="status" data-testid={`removed-state-${x.id}`}>
+              {x.unpairConfirmedAt
+                ? <>{devWord(x.role) === "PC" ? "PC" : "Device"} reset confirmed <Time at={x.unpairConfirmedAt} /></>
+                : x.unpairSentAt
+                  ? WAITING_TEXT(x.role)
+                  : `Not told to reset: ${x.unpairDetail ?? "the unpair command could not be sent."}`}
+            </div>
+          </div>
+        </div>
+      ))}</div>
+      <p className="group-foot">Removed devices are listed here for 30 days.</p>
+    </section>
   );
 }
 
@@ -210,7 +270,7 @@ interface Footprint {
   binRows: number; cacheBytes: number;
   leftInR2: { objects: number; bytes: number };
 }
-interface ForgetResult {
+interface ForgetResult extends UnpairOutcome {
   removed: Record<string, number>; shared: Footprint["shared"]; binPurged: number;
   cacheBytesFreed: number; leftInR2Bytes: number; leftInR2Objects: number; r2Note: string; tokenWarning: string;
 }
@@ -265,6 +325,7 @@ export function ForgetSheet({ device, onClose, onForgotten }: { device: { id: st
       <Sheet title={`${label} forgotten`} label="Forget device" onClose={onClose} footer={<button className="btn btn-primary" onClick={onClose}>Done</button>}>
         <Notice tone="ok" role="status">{forgetSummary(done)}</Notice>
         {done.binPurged > 0 && <p className="small muted">{plural(done.binPurged, "item")} of this device in the recovery bin were removed too.</p>}
+        <p className="small">{unpairText(done)}</p>
         <p className="small">{done.r2Note}</p>
         <Notice tone="warn">{done.tokenWarning}</Notice>
       </Sheet>
@@ -274,6 +335,7 @@ export function ForgetSheet({ device, onClose, onForgotten }: { device: { id: st
     <Sheet title={title} label="Forget device" onClose={onClose}
       footer={<><button className="btn" onClick={onClose}>Keep</button><button className="btn btn-danger-fill" disabled={!matches || !f || busy} onClick={() => void forget()}>{busy ? "Forgetting…" : "Forget this device"}</button></>}>
       <p>Forgetting removes this device and everything it captured from the archive on this Mac. It cannot be undone. Revoke instead if you want to keep what it captured.</p>
+      <p>{resetSentence(device.role)}</p>
       {fp.loading && !f && <p className="muted small" role="status">Counting what this device captured…</p>}
       {fp.error ? <Notice tone="error" role="alert">{forgetError(fp.error)}</Notice> : null}
       {f && (
@@ -295,7 +357,7 @@ export function ForgetSheet({ device, onClose, onForgotten }: { device: { id: st
           <section aria-label="Stays in R2" className="stack-sm">
             <h3>Stays in R2</h3>
             <p data-testid="forget-r2">{f.leftInR2.objects > 0 ? `${plural(f.leftInR2.objects, "media original")} (${bytes(f.leftInR2.bytes)}) stay in your R2 bucket.` : "This device has no media originals kept in R2."}</p>
-            <p className="small muted">R2 is not changed: nothing there is listed or deleted, and the Mac ignores anything this device left there. The device's R2 token still works until you rotate it in Cloudflare.</p>
+            <p className="small muted">What this device uploaded to R2 is not changed: nothing there is listed or deleted, and the Mac ignores anything this device left there. The only R2 write is the reset command for the device. The device's R2 token still works until you rotate it in Cloudflare.</p>
           </section>
           <label className="field">
             <span className="field-label">Type the fingerprint to confirm</span>

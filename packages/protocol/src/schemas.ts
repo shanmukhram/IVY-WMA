@@ -301,12 +301,22 @@ export const CollectorConfigParams = z.object({
   settings: z.record(z.string(), z.unknown()).optional(),
 });
 
+/**
+ * Tell the device it has been removed from this Mac (revoked or forgotten there). The device stops its
+ * collectors and uploads, reports `command_status` done for this command (best effort), then clears its
+ * pairing state and shows its pairing page again. It carries no options; a device that pairs again
+ * chooses a new device id.
+ */
+export const UnpairParams = z.object({
+  type: z.literal("unpair"),
+});
+
 export const CommandRecord = z.object({
   ...base,
   kind: z.literal("command"),
   commandId: z.string(),
   issuedAt: ts,
-  params: z.discriminatedUnion("type", [FileRequestParams, RescanParams, CollectorConfigParams]),
+  params: z.discriminatedUnion("type", [FileRequestParams, RescanParams, CollectorConfigParams, UnpairParams]),
 });
 
 export const CommandStatusRecord = z.object({

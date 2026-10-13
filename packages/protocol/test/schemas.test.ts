@@ -1,5 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { validateRecord, validateRecordKind, validateManifest, PAYLOAD_KINDS } from "../src/index.js";
+import {
+  validateRecord, validateRecordKind, validateManifest, PAYLOAD_KINDS,
+  encryptEnvelope, decryptEnvelope, generateKeyPair, cmdKey, newOid, utf8, fromUtf8,
+} from "../src/index.js";
 
 const common = {
   v: 1 as const,
@@ -150,6 +153,34 @@ describe("record schemas", () => {
       status: "done", reportedAt: common.eventTime,
     };
     expect(validateRecordKind("command_status", st).status).toBe("done");
+  });
+
+  it("unpair: a command with no options that encodes, encrypts to the device and decodes unchanged", () => {
+    const cmd = {
+      ...common, kind: "command", commandId: "c0ffee00-0000-4000-8000-0000000000aa", issuedAt: common.eventTime,
+      params: { type: "unpair" },
+    };
+    expect(validateRecordKind("command", cmd)).toEqual(cmd);
+    const device = generateKeyPair();
+    const key = cmdKey(newOid());
+    const env = encryptEnvelope({ recipientPublicKey: device.publicKey, kind: "command", objectKey: key, plaintext: utf8(JSON.stringify(cmd)) });
+    const out = decryptEnvelope({ recipientSecretKey: device.secretKey, objectKey: key, envelope: env, expectedKind: "command" });
+    const back = validateRecord(JSON.parse(fromUtf8(out.plaintext)));
+    expect(back).toEqual(cmd);
+    expect(back.kind === "command" && back.params.type).toBe("unpair");
+    // its final status is the ordinary done status
+    expect(validateRecordKind("command_status", { ...common, kind: "command_status", commandId: cmd.commandId, status: "done", reportedAt: common.eventTime }).status).toBe("done");
+  });
+
+  it("unpair: unknown fields do not survive parsing (as for rescan and collector_config); bad shapes are rejected", () => {
+    const cmd = { ...common, kind: "command", commandId: "c1", issuedAt: common.eventTime, params: { type: "unpair", wipe: "everything" } };
+    expect(validateRecordKind("command", cmd).params).toEqual({ type: "unpair" });
+    const rescan = { ...cmd, params: { type: "rescan", collector: "files", extra: 1 } };
+    expect(validateRecordKind("command", rescan).params).toEqual({ type: "rescan", collector: "files" });
+    expect(() => validateRecord({ ...cmd, params: { type: "unpaired" } })).toThrow();
+    expect(() => validateRecord({ ...cmd, params: {} })).toThrow();
+    expect(() => validateRecord({ ...cmd, issuedAt: undefined })).toThrow();
+    expect(() => validateRecord({ ...cmd, commandId: undefined })).toThrow();
   });
 
   it("accepts a manifest whose payloadKind is file_original", () => {

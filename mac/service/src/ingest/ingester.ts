@@ -39,11 +39,11 @@ import { join } from "node:path";
 import {
   decryptEnvelope, fromUtf8, makeOid, parseKey, validateRecordKind, OID_LEN,
 } from "@ivy/protocol";
-import type { Kind, PairingDeviceRecordT, RecordKindName } from "@ivy/protocol";
+import type { CommandStatusRecordT, Kind, PairingDeviceRecordT, RecordKindName } from "@ivy/protocol";
 import type { Ctx } from "../context.ts";
 import { KeystoreError } from "../keystore/keystore.ts";
 import { dirs } from "../config.ts";
-import { getSetting, setSetting } from "../db/index.ts";
+import { getSetting, setSetting, type DB } from "../db/index.ts";
 import { ROLES, bucketName, type Role } from "../r2/config.ts";
 import { Bucket, TooLargeError, type ObjectEntry } from "../r2/client.ts";
 import { sha256Hex, writeFileAtomic } from "../util/fsx.ts";
@@ -899,6 +899,11 @@ export class Ingester {
     const d = this.decrypt(key, kind, bytes);
     if ("error" in d) return this.quarantine(src, key, kind, d.error, bytes);
     const rec = d.record as { deviceId: string; kind: Kind };
+    // the one record still taken from a revoked or forgotten device: its answer to the unpair command it was sent
+    if (kind === "command_status") {
+      const late = removedUnpairTarget(this.ctx.db, rec as unknown as CommandStatusRecordT, src.role);
+      if (late) return this.commitUnpairAnswer(src, key, bytes, rec as unknown as CommandStatusRecordT, late);
+    }
     // a record that names a forgotten device: not committed, not deleted from R2, and the blobs it names are ignored too
     if (isForgotten(this.ctx.db, rec.deviceId)) return this.ignore(src, key, kind, bytes, rec.deviceId, blobOidsOf(kind, rec));
     const dev = this.ctx.db.prepare("SELECT role, last_seen FROM devices WHERE id = ?").get(rec.deviceId) as { role: Role; last_seen: string | null } | undefined;
@@ -923,6 +928,34 @@ export class Ingester {
     for (const oid of result!.blobs ?? []) placeAndLink(this.ctx, oid);
     this.ctx.events.emit(kind === "command_status" ? "command.status" : "ingest.committed", { bucket: src.bucketName, key, kind, deviceId: rec.deviceId, ...result!.summary });
     if (result!.coverageChanged) this.ctx.events.emit("coverage.changed", { deviceId: rec.deviceId });
+    return "committed";
+  }
+
+  /**
+   * The command_status a revoked or forgotten device sends for its unpair command. The device row is gone, so
+   * this is committed here instead of through the device checks: the command is marked with the status, its
+   * cmd/<oid> is deleted as for any answered command (PLAN decision 4), and a done status records when the
+   * device confirmed the reset on its revoked_devices / forgotten_devices row.
+   */
+  private async commitUnpairAnswer(src: Source, key: string, bytes: Uint8Array, r: CommandStatusRecordT, t: RemovedTarget): Promise<Outcome> {
+    const db = this.ctx.db;
+    let result!: CommitResult;
+    let confirmedAt: string | null = null;
+    db.transaction(() => {
+      result = commitCommandStatus(db, r);
+      if (r.status === "done") {
+        const at = nowIso();
+        if (db.prepare(`UPDATE ${t.table} SET unpair_confirmed_at = ?, unpair_detail = NULL WHERE id = ? AND unpair_confirmed_at IS NULL`).run(at, r.deviceId).changes) confirmedAt = at;
+      } else {
+        db.prepare(`UPDATE ${t.table} SET unpair_detail = ? WHERE id = ? AND unpair_confirmed_at IS NULL`)
+          .run(`The device answered ${r.status}${r.detail ? `: ${r.detail.slice(0, 200)}` : ""}.`, r.deviceId);
+      }
+      this.insertLedger(src.bucketName, key, "command_status", "committed", bytes, r.deviceId, `unpair answer from a ${t.kind} device`);
+    })();
+    await this.remove(src, key);
+    for (const c of result.deleteCommands ?? []) await deleteCommandObject(this.ctx, c.commandId);
+    this.ctx.events.emit("command.status", { bucket: src.bucketName, key, kind: "command_status", deviceId: r.deviceId, ...result.summary });
+    if (confirmedAt) this.ctx.events.emit("device.unpair_confirmed", { deviceId: r.deviceId, role: src.role, removed: t.kind, confirmedAt });
     return "committed";
   }
 
@@ -1195,6 +1228,23 @@ function stampOf(o: ObjectEntry): string {
 
 function transferOf(p: ReturnType<typeof blobProgress>) {
   return { resultOid: p.oid, committedParts: p.committedParts, totalChunks: p.totalChunks, committedBytes: p.committedBytes, totalSize: p.totalSize };
+}
+
+interface RemovedTarget { table: "revoked_devices" | "forgotten_devices"; kind: "revoked" | "forgotten" }
+
+/**
+ * Whether a command_status is a removed device's answer to its unpair command: the device is no longer paired,
+ * it was revoked or forgotten with exactly this unpair command id, the status names that command and device,
+ * and it arrived in that device's role bucket. Anything else from a removed device keeps its usual handling.
+ */
+function removedUnpairTarget(db: DB, r: CommandStatusRecordT, role: Role): RemovedTarget | null {
+  if (db.prepare("SELECT 1 FROM devices WHERE id = ?").get(r.deviceId)) return null;
+  if (!db.prepare("SELECT 1 FROM commands WHERE id = ? AND device_id = ? AND type = 'unpair'").get(r.commandId, r.deviceId)) return null;
+  for (const t of [{ table: "revoked_devices", kind: "revoked" }, { table: "forgotten_devices", kind: "forgotten" }] as RemovedTarget[]) {
+    const row = db.prepare(`SELECT role FROM ${t.table} WHERE id = ? AND unpair_command_id = ?`).get(r.deviceId, r.commandId) as { role: string } | undefined;
+    if (row && row.role === role) return t;
+  }
+  return null;
 }
 
 /** A blob row marked ignored (its device was forgotten). The BlobRow type predates the status. */
