@@ -58,6 +58,8 @@ import {
 } from "./blobs.ts";
 import { acceptDeviceRecord, expireStalePairings, finishPairing } from "../pairing/pairing.ts";
 import { deleteCommandObject, maintainCommands, sendQueued } from "../commands/commands.ts";
+import { isForgotten } from "../devices/forget.ts";
+import { removeQuietly } from "../util/fsx.ts";
 
 /** Record prefixes listed incrementally (PROTOCOL §5). */
 const RECORD_PREFIXES = ["file", "fcat", "scr", "usg", "wnotif", "anotif", "call", "msg", "lineacct", "cstat", "status", "blob"];
@@ -118,6 +120,8 @@ export interface BucketPassResult {
   committed: number;
   quarantined: number;
   replayed: number;
+  /** objects from a forgotten device seen for the first time: recorded as ignored, left in R2, not committed */
+  ignored: number;
   waiting: number;
   errors: number;
   marker: string | null;
@@ -132,7 +136,9 @@ export interface PollResult {
   durationMs: number;
 }
 
-type Outcome = "committed" | "quarantined" | "replayed" | "waiting" | "error";
+// "ignored": first sight of an object from a forgotten device (ledger row written, object left in R2);
+// "settled": a key the ledger already records as ignored, listed again (no GET, nothing counted)
+type Outcome = "committed" | "quarantined" | "replayed" | "ignored" | "settled" | "waiting" | "error";
 
 interface Source {
   bucket: Bucket | null; // null when re-processing quarantined bytes locally
@@ -292,14 +298,14 @@ export class Ingester {
       results.push(res);
       setSetting(this.ctx.db, `poll:${name}`, JSON.stringify({
         at, ok: !res.error, error: res.error ?? null, lastOkAt: res.error ? this.lastOk(name) : at,
-        committed: res.committed, quarantined: res.quarantined, listed: res.listed, waiting: res.waiting,
+        committed: res.committed, quarantined: res.quarantined, listed: res.listed, waiting: res.waiting, ignored: res.ignored,
       }));
     }
     await maintainCommands(this.ctx).catch(() => undefined);
     const out: PollResult = { at, buckets: results, durationMs: Date.now() - t0 };
     this.last = out;
     this.ctx.events.emit("ingest.poll", {
-      buckets: results.map((b) => ({ bucket: b.bucket, committed: b.committed, quarantined: b.quarantined, waiting: b.waiting, error: b.error ?? null })),
+      buckets: results.map((b) => ({ bucket: b.bucket, committed: b.committed, quarantined: b.quarantined, ignored: b.ignored, waiting: b.waiting, error: b.error ?? null })),
       durationMs: out.durationMs,
     });
     if (results.some((b) => b.committed || b.quarantined)) this.ctx.events.emit("coverage.changed", {});
@@ -417,7 +423,7 @@ export class Ingester {
   private async pollBucket(src: Source, full: boolean): Promise<BucketPassResult> {
     const pos = this.positions(src.bucketName);
     const res: BucketPassResult = {
-      bucket: src.bucketName, role: src.role, listed: 0, committed: 0, quarantined: 0, replayed: 0, waiting: 0, errors: 0,
+      bucket: src.bucketName, role: src.role, listed: 0, committed: 0, quarantined: 0, replayed: 0, ignored: 0, waiting: 0, errors: 0,
       marker: highest(pos), full,
     };
     let listing: ObjectEntry[];
@@ -447,6 +453,8 @@ export class Ingester {
       else if (o === "quarantined") res.quarantined++;
       else if (o === "replayed") res.replayed++;
       else if (o === "waiting") res.waiting++;
+      else if (o === "ignored") res.ignored++;
+      else if (o === "settled") { /* already ignored: nothing new */ }
       else res.errors++;
     };
     const seen = this.seenFor(src.bucketName);
@@ -494,8 +502,17 @@ export class Ingester {
     const blobEntries = [...blobs.entries()].filter(([oid, g]) => {
       void g;
       const known = getBlob(this.ctx, src.bucketName, oid);
-      return !(known && known.status === "complete" && archivesPayload(this.ctx, known.payload_kind));
+      return !(known && known.status === "complete" && archivesPayload(this.ctx, known.payload_kind)) && !isIgnoredBlob(known);
     });
+    // a blob of a forgotten device: its manifest and parts are recorded as ignored (first sight) or settled from
+    // the ledger (already ignored), never fetched and never deleted from R2
+    for (const [oid, g] of blobs) {
+      const known = getBlob(this.ctx, src.bucketName, oid);
+      if (!isIgnoredBlob(known)) continue;
+      for (const o of [...(g.manifest ? [g.manifest] : []), ...g.parts]) {
+        tally(await this.guard(src, o.key, o === g.manifest ? "manifest" : "blob_chunk", () => this.ignoreKnownBlobObject(src, o.key, o === g.manifest ? "manifest" : "blob_chunk", known!.device_id)));
+      }
+    }
     // Phase 1: ingest every manifest first (they are tiny), which records each blob's payload kind so the
     // chunks can then be fetched avatars-first. A blob whose parts arrived before its manifest waits as before.
     for (const [oid, g] of blobEntries) {
@@ -576,7 +593,7 @@ export class Ingester {
       pos.set(p, v);
       setSetting(this.ctx.db, `pos:${src.bucketName}:${p}`, v);
     };
-    const settled = (o: Outcome | undefined) => o === "committed" || o === "replayed" || o === "quarantined";
+    const settled = (o: Outcome | undefined) => o === "committed" || o === "replayed" || o === "quarantined" || o === "ignored" || o === "settled";
 
     const byPrefix = new Map<string, Array<ObjectEntry & { oid: string }>>();
     for (const o of singles) {
@@ -654,13 +671,13 @@ export class Ingester {
 
   private settledByLedger(src: Source, o: ObjectEntry): boolean {
     const prior = this.ledger(src.bucketName, o.key);
-    return !!prior && this.unchangedSinceLedger(src, o, prior);
+    return !!prior && (prior.status === "ignored" || this.unchangedSinceLedger(src, o, prior));
   }
 
   /** Whether ingestPart will read this part's bytes (mirrors its early returns), so the window prefetches it. */
   private partNeedsBytes(src: Source, oid: string, p: ObjectEntry & { index: number }): boolean {
     const row = getBlob(this.ctx, src.bucketName, oid);
-    if (!row || row.status === "awaiting_manifest" || row.status === "quarantined" || row.status === "complete") return false;
+    if (!row || row.status === "awaiting_manifest" || row.status === "quarantined" || row.status === "complete" || isIgnoredBlob(row)) return false;
     if (committedSet(row).has(p.index)) return false;
     return !this.settledByLedger(src, p);
   }
@@ -717,12 +734,13 @@ export class Ingester {
       LedgerRow | undefined;
   }
 
-  private insertLedger(bucket: string, key: string, kind: string, status: "committed" | "quarantined", bytes: Uint8Array | null, deviceId: string | null, detail: string | null) {
+  /** A settled row (committed, or ignored: from a forgotten device) is never overwritten. */
+  private insertLedger(bucket: string, key: string, kind: string, status: "committed" | "quarantined" | "ignored", bytes: Uint8Array | null, deviceId: string | null, detail: string | null) {
     this.ctx.db.prepare(`INSERT INTO sync_objects(id, device_id, bucket, object_key, kind, status, ingested_at, size, ct_sha256, detail)
                          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                          ON CONFLICT(bucket, object_key) DO UPDATE SET status = excluded.status, ingested_at = excluded.ingested_at,
                            device_id = excluded.device_id, detail = excluded.detail, ct_sha256 = excluded.ct_sha256, size = excluded.size
-                         WHERE sync_objects.status != 'committed'`)
+                         WHERE sync_objects.status NOT IN ('committed', 'ignored')`)
       .run(randomUUID(), deviceId, bucket, key, kind, status, nowIso(), bytes?.length ?? null, bytes ? sha256Hex(bytes) : null, detail);
   }
 
@@ -776,9 +794,56 @@ export class Ingester {
     catch (e) { return { error: `schema invalid: ${(e as Error).message.replace(/\s+/g, " ").slice(0, 300)}` }; }
   }
 
+  // ------------------------------------------------------------------ forgotten devices
+
+  /**
+   * An object whose record names a forgotten device: write an `ignored` ledger row and leave the object in R2
+   * (a forget never changes R2, and neither does ingest on its behalf). Blobs the record names are marked
+   * ignored in this bucket, with their ledger rows, so their manifest and parts are settled without a fetch;
+   * a copy of one already assembled locally is dropped from the cache.
+   */
+  private async ignore(src: Source, key: string, kind: string, bytes: Uint8Array | null, deviceId: string, blobOids: string[]): Promise<Outcome> {
+    const paths: string[] = [];
+    this.ctx.db.transaction(() => {
+      this.insertLedger(src.bucketName, key, kind, "ignored", bytes, deviceId, "from a forgotten device");
+      for (const oid of blobOids) {
+        if (!validOid(oid)) continue;
+        const row = getBlob(this.ctx, src.bucketName, oid);
+        if (row) {
+          if (isIgnoredBlob(row)) continue;
+          paths.push(...[row.local_path, row.tmp_path].filter((x): x is string => !!x));
+          this.ctx.db.prepare(`UPDATE blobs SET status = 'ignored', device_id = ?, manifest_env = NULL, local_path = NULL, tmp_path = NULL,
+                                 committed_parts = '[]', committed_bytes = 0, sha256 = NULL, detail = 'from a forgotten device', updated_at = ? WHERE rid = ?`)
+            .run(deviceId, nowIso(), row.rid);
+          this.ctx.db.prepare("DELETE FROM media_archive WHERE oid = ? AND bucket = ?").run(oid, src.bucketName);
+        } else {
+          this.ctx.db.prepare(`INSERT INTO blobs(oid, bucket, role, device_id, status, first_seen_at, updated_at, detail)
+                               VALUES (?, ?, ?, ?, 'ignored', ?, ?, 'from a forgotten device')`).run(oid, src.bucketName, src.role, deviceId, nowIso(), nowIso());
+        }
+        this.ctx.db.prepare(`UPDATE sync_objects SET status = 'ignored', device_id = ?, detail = 'from a forgotten device'
+                             WHERE bucket = ? AND object_key >= ? AND object_key < ?`).run(deviceId, src.bucketName, `${BLOB_PATH}${oid}/`, `${BLOB_PATH}${oid}0`);
+      }
+    })();
+    for (const p of paths) removeQuietly(p);
+    this.ctx.events.emit("ingest.ignored", { bucket: src.bucketName, key, kind, deviceId });
+    return "ignored";
+  }
+
+  /** A manifest or part of a blob already marked ignored: settled when the ledger says so, else recorded. No GET. */
+  private async ignoreKnownBlobObject(src: Source, key: string, kind: string, deviceId: string | null): Promise<Outcome> {
+    if (this.ledger(src.bucketName, key)?.status === "ignored") return "settled";
+    this.ctx.db.prepare(`INSERT INTO sync_objects(id, device_id, bucket, object_key, kind, status, ingested_at, detail)
+                         VALUES (?, ?, ?, ?, ?, 'ignored', ?, 'from a forgotten device')
+                         ON CONFLICT(bucket, object_key) DO UPDATE SET status = 'ignored', device_id = excluded.device_id, detail = excluded.detail`)
+      .run(randomUUID(), deviceId, src.bucketName, key, kind, nowIso());
+    this.ctx.events.emit("ingest.ignored", { bucket: src.bucketName, key, kind, deviceId });
+    return "ignored";
+  }
+
   // ------------------------------------------------------------------ pairing
 
   private async ingestPairing(src: Source, o: ObjectEntry, bytesIn?: Uint8Array): Promise<Outcome> {
+    if (this.ledger(src.bucketName, o.key)?.status === "ignored") return "settled";
     if (!bytesIn) {
       const known = this.ledger(src.bucketName, o.key);
       if (known && this.unchangedSinceLedger(src, o, known)) return this.replay(src, o.key, known, false);
@@ -793,6 +858,10 @@ export class Ingester {
     if ("error" in d) return this.quarantine(src, o.key, "pairing_device", d.error, bytes);
     const rec = d.record as PairingDeviceRecordT;
     const keyPairingId = o.key.split("/")[1]!;
+    // the forgotten device's own old pairing answer is left alone; a fresh pairing that reuses a forgotten id is
+    // refused visibly by acceptDeviceRecord instead (pairing.rejected)
+    const pending = this.ctx.db.prepare("SELECT 1 FROM pairings WHERE id = ? AND status = 'pending'").get(keyPairingId);
+    if (!pending && isForgotten(this.ctx.db, rec.deviceId)) return this.ignore(src, o.key, "pairing_device", bytes, rec.deviceId, []);
     let accepted: ReturnType<typeof acceptDeviceRecord> | undefined;
     this.ctx.db.transaction(() => {
       accepted = acceptDeviceRecord(this.ctx, rec, { keyPairingId, bucketRole: src.role, writtenAt: o.lastModified });
@@ -814,6 +883,7 @@ export class Ingester {
   // ------------------------------------------------------------------ single records
 
   private async ingestSingle(src: Source, key: string, kind: Kind, bytesIn?: Uint8Array, force = false, listed?: ObjectEntry): Promise<Outcome> {
+    if (!force && this.ledger(src.bucketName, key)?.status === "ignored") return "settled";
     if (!bytesIn && !force && listed) {
       const known = this.ledger(src.bucketName, key);
       if (known && this.unchangedSinceLedger(src, listed, known)) return this.replay(src, key, known, false);
@@ -829,6 +899,8 @@ export class Ingester {
     const d = this.decrypt(key, kind, bytes);
     if ("error" in d) return this.quarantine(src, key, kind, d.error, bytes);
     const rec = d.record as { deviceId: string; kind: Kind };
+    // a record that names a forgotten device: not committed, not deleted from R2, and the blobs it names are ignored too
+    if (isForgotten(this.ctx.db, rec.deviceId)) return this.ignore(src, key, kind, bytes, rec.deviceId, blobOidsOf(kind, rec));
     const dev = this.ctx.db.prepare("SELECT role, last_seen FROM devices WHERE id = ?").get(rec.deviceId) as { role: Role; last_seen: string | null } | undefined;
     if (!dev) return this.quarantine(src, key, kind, `record from unknown or revoked device ${rec.deviceId}`, bytes, rec.deviceId);
     if (dev.role !== src.role) return this.quarantine(src, key, kind, `device ${rec.deviceId} is ${dev.role} but wrote to the ${src.role} bucket`, bytes, rec.deviceId);
@@ -874,6 +946,8 @@ export class Ingester {
   // ------------------------------------------------------------------ blobs
 
   private async ingestManifest(src: Source, oid: string, key: string, listedParts: ObjectEntry[], bytesIn?: Uint8Array, force = false, listed?: ObjectEntry): Promise<Outcome> {
+    const pre = getBlob(this.ctx, src.bucketName, oid);
+    if (isIgnoredBlob(pre)) return this.ignoreKnownBlobObject(src, key, "manifest", pre!.device_id);
     if (!bytesIn && !force && listed) {
       const known = this.ledger(src.bucketName, key);
       // a media original's manifest stays in R2 while the blob assembles and after it completes
@@ -923,6 +997,7 @@ export class Ingester {
 
   private async ingestPart(src: Source, oid: string, key: string, index: number, bytesIn?: Uint8Array, force = false): Promise<Outcome> {
     let row = getBlob(this.ctx, src.bucketName, oid);
+    if (isIgnoredBlob(row)) return this.ignoreKnownBlobObject(src, key, "blob_chunk", row!.device_id);
     if (!row || row.status === "awaiting_manifest") {
       row ??= noteAwaitingManifest(this.ctx, src.bucketName, src.role, oid);
       const age = Date.now() - (msOf(row.first_seen_at) ?? Date.now());
@@ -1062,6 +1137,26 @@ export class Ingester {
     return result;
   }
 
+  /**
+   * Run `fn` in the same single-flight slot as a pass (as abandonBlob does): it waits for a running pass and
+   * no pass starts until it is done. Forgetting a device runs here, so no in-flight pass can commit or finish
+   * a blob of that device halfway through.
+   */
+  async exclusive<T>(fn: () => T | Promise<T>): Promise<T> {
+    for (;;) { await this.settle(); if (!this.running) break; }
+    type R = { ok: true; value: T } | { ok: false; error: unknown };
+    let result = { ok: false, error: new Error("not run") } as R;
+    const slot = (async (): Promise<PollResult> => {
+      try { result = { ok: true, value: await fn() }; } catch (e) { result = { ok: false, error: e }; }
+      return { at: nowIso(), skipped: "exclusive task", buckets: [], durationMs: 0 };
+    })();
+    this.running = slot.finally(() => { this.running = null; });
+    await this.running;
+    const r = result as R;
+    if (!r.ok) throw r.error;
+    return r.value;
+  }
+
   // ------------------------------------------------------------------ quarantine retry
 
   /**
@@ -1100,6 +1195,25 @@ function stampOf(o: ObjectEntry): string {
 
 function transferOf(p: ReturnType<typeof blobProgress>) {
   return { resultOid: p.oid, committedParts: p.committedParts, totalChunks: p.totalChunks, committedBytes: p.committedBytes, totalSize: p.totalSize };
+}
+
+/** A blob row marked ignored (its device was forgotten). The BlobRow type predates the status. */
+function isIgnoredBlob(row: { status: string } | undefined): boolean {
+  return (row?.status as string | undefined) === "ignored";
+}
+
+/** Blob oids a decrypted record names (screenshot, file thumbnail and original, attachments, chat avatar, command result). */
+function blobOidsOf(kind: string, rec: unknown): string[] {
+  const r = rec as Record<string, any>;
+  const out: Array<string | undefined> = [];
+  if (kind === "screenshot") out.push(r.blobOid);
+  else if (kind === "file_meta") out.push(r.thumbBlobOid, r.originalBlobOid);
+  else if (kind === "command_status") out.push(r.resultOid);
+  else if (kind === "message_batch") {
+    out.push(r.chatMeta?.avatarBlobOid);
+    for (const m of (r.messages ?? []) as Array<{ attachments?: Array<{ blobOid?: string }> }>) for (const a of m.attachments ?? []) out.push(a.blobOid);
+  }
+  return [...new Set(out.filter((x): x is string => typeof x === "string" && x.length > 0))];
 }
 
 /** The record prefix (e.g. "msg", "blob") a key under `up/` belongs to, or undefined. */

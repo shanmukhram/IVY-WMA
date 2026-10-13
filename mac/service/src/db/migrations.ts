@@ -792,6 +792,89 @@ const v12 = `
 ALTER TABLE conversations ADD COLUMN listing TEXT;
 `;
 
+// v13: forgetting a device (Devices page, "Forget this device"). A forgotten device's id is kept in
+// forgotten_devices, so anything it left in R2 (media originals are kept there, PLAN decision 11, and the
+// Mac never deletes from R2 on a forget) is recognised on a later listing and left alone: not committed,
+// not deleted, recorded in the ledger with the new status 'ignored'. A blob row can be 'ignored' too, so
+// its manifest and parts are settled without fetching. Both CHECK constraints need a table rebuild (as
+// commands in v2); rids are preserved. The device_id indexes keep the forget footprint and the forget
+// itself to indexed lookups; message_edits gains the message_id index a purge deletes by.
+const v13 = `
+CREATE TABLE forgotten_devices (
+  id TEXT PRIMARY KEY,                     -- the device id that was forgotten; a new pairing issues a new id
+  role TEXT NOT NULL,
+  fingerprint TEXT NOT NULL,
+  forgotten_at TEXT NOT NULL
+);
+
+CREATE TABLE sync_objects_v13 (
+  rid INTEGER PRIMARY KEY,
+  id TEXT NOT NULL UNIQUE,
+  device_id TEXT,
+  bucket TEXT NOT NULL,
+  object_key TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('pending','committed','quarantined','ignored')),
+  ingested_at TEXT NOT NULL,
+  size INTEGER,
+  ct_sha256 TEXT,
+  detail TEXT,
+  UNIQUE (bucket, object_key)
+);
+INSERT INTO sync_objects_v13 (rid, id, device_id, bucket, object_key, kind, status, ingested_at, size, ct_sha256, detail)
+  SELECT rid, id, device_id, bucket, object_key, kind, status, ingested_at, size, ct_sha256, detail FROM sync_objects;
+DROP TABLE sync_objects;
+ALTER TABLE sync_objects_v13 RENAME TO sync_objects;
+CREATE INDEX sync_objects_kind ON sync_objects(kind, ingested_at);
+CREATE INDEX sync_objects_device ON sync_objects(device_id);
+
+CREATE TABLE blobs_v13 (
+  rid INTEGER PRIMARY KEY,
+  oid TEXT NOT NULL,
+  bucket TEXT NOT NULL,
+  role TEXT NOT NULL,
+  device_id TEXT,
+  status TEXT NOT NULL CHECK (status IN ('awaiting_manifest','assembling','complete','quarantined','ignored')),
+  payload_kind TEXT,
+  total_size INTEGER,
+  chunk_size INTEGER,
+  total_chunks INTEGER,
+  manifest_env BLOB,
+  committed_parts TEXT NOT NULL DEFAULT '[]',
+  committed_bytes INTEGER NOT NULL DEFAULT 0,
+  tmp_path TEXT,
+  local_path TEXT,
+  ext TEXT,
+  sha256 TEXT,
+  first_seen_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  completed_at TEXT,
+  detail TEXT,
+  command_id TEXT,
+  UNIQUE (bucket, oid)
+);
+INSERT INTO blobs_v13 (rid, oid, bucket, role, device_id, status, payload_kind, total_size, chunk_size, total_chunks, manifest_env,
+  committed_parts, committed_bytes, tmp_path, local_path, ext, sha256, first_seen_at, updated_at, completed_at, detail, command_id)
+  SELECT rid, oid, bucket, role, device_id, status, payload_kind, total_size, chunk_size, total_chunks, manifest_env,
+    committed_parts, committed_bytes, tmp_path, local_path, ext, sha256, first_seen_at, updated_at, completed_at, detail, command_id FROM blobs;
+DROP TABLE blobs;
+ALTER TABLE blobs_v13 RENAME TO blobs;
+CREATE INDEX blobs_oid ON blobs(oid);
+CREATE INDEX blobs_pending ON blobs(status, updated_at);
+CREATE INDEX blobs_device ON blobs(device_id);
+
+CREATE INDEX messages_device ON messages(device_id);
+CREATE INDEX message_sources_device ON message_sources(device_id);
+CREATE INDEX message_edits_message ON message_edits(message_id);
+CREATE INDEX conversations_device ON conversations(device_id);
+CREATE INDEX notifications_device ON notifications(device_id);
+CREATE INDEX media_device ON media(device_id);
+CREATE INDEX commands_device ON commands(device_id);
+CREATE INDEX quarantine_device ON quarantine(device_id);
+CREATE INDEX media_archive_device ON media_archive(device_id);
+CREATE INDEX pairings_device ON pairings(device_id);
+`;
+
 export const MIGRATIONS: Migration[] = [
   { version: 1, name: "initial vault schema", sql: v1 },
   { version: 2, name: "import progress, manifest commandId, transferring commands", sql: v2 },
@@ -805,4 +888,5 @@ export const MIGRATIONS: Migration[] = [
   { version: 10, name: "call events on messages (call_kind, call_outcome, call_duration_s, call_direction)", sql: v10 },
   { version: 11, name: "index for the stale-blob sweep (blobs by status and last progress)", sql: v11 },
   { version: 12, name: "conversation listing (normal | archived | hidden) from chatMeta.listing", sql: v12 },
+  { version: 13, name: "forgotten devices: ignore list, 'ignored' ledger and blob status, device_id indexes", sql: v13 },
 ];

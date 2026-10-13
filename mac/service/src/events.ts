@@ -8,12 +8,12 @@ import type { DB } from "./db/index.ts";
 import { nowIso } from "./util/time.ts";
 
 export type EventType =
-  | "ingest.poll" | "ingest.committed" | "ingest.quarantined" | "ingest.replayed" | "ingest.error" | "ingest.paused" | "ingest.resumed" | "ingest.archived"
+  | "ingest.poll" | "ingest.committed" | "ingest.quarantined" | "ingest.replayed" | "ingest.error" | "ingest.paused" | "ingest.resumed" | "ingest.archived" | "ingest.ignored"
   | "blob.progress" | "blob.complete"
   | "command.issued" | "command.sent" | "command.transferring" | "command.progress" | "command.status" | "command.completed" | "command.cancelled"
   | "file.cached" | "file.extracted"
   | "pairing.started" | "pairing.completed" | "pairing.rejected" | "pairing.expired" | "pairing.cancelled"
-  | "device.revoked"
+  | "device.revoked" | "device.forgotten"
   | "keystore.initialized" | "keystore.unlocked" | "keystore.locked" | "keystore.passphrase_changed"
   | "r2.configured"
   | "coverage.changed"

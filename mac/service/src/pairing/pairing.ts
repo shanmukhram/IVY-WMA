@@ -143,6 +143,8 @@ export function acceptDeviceRecord(
   let fp: string;
   try { fp = fingerprintFromB64(rec.publicKey); } catch { return { ok: false, reason: "bad device public key" }; }
   if (fp !== rec.fingerprint) return { ok: false, reason: `device fingerprint ${rec.fingerprint} does not match its public key (${fp})` };
+  // a forgotten device id never comes back: a device pairing again chooses a new id (the companions do)
+  if (ctx.db.prepare("SELECT 1 FROM forgotten_devices WHERE id = ?").get(rec.deviceId)) return { ok: false, reason: "this device id was forgotten; pair again from the device to get a new id" };
 
   const at = nowIso();
   ctx.db.prepare(`INSERT INTO devices(id, role, public_key, fingerprint, pairing_id, paired_at, last_seen)
@@ -169,6 +171,9 @@ export function getDevice(ctx: Ctx, id: string): DeviceRow | undefined {
   return ctx.db.prepare("SELECT * FROM devices WHERE id = ?").get(id) as DeviceRow | undefined;
 }
 
+/** Shown after a revoke or a forget: the Mac cannot invalidate a device's R2 tokens itself. */
+export const TOKEN_WARNING = "The device's R2 tokens remain valid until you rotate them in the Cloudflare dashboard.";
+
 /**
  * Revoke a device: forget its public key (no further commands can be wrapped to
  * it and its uploads are quarantined as from an unknown device), cancel its
@@ -178,7 +183,7 @@ export function getDevice(ctx: Ctx, id: string): DeviceRow | undefined {
  */
 export async function revokeDevice(ctx: Ctx, id: string): Promise<{ revoked: boolean; cancelledCommands: number; tokenWarning: string }> {
   const d = getDevice(ctx, id);
-  const tokenWarning = "The device's R2 tokens remain valid until you rotate them in the Cloudflare dashboard.";
+  const tokenWarning = TOKEN_WARNING;
   if (!d) return { revoked: false, cancelledCommands: 0, tokenWarning };
   const open = ctx.db.prepare("SELECT id, object_key, cmd_deleted FROM commands WHERE device_id = ? AND status IN ('queued','sent','transferring','uploaded')").all(id) as Array<{ id: string; object_key: string; cmd_deleted: number }>;
   const cmd = ctx.r2()?.bucket("cmd", d.role);
