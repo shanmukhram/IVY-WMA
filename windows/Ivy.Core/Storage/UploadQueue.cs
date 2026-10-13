@@ -204,7 +204,55 @@ public sealed class UploadQueue
         }
     }
 
-    private const string Columns = "id, seq, object_key, part_path, size, attempts, status, kind, group_key, collector, created_at, next_attempt_ms, last_error, upload_id, part_size";
+    /// <summary>
+    /// Drop every item whose kind is not <paramref name="keep"/>, whatever its status, deleting the rows, their
+    /// multipart progress and their part files. Used when the Mac unpairs this device: the unsent backlog is
+    /// discarded and only the <c>command_status</c> records (the reply to the unpair) stay to be uploaded. An item
+    /// that is mid-upload at this moment may still finish. Returns how many rows were dropped.
+    /// </summary>
+    public int PurgeAllExcept(Kind keep) => PurgeWhere("kind <> $k", ("$k", keep.WireName()));
+
+    /// <summary>
+    /// Empty the queue: delete every row (and multipart progress) and every file in the queue directory, including
+    /// leftover temp files and part files that have no row (which <see cref="Reconcile"/> would otherwise re-enqueue).
+    /// Used by the pairing reset. Returns how many rows were dropped.
+    /// </summary>
+    public int PurgeAll()
+    {
+        var n = PurgeWhere("1 = 1");
+        foreach (var f in Directory.EnumerateFiles(QueueDirectory))
+            try { File.Delete(f); }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException) { _logger.LogWarning(e, "could not delete queue file {File}", Path.GetFileName(f)); }
+        return n;
+    }
+
+    private int PurgeWhere(string where, params (string Name, object Value)[] ps)
+    {
+        var partPaths = new List<string>();
+        int n;
+        using (IvyUiThread.Write("UploadQueue.Purge"))
+        using (var c = _db.Open())
+        using (var tx = c.BeginTransaction())
+        {
+            using var cmd = c.CreateCommand();
+            cmd.Transaction = tx;
+            foreach (var (name, value) in ps) cmd.Parameters.AddWithValue(name, value);
+            cmd.CommandText = $"SELECT part_path FROM pending_uploads WHERE {where}";
+            using (var r = cmd.ExecuteReader())
+                while (r.Read()) partPaths.Add(r.GetString(0));
+            cmd.CommandText = $"DELETE FROM pending_upload_parts WHERE upload_row_id IN (SELECT id FROM pending_uploads WHERE {where})";
+            cmd.ExecuteNonQuery();
+            cmd.CommandText = $"DELETE FROM pending_uploads WHERE {where}";
+            n = cmd.ExecuteNonQuery();
+            tx.Commit();
+        }
+        foreach (var p in partPaths)
+            try { var f = Path.Combine(QueueDirectory, p); if (File.Exists(f)) File.Delete(f); }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException) { _logger.LogWarning(e, "could not delete queue file {File}", p); }
+        return n;
+    }
+
+    private const string Columns = "id, seq,object_key, part_path, size, attempts, status, kind, group_key, collector, created_at, next_attempt_ms, last_error, upload_id, part_size";
 
     private static QueueItem Read(SqliteDataReader r) => new(
         r.GetString(0), r.GetInt64(1), r.GetString(2), r.GetString(3), r.GetInt64(4), r.GetInt32(5),

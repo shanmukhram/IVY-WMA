@@ -40,6 +40,16 @@ public interface ICollectorConfigHandler
     Task<CommandOutcome> HandleCollectorConfigAsync(CommandRecord command, CollectorConfigParams p, CancellationToken ct);
 }
 
+/// <summary>
+/// Handles <c>unpair</c>. Implemented by <see cref="Agent.VaultAgent"/>. The poller has already enqueued the
+/// <c>done</c> status and recorded the command as executed before this is called, so there is no outcome to return;
+/// exceptions are logged by the poller and otherwise ignored.
+/// </summary>
+public interface IUnpairHandler
+{
+    Task HandleUnpairAsync(CommandRecord command, CancellationToken ct);
+}
+
 /// <summary>Resolves a file_request to a local path (path, or fileId via <c>file_cache</c>).</summary>
 public interface IFileLocator
 {

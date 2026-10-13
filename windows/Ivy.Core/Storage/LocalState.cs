@@ -75,6 +75,19 @@ public sealed class CollectorStateStore
         SetImport(name, import);
     }
 
+    /// <summary>
+    /// Forget every collector's last run, cursor and import progress (pairing reset), so the next pairing starts
+    /// from scratch. The rows and their <c>enabled</c> flag are kept. Returns how many rows were reset.
+    /// </summary>
+    public int ClearProgress()
+    {
+        using var guard = IvyUiThread.Write("CollectorStateStore.ClearProgress");
+        using var c = _db.Open();
+        using var cmd = c.CreateCommand();
+        cmd.CommandText = "UPDATE collector_state SET last_run_at = NULL, cursor = NULL, import_total = NULL, import_done = NULL, import_phase = NULL";
+        return cmd.ExecuteNonQuery();
+    }
+
     /// <summary>Set (or clear, with null) the import progress reported for <paramref name="name"/>.</summary>
     public void SetImport(string name, ImportProgress? import)
     {
@@ -129,6 +142,23 @@ public sealed class FileCacheStore
         cmd.CommandText = "DELETE FROM file_cache WHERE path = $p";
         cmd.Parameters.AddWithValue("$p", path);
         cmd.ExecuteNonQuery();
+    }
+
+    /// <summary>Delete every row (pairing reset). Returns how many were deleted.</summary>
+    public int Clear()
+    {
+        using var c = _db.Open();
+        using var cmd = c.CreateCommand();
+        cmd.CommandText = "DELETE FROM file_cache";
+        return cmd.ExecuteNonQuery();
+    }
+
+    public int Count()
+    {
+        using var c = _db.Open();
+        using var cmd = c.CreateCommand();
+        cmd.CommandText = "SELECT COUNT(*) FROM file_cache";
+        return (int)(long)cmd.ExecuteScalar()!;
     }
 
     private FileCacheRow? Query(string sql, string v)

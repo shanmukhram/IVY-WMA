@@ -453,6 +453,16 @@ public sealed record CollectorConfigParams : CommandParams
     [JsonPropertyName("settings")] public Dictionary<string, JsonElement>? Settings { get; init; }
 }
 
+/// <summary>
+/// <c>unpair</c>: the Mac tells this device to forget its pairing. No fields. The device reports <c>done</c>, drops
+/// its unsent backlog, waits briefly for that status to upload, then clears its keys, credentials and local state.
+/// </summary>
+public sealed record UnpairParams : CommandParams
+{
+    public const string TypeName = "unpair";
+    [JsonPropertyName("type"), JsonPropertyOrder(-1)] public override string Type => TypeName;
+}
+
 /// <summary>Reads <c>type</c> wherever it appears in the object, then binds the matching params record.</summary>
 internal sealed class CommandParamsConverter : JsonConverter<CommandParams>
 {
@@ -468,6 +478,7 @@ internal sealed class CommandParamsConverter : JsonConverter<CommandParams>
             FileRequestParams.TypeName => Bind<FileRequestParams>(raw),
             RescanParams.TypeName => Bind<RescanParams>(raw),
             CollectorConfigParams.TypeName => Bind<CollectorConfigParams>(raw),
+            UnpairParams.TypeName => Bind<UnpairParams>(raw),
             var other => throw new JsonException($"unknown command type '{other}'"),
         };
     }

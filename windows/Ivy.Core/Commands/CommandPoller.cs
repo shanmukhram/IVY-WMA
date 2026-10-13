@@ -59,9 +59,20 @@ public sealed class CommandPoller
     /// <summary>Set by the collectors once they exist; until then rescan commands report <c>error</c>.</summary>
     public IRescanHandler? RescanHandler { get; set; }
     public ICollectorConfigHandler? CollectorConfigHandler { get; set; }
+    /// <summary>Handles <c>unpair</c>; the agent sets itself here. Until set, unpair commands report <c>error</c>.</summary>
+    public IUnpairHandler? UnpairHandler { get; set; }
 
     public DateTimeOffset? LastPollAt { get; private set; }
     public string? LastPollError { get; private set; }
+
+    private readonly TaskCompletionSource _firstPoll = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    /// <summary>
+    /// Completes when <see cref="RunAsync"/> has finished its first poll attempt, whether it succeeded or failed (or
+    /// when RunAsync stops before polling). The agent holds uploads back until then, so a pending <c>unpair</c> is
+    /// handled before anything is sent under the old pairing.
+    /// </summary>
+    public Task FirstPoll => _firstPoll.Task;
 
     public void PollNow()
     {
@@ -70,13 +81,21 @@ public sealed class CommandPoller
 
     public async Task RunAsync(CancellationToken ct)
     {
-        while (!ct.IsCancellationRequested)
+        try
         {
-            try { await PollOnceAsync(ct).ConfigureAwait(false); }
-            catch (OperationCanceledException) when (ct.IsCancellationRequested) { break; }
-            catch (Exception e) { _logger.LogWarning("command poll failed: {Error}", e.Message); }
-            try { await _wake.WaitAsync(_options.Interval, ct).ConfigureAwait(false); }
-            catch (OperationCanceledException) { break; }
+            while (!ct.IsCancellationRequested)
+            {
+                try { await PollOnceAsync(ct).ConfigureAwait(false); }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested) { break; }
+                catch (Exception e) { _logger.LogWarning("command poll failed: {Error}", e.Message); }
+                finally { _firstPoll.TrySetResult(); }
+                try { await _wake.WaitAsync(_options.Interval, ct).ConfigureAwait(false); }
+                catch (OperationCanceledException) { break; }
+            }
+        }
+        finally
+        {
+            _firstPoll.TrySetResult();
         }
     }
 
@@ -99,7 +118,15 @@ public sealed class CommandPoller
             {
                 ct.ThrowIfCancellationRequested();
                 if (_executed.IsExecutedKey(key)) { skipped++; continue; }
-                switch (await ProcessAsync(key, ct).ConfigureAwait(false))
+                var result = await ProcessAsync(key, ct).ConfigureAwait(false);
+                if (result == ProcessResult.Unpaired)
+                {
+                    // The device is no longer paired: leave the remaining commands alone (they are not recorded as
+                    // executed), so nothing else runs or is enqueued under the old pairing.
+                    executed++;
+                    break;
+                }
+                switch (result)
                 {
                     case ProcessResult.Executed: executed++; break;
                     case ProcessResult.Rejected: rejected++; break;
@@ -114,7 +141,7 @@ public sealed class CommandPoller
         }
     }
 
-    private enum ProcessResult { Executed, Skipped, Rejected }
+    private enum ProcessResult { Executed, Skipped, Rejected, Unpaired }
 
     private async Task<ProcessResult> ProcessAsync(string key, CancellationToken ct)
     {
@@ -167,6 +194,22 @@ public sealed class CommandPoller
         }
 
         _activity?.Append(Collector, ActivityEvents.CommandReceived, $"{command.Params.Type} {command.CommandId}");
+
+        if (command.Params is UnpairParams)
+        {
+            // Report first: the done status is enqueued and the command recorded as executed before the handler
+            // drops the backlog and clears the pairing, so the Mac hears back and the same object is never re-run.
+            var handler = UnpairHandler;
+            Report(key, command.CommandId, handler is null
+                ? CommandOutcome.Error($"no handler for '{UnpairParams.TypeName}' on this device")
+                : CommandOutcome.Done("unpaired by the Mac"));
+            if (handler is null) return ProcessResult.Executed;
+            try { await handler.HandleUnpairAsync(command, ct).ConfigureAwait(false); }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+            catch (Exception e) { _logger.LogError(e, "unpair command {CommandId} handler failed", command.CommandId); }
+            return ProcessResult.Unpaired;
+        }
+
         CommandOutcome outcome;
         try
         {
