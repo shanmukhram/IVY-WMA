@@ -3,13 +3,16 @@
  * confirmation, and forget: remove an old device and everything it captured from this Mac, confirmed with
  * its fingerprint. A device's name is kept on this Mac only; the fingerprint stays its stable identifier.
  * Revoke and forget both tell the device to reset (an unpair command); "Recently removed" lists the devices
- * removed in the last 30 days and whether each has confirmed the reset.
+ * removed in the last 30 days and whether each has confirmed the reset. "Data from devices no longer paired"
+ * lists device ids that still have records on this Mac but no pairing (for example a PC revoked earlier, which
+ * kept its archive); the same Forget sheet removes them, confirmed with the fingerprint when one is on record,
+ * else the first 8 characters of the id, and nothing is sent to the device.
  */
 import { useEffect, useState } from "react";
 import QRCode from "qrcode";
 import { ApiError, errText } from "../api.ts";
 import { useApi, useEvents, useLoad, useServices } from "../ctx.tsx";
-import { ago, bytes, roleLabel } from "../format.ts";
+import { ago, bytes, roleLabel, shortId } from "../format.ts";
 import { SCOPE_PARAM, navigate } from "../router.ts";
 import { Icon } from "../components/Icon.tsx";
 import { Empty, ErrorLine, Notice, Time } from "../components/Feedback.tsx";
@@ -108,6 +111,7 @@ export function DevicesView() {
           )}
           <p className="group-foot">The code is valid for 10 minutes. After restoring the Mac, initialize with the same passphrase and identity salt and the same Mac key comes back.</p>
         </section>
+        {d && d.orphaned?.length > 0 && <OrphanedList orphaned={d.orphaned} onForget={(x) => setForgetting({ ...x, orphaned: true })} />}
         {d && d.removed?.length > 0 && <RemovedList removed={d.removed} />}
       </div>
       {pairing && <PairingSheet p={pairing} onCancel={() => void cancel()} />}
@@ -173,6 +177,53 @@ export function RemovedList({ removed }: { removed: RemovedDevice[] }) {
         </div>
       ))}</div>
       <p className="group-foot">Removed devices are listed here for 30 days.</p>
+    </section>
+  );
+}
+
+/** A device id with records on this Mac but no pairing (GET /api/devices `orphaned`). */
+export interface OrphanedDevice {
+  id: string; role: string; fingerprint: string | null; name: string | null; lastSeen: string | null;
+  confirmWith: "fingerprint" | "shortId"; counts: Record<string, number>; catalogFiles?: number; cacheBytes: number;
+  leftInR2: { objects: number; bytes: number };
+}
+
+/** "1,059,189 catalogue entries, 3 files with content, 2 messages, 1 conversation" */
+export function orphanSummary(x: Pick<OrphanedDevice, "counts" | "catalogFiles" | "cacheBytes">): string {
+  const c = x.counts ?? {};
+  const cat = x.catalogFiles ?? 0;
+  const parts = ([
+    [cat, "catalogue entry", "catalogue entries"], [(c.files ?? 0) - cat, "file with content", "files with content"],
+    [c.messages, "message"], [c.conversations, "conversation"], [c.media, "photo or screenshot", "photos and screenshots"],
+    [c.notifications, "notification"], [c.calls, "call"], [c.usageEvents, "app usage event"],
+  ] as Array<[number | undefined, string, string?]>).filter(([n]) => (n ?? 0) > 0).map(([n, one, many]) => plural(n!, one, many));
+  if (parts.length === 0) {
+    const other = Object.values(c).reduce((a, b) => a + (b ?? 0), 0);
+    parts.push(plural(other, "bookkeeping record"));
+  }
+  return `${parts.join(", ")}${x.cacheBytes > 0 ? `; ${bytes(x.cacheBytes)} of local cache` : ""}`;
+}
+
+const orphanLabel = (x: { id: string; fingerprint: string | null; name?: string | null }) => deviceLabel({ id: x.id, name: x.name, fingerprint: x.fingerprint ?? undefined });
+const orphanRole = (role: string) => (role === "windows" || role === "android" ? roleLabel(role) : "Unknown device type");
+
+/** Records left by devices that are no longer paired, each with what it holds and a Forget button. */
+export function OrphanedList({ orphaned, onForget }: { orphaned: OrphanedDevice[]; onForget: (x: OrphanedDevice) => void }) {
+  return (
+    <section aria-label="Data from devices no longer paired">
+      <h2 className="group-title">Data from devices no longer paired</h2>
+      <div className="group">{orphaned.map((x) => (
+        <div key={x.id} className="group-row" data-testid={`orphaned-${x.id}`} style={{ alignItems: "flex-start", paddingTop: 10, paddingBottom: 10 }}>
+          <Icon name={x.role === "android" ? "phone" : "laptop"} />
+          <div className="row-label">
+            <div style={{ fontWeight: 600 }} className={x.name ? undefined : "fingerprint"}>{orphanLabel(x)}</div>
+            <div className="small muted">{orphanRole(x.role)} · {x.fingerprint ? <>fingerprint <span className="fingerprint">{x.fingerprint}</span></> : <>no fingerprint on record, id <span className="hash">{shortId(x.id)}</span></>} · last seen {ago(x.lastSeen)}</div>
+            <div className="row-sub" data-testid={`orphaned-summary-${x.id}`}>{orphanSummary(x)}</div>
+          </div>
+          <button className="btn btn-sm btn-danger" aria-label={`Forget data from ${orphanLabel(x)}`} onClick={() => onForget(x)}>Forget…</button>
+        </div>
+      ))}</div>
+      <p className="group-foot">These records stay on this Mac from earlier pairings, for example a device revoked before Forget existed. Forgetting them sends nothing to the device and changes nothing in R2.</p>
     </section>
   );
 }
@@ -264,8 +315,8 @@ export function PairingSheet({ p, onCancel }: { p: Pairing; onCancel: () => void
 
 /** What GET /api/devices/:id/footprint reports: what a forget removes from the Mac and what stays in R2. */
 interface Footprint {
-  deviceId: string; role: string; fingerprint: string;
-  counts: Record<string, number>;
+  deviceId: string; role: string; fingerprint: string | null; confirmWith?: "fingerprint" | "shortId";
+  counts: Record<string, number>; catalogFiles?: number;
   shared: { messagesKept: number; conversationsKept: number };
   binRows: number; cacheBytes: number;
   leftInR2: { objects: number; bytes: number };
@@ -291,22 +342,34 @@ export function forgetSummary(r: ForgetResult): string {
   return `Removed ${parts.length ? parts.join(", ") : "no records"} and freed ${bytes(r.cacheBytesFreed)} of local cache; ${r2}.`;
 }
 
-function forgetError(e: unknown): string {
-  if (e instanceof ApiError && e.status === 400 && e.code === "bad_confirm") return "That is not this device's fingerprint. Type it exactly as shown; letter case and spaces at either end do not matter.";
+function forgetError(e: unknown, byShortId = false): string {
+  if (e instanceof ApiError && e.status === 400 && e.code === "bad_confirm") {
+    return byShortId
+      ? "That is not the start of this device's id. Type the 8 characters exactly as shown; letter case and spaces at either end do not matter."
+      : "That is not this device's fingerprint. Type it exactly as shown; letter case and spaces at either end do not matter.";
+  }
   if (e instanceof ApiError && e.status === 404) return "This device is no longer paired. It may already have been forgotten or revoked; reload the list.";
   return errText(e);
 }
 
-/** Forget a device: show what goes and what stays, confirm with the fingerprint, then show what was removed. */
-export function ForgetSheet({ device, onClose, onForgotten }: { device: { id: string; role: string; fingerprint: string; name?: string | null }; onClose: () => void; onForgotten: (id: string) => void }) {
+/**
+ * Forget a device: show what goes and what stays, confirm with the fingerprint, then show what was removed.
+ * For records of a device no longer paired (`orphaned`), the device is not told anything, and the confirmation
+ * is the fingerprint when one is on record, else the first 8 characters of the id.
+ */
+export function ForgetSheet({ device, onClose, onForgotten }: { device: { id: string; role: string; fingerprint: string | null; name?: string | null; orphaned?: boolean }; onClose: () => void; onForgotten: (id: string) => void }) {
   const api = useApi();
   const fp = useLoad<Footprint>((a) => a.get(`/api/devices/${encodeURIComponent(device.id)}/footprint`), [device.id]);
   const [typed, setTyped] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [done, setDone] = useState<ForgetResult | null>(null);
-  const matches = typed.trim() !== "" && normFp(typed) === normFp(device.fingerprint);
   const f = fp.data;
+  const orphaned = !!device.orphaned;
+  const byShortId = (f?.confirmWith ?? (device.fingerprint ? "fingerprint" : "shortId")) === "shortId";
+  const expected = byShortId ? shortId(device.id) : device.fingerprint ?? "";
+  const matches = typed.trim() !== "" && normFp(typed) === normFp(expected);
+  const confirmLabel = byShortId ? "Type the first 8 characters of the device id to confirm" : "Type the fingerprint to confirm";
   const c = f?.counts ?? {};
 
   const forget = async () => {
@@ -315,14 +378,14 @@ export function ForgetSheet({ device, onClose, onForgotten }: { device: { id: st
       const r = await api.del<ForgetResult>(`/api/devices/${encodeURIComponent(device.id)}?wipe=1`, { confirm: typed.trim() });
       setDone(r);
       onForgotten(device.id);
-    } catch (e) { setErr(forgetError(e)); } finally { setBusy(false); }
+    } catch (e) { setErr(forgetError(e, byShortId)); } finally { setBusy(false); }
   };
 
-  const label = `${roleLabel(device.role)} · ${deviceLabel(device)}`;
-  const title = `Forget ${label}?`;
+  const label = orphaned ? `${orphanRole(device.role)} · ${orphanLabel(device)}` : `${roleLabel(device.role)} · ${deviceLabel({ ...device, fingerprint: device.fingerprint ?? undefined })}`;
+  const title = orphaned ? "Forget data from a device no longer paired?" : `Forget ${label}?`;
   if (done) {
     return (
-      <Sheet title={`${label} forgotten`} label="Forget device" onClose={onClose} footer={<button className="btn btn-primary" onClick={onClose}>Done</button>}>
+      <Sheet title={orphaned ? `Data from ${label} forgotten` : `${label} forgotten`} label="Forget device" onClose={onClose} footer={<button className="btn btn-primary" onClick={onClose}>Done</button>}>
         <Notice tone="ok" role="status">{forgetSummary(done)}</Notice>
         {done.binPurged > 0 && <p className="small muted">{plural(done.binPurged, "item")} of this device in the recovery bin were removed too.</p>}
         <p className="small">{unpairText(done)}</p>
@@ -333,11 +396,18 @@ export function ForgetSheet({ device, onClose, onForgotten }: { device: { id: st
   }
   return (
     <Sheet title={title} label="Forget device" onClose={onClose}
-      footer={<><button className="btn" onClick={onClose}>Keep</button><button className="btn btn-danger-fill" disabled={!matches || !f || busy} onClick={() => void forget()}>{busy ? "Forgetting…" : "Forget this device"}</button></>}>
-      <p>Forgetting removes this device and everything it captured from the archive on this Mac. It cannot be undone. Revoke instead if you want to keep what it captured.</p>
-      <p>{resetSentence(device.role)}</p>
+      footer={<><button className="btn" onClick={onClose}>Keep</button><button className="btn btn-danger-fill" disabled={!matches || !f || busy} onClick={() => void forget()}>{busy ? "Forgetting…" : orphaned ? "Forget this data" : "Forget this device"}</button></>}>
+      {orphaned
+        ? <>
+          <p>{label} is no longer paired, but what it captured is still in the archive on this Mac. Forgetting removes all of it. It cannot be undone.</p>
+          <p>Nothing is sent to the device, because it is not paired.</p>
+        </>
+        : <>
+          <p>Forgetting removes this device and everything it captured from the archive on this Mac. It cannot be undone. Revoke instead if you want to keep what it captured.</p>
+          <p>{resetSentence(device.role)}</p>
+        </>}
       {fp.loading && !f && <p className="muted small" role="status">Counting what this device captured…</p>}
-      {fp.error ? <Notice tone="error" role="alert">{forgetError(fp.error)}</Notice> : null}
+      {fp.error ? <Notice tone="error" role="alert">{forgetError(fp.error, byShortId)}</Notice> : null}
       {f && (
         <>
           <section aria-label="Removed from this Mac" className="stack-sm">
@@ -345,7 +415,7 @@ export function ForgetSheet({ device, onClose, onForgotten }: { device: { id: st
             <dl className="kv" data-testid="forget-footprint">
               <dt>Messages</dt><dd className="tnum">{num(c.messages)}{f.shared.messagesKept > 0 ? ` (${plural(f.shared.messagesKept, "message")} kept, because another device also captured them)` : ""}</dd>
               <dt>Conversations</dt><dd className="tnum">{num(c.conversations)}{f.shared.conversationsKept > 0 ? ` (${plural(f.shared.conversationsKept, "conversation")} kept, with the messages another device also captured)` : ""}</dd>
-              <dt>Files</dt><dd className="tnum">{num(c.files)}</dd>
+              <dt>Files</dt><dd className="tnum">{num(c.files)}{(f.catalogFiles ?? 0) > 0 ? ` (${plural(f.catalogFiles!, "catalogue entry", "catalogue entries")} with no content on this Mac)` : ""}</dd>
               <dt>Photos and screenshots</dt><dd className="tnum">{num(c.media)}</dd>
               <dt>Notifications</dt><dd className="tnum">{num(c.notifications)}</dd>
               <dt>Calls</dt><dd className="tnum">{num(c.calls)}</dd>
@@ -357,13 +427,13 @@ export function ForgetSheet({ device, onClose, onForgotten }: { device: { id: st
           <section aria-label="Stays in R2" className="stack-sm">
             <h3>Stays in R2</h3>
             <p data-testid="forget-r2">{f.leftInR2.objects > 0 ? `${plural(f.leftInR2.objects, "media original")} (${bytes(f.leftInR2.bytes)}) stay in your R2 bucket.` : "This device has no media originals kept in R2."}</p>
-            <p className="small muted">What this device uploaded to R2 is not changed: nothing there is listed or deleted, and the Mac ignores anything this device left there. The only R2 write is the reset command for the device. The device's R2 token still works until you rotate it in Cloudflare.</p>
+            <p className="small muted">What this device uploaded to R2 is not changed: nothing there is listed or deleted, and the Mac ignores anything this device left there. {orphaned ? "Nothing is written to R2." : "The only R2 write is the reset command for the device."} The device's R2 token still works until you rotate it in Cloudflare.</p>
           </section>
           <label className="field">
-            <span className="field-label">Type the fingerprint to confirm</span>
+            <span className="field-label">{confirmLabel}</span>
             <span className="row" style={{ flexWrap: "wrap" }}>
-              <input className="input" aria-label="Type the fingerprint to confirm" autoComplete="off" spellCheck={false} value={typed} onChange={(e) => { setTyped(e.target.value); setErr(null); }} style={{ flex: 1, minWidth: 200 }} />
-              <span className="fingerprint" data-testid="forget-fingerprint">{device.fingerprint}</span>
+              <input className="input" aria-label={confirmLabel} autoComplete="off" spellCheck={false} value={typed} onChange={(e) => { setTyped(e.target.value); setErr(null); }} style={{ flex: 1, minWidth: 200 }} />
+              <span className="fingerprint" data-testid="forget-fingerprint">{expected}</span>
             </span>
           </label>
         </>

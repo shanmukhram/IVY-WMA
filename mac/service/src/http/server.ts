@@ -19,7 +19,7 @@ import { timingSafeEqual } from "node:crypto";
 import { ZodError } from "zod";
 import type { Service } from "../service.ts";
 import { KeystoreError } from "../keystore/keystore.ts";
-import { ForgetError, forgetDevice, forgetFootprint } from "../devices/forget.ts";
+import { ForgetError, forgetDevice, forgetFootprint, listOrphaned } from "../devices/forget.ts";
 import { PairingError, cancelPairing, getDevice, listDevices, listPairings, listRemovedDevices, renameDevice, revokeDevice, startPairing } from "../pairing/pairing.ts";
 import { CommandError, cancelCommand, commandView, getCommand, issueCommand, listCommands, requestFile } from "../commands/commands.ts";
 import { search, SearchError } from "../query/search.ts";
@@ -256,11 +256,14 @@ export async function buildServer(svc: Service): Promise<FastifyInstance> {
   app.get("/api/pairings", async () => ({ pairings: listPairings(ctx) }));
   app.delete("/api/pairings/:id", async (req) => ({ cancelled: await cancelPairing(ctx, (req.params as { id: string }).id) }));
   // `removed`: devices revoked or forgotten in the last 30 days, with whether each was told to reset (the unpair
-  // command reached its cmd-bucket) and when it confirmed the reset.
+  // command reached its cmd-bucket) and when it confirmed the reset. `orphaned`: device ids that still have
+  // records on the Mac but are not paired and were not forgotten (for example a PC revoked with the old revoke,
+  // which kept the archive), each with what a forget of it would remove; see devices/forget.ts listOrphaned.
   app.get("/api/devices", async () => ({
     macFingerprint: ctx.keystore.macFingerprint(),
     devices: listDevices(ctx).map(deviceView),
     removed: listRemovedDevices(ctx),
+    orphaned: listOrphaned(ctx),
   }));
   app.get("/api/devices/:id", async (req) => {
     const d = getDevice(ctx, (req.params as { id: string }).id);
@@ -283,6 +286,8 @@ export async function buildServer(svc: Service): Promise<FastifyInstance> {
   });
   // DELETE without ?wipe: revoke only (the captured records stay). With ?wipe=1 and { confirm: <fingerprint> }:
   // forget the device, removing everything it contributed from the vault and the local cache (devices/forget.ts).
+  // ?wipe=1 also accepts an orphaned id (records with no paired device): confirmed with its fingerprint when one is
+  // on record, else the first 8 characters of the id; no unpair command is sent (unpairSent false).
   // Both first send the device an unpair command (unpairSent says whether it reached R2, unpairReason why not);
   // nothing the device uploaded is touched in R2, and whatever it left there is quarantined (revoke) or ignored
   // (forget). Both run between ingest passes, so the device's answer is matched against the removed device.
@@ -298,12 +303,12 @@ export async function buildServer(svc: Service): Promise<FastifyInstance> {
       throw e;
     }
   });
-  // What a forget would remove (counts per table, shared records kept, local cache bytes, media left in R2).
+  // What a forget would remove (counts per table, shared records kept, local cache bytes, media left in R2), for a
+  // paired device or an orphaned id. `confirmWith` says what the forget's confirm must be ("fingerprint" or "shortId").
   app.get("/api/devices/:id/footprint", async (req) => {
-    const id = (req.params as { id: string }).id;
-    const f = forgetFootprint(ctx, id);
+    const f = forgetFootprint(ctx, (req.params as { id: string }).id);
     if (!f) throw new HttpError(404, "not_found", "no such device");
-    return { ...f, name: getDevice(ctx, id)?.name ?? null };
+    return f;
   });
   // Read-only device file browser (catalog + indexed files). Immediate children of a directory, or
   // the top-level roots/drives with no path. See query/browse.ts for the derived-folder logic.

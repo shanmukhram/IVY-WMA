@@ -27,6 +27,13 @@
  *
  * The device id goes into forgotten_devices. The ingester leaves any object from that id where it is: not
  * committed and not deleted from R2 (an ignored ledger row). A new pairing issues a new device id.
+ *
+ * Devices no longer paired ("orphaned" ids): records can outlive their device row, for example after an
+ * earlier revoke (which keeps the archive) or a pairing that was replaced. Such an id has rows in a
+ * device-keyed table but no `devices` row and no `forgotten_devices` row. GET /api/devices lists them
+ * (listOrphaned), and the footprint and the forget work for them too. A forget of an orphaned id skips the
+ * steps that need a live device (no unpair command, so no R2 write at all) and is confirmed with the
+ * fingerprint when one is on record (revoked_devices), otherwise with the first 8 characters of the id.
  */
 import { existsSync, readdirSync, rmSync, statSync } from "node:fs";
 import { dirname } from "node:path";
@@ -68,13 +75,20 @@ export interface ForgetCounts {
 
 export interface Footprint {
   deviceId: string;
+  /** "windows" | "android", or "unknown" for an orphaned id whose role is on no record */
   role: string;
-  fingerprint: string;
-  /** what DELETE /api/devices/:id?wipe=1 must carry as `confirm` */
-  confirmWith: "fingerprint";
+  /** null for an orphaned id whose fingerprint is on no record */
+  fingerprint: string | null;
+  name: string | null;
+  /** false for an orphaned id (records left by a device that is no longer paired) */
+  paired: boolean;
+  /** what DELETE /api/devices/:id?wipe=1 must carry as `confirm`: the fingerprint, or the first 8 characters of the id */
+  confirmWith: "fingerprint" | "shortId";
   counts: ForgetCounts;
   /** records another device also has: they stay, losing only this device's provenance */
   shared: { messagesKept: number; conversationsKept: number };
+  /** of counts.files, the catalogue-only entries (a path and size, no content on the Mac) */
+  catalogFiles: number;
   /** rows of this device already in the recovery bin; they are purged too */
   binRows: number;
   /** bytes of local cache files (media, thumbnails, originals, attachments, blob temp files, quarantine copies) */
@@ -94,6 +108,107 @@ const KEEP: Partial<Record<string, string>> = { commands: " AND type <> 'unpair'
 
 const BIN_TABLES = ["notifications", "media", "files", "calls", "usage_events"];
 
+/** Every table with a device_id column (each has an index led by device_id). Scanned for orphaned ids. */
+export const DEVICE_ID_TABLES = [
+  "messages", "message_sources", "conversations", "notifications", "media", "files", "calls", "usage_events", "commands",
+  "quarantine", "collector_state", "collector_history", "pairings", "sync_objects", "media_archive", "blobs",
+];
+
+/** What a footprint or a forget acts on: a paired device, or an orphaned id. */
+interface Target {
+  id: string;
+  role: string;
+  fingerprint: string | null;
+  name: string | null;
+  /** the devices row, when the device is paired */
+  device: DeviceRow | null;
+}
+
+const UNKNOWN_ROLE = "unknown";
+const SHORT_ID_LEN = 8;
+export const NOT_PAIRED_REASON = "Device was not paired, so it was not told to reset.";
+
+/** True when any device-keyed table has a row for `id`. Indexed lookups only. */
+function hasRows(db: DB, id: string): boolean {
+  return DEVICE_ID_TABLES.some((t) => !!db.prepare(`SELECT 1 FROM ${t} WHERE device_id = ? LIMIT 1`).get(id));
+}
+
+/** Role, fingerprint and name of an id with no devices row, from what the Mac still has on record. */
+function orphanTarget(db: DB, id: string): Target {
+  const rev = db.prepare("SELECT role, fingerprint, name FROM revoked_devices WHERE id = ?").get(id) as { role: string; fingerprint: string; name: string | null } | undefined;
+  const pairingRole = (db.prepare("SELECT role FROM pairings WHERE device_id = ? ORDER BY consumed_at DESC LIMIT 1").get(id) as { role: string } | undefined)?.role;
+  // a blob or quarantine row records the role of the bucket its object came from
+  const bucketRole = (db.prepare("SELECT role FROM blobs WHERE device_id = ? AND role IS NOT NULL LIMIT 1").get(id) as { role: string } | undefined)?.role
+    ?? (db.prepare("SELECT role FROM quarantine WHERE device_id = ? LIMIT 1").get(id) as { role: string } | undefined)?.role;
+  return {
+    id,
+    role: rev?.role ?? pairingRole ?? bucketRole ?? UNKNOWN_ROLE,
+    fingerprint: rev?.fingerprint || null,
+    name: rev?.name ?? null,
+    device: null,
+  };
+}
+
+/** A paired device, an orphaned id, or undefined (an id in no table, or one already forgotten). */
+function resolveTarget(ctx: Ctx, id: string): Target | undefined {
+  const d = getDevice(ctx, id);
+  if (d) return { id: d.id, role: d.role, fingerprint: d.fingerprint, name: d.name, device: d };
+  if (isForgotten(ctx.db, id) || !hasRows(ctx.db, id)) return undefined;
+  return orphanTarget(ctx.db, id);
+}
+
+/** What the owner types to confirm a forget of `t`. */
+function confirmValue(t: Target): { kind: Footprint["confirmWith"]; value: string } {
+  return t.fingerprint ? { kind: "fingerprint", value: t.fingerprint } : { kind: "shortId", value: t.id.slice(0, SHORT_ID_LEN) };
+}
+
+/** The distinct non-null device ids in `table`, by stepping through its device_id index (one lookup per id). */
+function distinctIds(db: DB, table: string): string[] {
+  return (db.prepare(`WITH RECURSIVE r(d) AS (
+      SELECT MIN(device_id) FROM ${table}
+      UNION ALL SELECT (SELECT MIN(device_id) FROM ${table} WHERE device_id > r.d) FROM r WHERE r.d IS NOT NULL)
+    SELECT d FROM r WHERE d IS NOT NULL`).all() as Array<{ d: string }>).map((r) => r.d);
+}
+
+export interface OrphanedDevice {
+  id: string;
+  role: string;
+  fingerprint: string | null;
+  name: string | null;
+  /** when the Mac last ingested an object from this id (else when it paired), or null */
+  lastSeen: string | null;
+  confirmWith: Footprint["confirmWith"];
+  counts: ForgetCounts;
+  catalogFiles: number;
+  cacheBytes: number;
+  leftInR2: Footprint["leftInR2"];
+}
+
+/**
+ * Device ids that still have records on the Mac but no devices row and no forgotten_devices row. Found by
+ * walking the device_id index of every device-keyed table (a handful of ids in all), then counted with the
+ * forget footprint. An id whose only rows are ones a forget keeps (its unpair command) is left out.
+ */
+export function listOrphaned(ctx: Ctx): OrphanedDevice[] {
+  const db = ctx.db;
+  const ids = new Set<string>();
+  for (const t of DEVICE_ID_TABLES) for (const id of distinctIds(db, t)) ids.add(id);
+  const known = db.prepare("SELECT 1 FROM devices WHERE id = ? UNION ALL SELECT 1 FROM forgotten_devices WHERE id = ?");
+  const out: OrphanedDevice[] = [];
+  for (const id of [...ids].sort()) {
+    if (known.get(id, id)) continue;
+    const f = footprintOf(ctx, orphanTarget(db, id));
+    if (Object.values(f.counts).every((v) => v === 0)) continue;
+    const seen = db.prepare("SELECT MAX(ingested_at) AS at FROM sync_objects WHERE device_id = ?").get(id) as { at: string | null };
+    const paired = db.prepare("SELECT MAX(consumed_at) AS at FROM pairings WHERE device_id = ?").get(id) as { at: string | null };
+    out.push({
+      id, role: f.role, fingerprint: f.fingerprint, name: f.name, lastSeen: seen.at ?? paired.at ?? null,
+      confirmWith: f.confirmWith, counts: f.counts, catalogFiles: f.catalogFiles, cacheBytes: f.cacheBytes, leftInR2: f.leftInR2,
+    });
+  }
+  return out;
+}
+
 /**
  * Fill the temp tables that say what a forget of `d` removes. Inside the caller's transaction, so the plan
  * and the deletes see the same rows.
@@ -103,7 +218,7 @@ const BIN_TABLES = ["notifications", "media", "files", "calls", "usage_events"];
  *   fx_atts     attachments removed: of removed messages, and those this device alone contributed
  *   fx_blobs    blob oids this device's removed rows referenced and nothing remaining still uses
  */
-function buildPlan(db: DB, d: DeviceRow): void {
+function buildPlan(db: DB, d: { id: string; role: string }): void {
   db.exec(`
     DROP TABLE IF EXISTS temp.fx_msgs; DROP TABLE IF EXISTS temp.fx_rm_msgs; DROP TABLE IF EXISTS temp.fx_convs;
     DROP TABLE IF EXISTS temp.fx_atts; DROP TABLE IF EXISTS temp.fx_blobs;
@@ -198,8 +313,9 @@ function planPaths(db: DB, id: string): string[] {
   const add = (sql: string, ...a: unknown[]) => {
     for (const r of db.prepare(sql).raw().all(...a) as unknown[][]) for (const v of r) if (typeof v === "string" && v) out.add(v);
   };
-  add("SELECT local_path, thumb_path FROM media WHERE device_id = ?", id);
-  add("SELECT local_path, thumb_path FROM files WHERE device_id = ?", id);
+  // only rows with a local file: a catalogue-only file entry has none, and a device may have a million of them
+  add("SELECT local_path, thumb_path FROM media WHERE device_id = ? AND (local_path IS NOT NULL OR thumb_path IS NOT NULL)", id);
+  add("SELECT local_path, thumb_path FROM files WHERE device_id = ? AND (local_path IS NOT NULL OR thumb_path IS NOT NULL)", id);
   add("SELECT local_path FROM attachments WHERE id IN (SELECT id FROM fx_atts)");
   add("SELECT local_path, tmp_path FROM blobs WHERE oid IN (SELECT oid FROM fx_blobs)");
   add("SELECT cached_local_path FROM media_archive WHERE oid IN (SELECT oid FROM fx_blobs)");
@@ -211,17 +327,24 @@ function sizeOf(p: string): number {
   try { const s = statSync(p); return s.isFile() ? s.size : 0; } catch { return 0; }
 }
 
-/** What forgetting `id` would remove. Read-only (temp tables only). Undefined for an unknown device. */
+/**
+ * What forgetting `id` would remove. Read-only (temp tables only). Works for a paired device and for an
+ * orphaned id; undefined for an id that appears nowhere (or was already forgotten).
+ */
 export function forgetFootprint(ctx: Ctx, id: string): Footprint | undefined {
-  const d = getDevice(ctx, id);
-  if (!d) return undefined;
+  const t = resolveTarget(ctx, id);
+  return t && footprintOf(ctx, t);
+}
+
+function footprintOf(ctx: Ctx, t: Target): Footprint {
   const db = ctx.db;
   let out!: Footprint;
   db.transaction(() => {
-    buildPlan(db, d);
-    const c = planCounts(db, id);
-    const cacheBytes = planPaths(db, id).reduce((sum, p) => sum + sizeOf(p), 0);
-    out = { deviceId: d.id, role: d.role, fingerprint: d.fingerprint, confirmWith: "fingerprint", ...c, cacheBytes };
+    buildPlan(db, t);
+    const c = planCounts(db, t.id);
+    const cacheBytes = planPaths(db, t.id).reduce((sum, p) => sum + sizeOf(p), 0);
+    const catalogFiles = n(db, "SELECT COUNT(*) AS n FROM files WHERE device_id = ? AND catalog = 1", t.id);
+    out = { deviceId: t.id, role: t.role, fingerprint: t.fingerprint, name: t.name, paired: !!t.device, confirmWith: confirmValue(t).kind, ...c, catalogFiles, cacheBytes };
     dropPlan(db);
   })();
   return out;
@@ -247,23 +370,30 @@ const norm = (s: string) => s.trim().toUpperCase();
 
 /**
  * Forget a device. `confirm` must equal the device's fingerprint (as shown on the Devices page; case and
- * surrounding spaces ignored). Throws ForgetError not_found / bad_confirm. Its only R2 call is the unpair command
- * (sendUnpair); when R2 cannot be reached the forget goes ahead and the result says the device was not told.
+ * surrounding spaces ignored), or, for an orphaned id with no fingerprint on record, the first 8 characters of
+ * the id. Throws ForgetError not_found / bad_confirm. Its only R2 call is the unpair command (sendUnpair) to a
+ * paired device; when R2 cannot be reached the forget goes ahead and the result says the device was not told.
+ * An orphaned id gets no unpair command (nothing is written to R2) and unpairReason says it was not paired.
  */
 export async function forgetDevice(ctx: Ctx, id: string, confirm: unknown): Promise<ForgetResult> {
-  const d = getDevice(ctx, id);
-  if (!d) throw new ForgetError("not_found", "no such device");
-  if (typeof confirm !== "string" || norm(confirm) !== norm(d.fingerprint)) {
-    throw new ForgetError("bad_confirm", "confirm must be the device's fingerprint, exactly as the Devices page shows it");
+  const t = resolveTarget(ctx, id);
+  if (!t) throw new ForgetError("not_found", "no such device");
+  const want = confirmValue(t);
+  if (typeof confirm !== "string" || norm(confirm) !== norm(want.value)) {
+    throw new ForgetError("bad_confirm", want.kind === "fingerprint"
+      ? "confirm must be the device's fingerprint, exactly as the Devices page shows it"
+      : `confirm must be the first ${SHORT_ID_LEN} characters of the device id`);
   }
-  const unpair = await sendUnpair(ctx, d);
+  const d = t.device;
+  const unpair: UnpairOutcome = d ? await sendUnpair(ctx, d)
+    : { unpairSent: false, unpairCommandId: null, unpairSentAt: null, unpairReason: NOT_PAIRED_REASON };
   const db = ctx.db;
   const now = nowIso();
   let counts!: ReturnType<typeof planCounts>;
   let paths: string[] = [];
   let cancelled = 0;
   db.transaction(() => {
-    buildPlan(db, d);
+    buildPlan(db, t);
     counts = planCounts(db, id);
     paths = planPaths(db, id);
     const run = (sql: string) => bind(db, sql, { d: id, now });
@@ -317,7 +447,7 @@ export async function forgetDevice(ctx: Ctx, id: string, confirm: unknown): Prom
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL)
                 ON CONFLICT(id) DO UPDATE SET forgotten_at = excluded.forgotten_at, name = excluded.name, unpair_command_id = excluded.unpair_command_id,
                   unpair_sent_at = excluded.unpair_sent_at, unpair_detail = excluded.unpair_detail, unpair_confirmed_at = NULL`)
-      .run(id, d.role, d.fingerprint, now, d.name, unpair.unpairCommandId, unpair.unpairSentAt, unpair.unpairReason);
+      .run(id, t.role, t.fingerprint ?? "", now, t.name, unpair.unpairCommandId, unpair.unpairSentAt, unpair.unpairReason);
     dropPlan(db);
   })();
 
@@ -327,8 +457,8 @@ export async function forgetDevice(ctx: Ctx, id: string, confirm: unknown): Prom
   }
   const { bytes, files } = removeCacheFiles(ctx, paths);
 
-  ctx.events.emit("device.revoked", { deviceId: id, role: d.role, fingerprint: d.fingerprint, unpairSent: unpair.unpairSent });
-  ctx.events.emit("device.forgotten", { deviceId: id, role: d.role, fingerprint: d.fingerprint, removed: counts.counts, cacheBytesFreed: bytes });
+  if (d) ctx.events.emit("device.revoked", { deviceId: id, role: d.role, fingerprint: d.fingerprint, unpairSent: unpair.unpairSent });
+  ctx.events.emit("device.forgotten", { deviceId: id, role: t.role, fingerprint: t.fingerprint, paired: !!d, removed: counts.counts, cacheBytesFreed: bytes });
   ctx.events.emit("coverage.changed", { deviceId: id });
   return {
     forgotten: true,
