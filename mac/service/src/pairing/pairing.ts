@@ -35,7 +35,7 @@ export interface PairingRow {
 
 export interface DeviceRow {
   id: string; role: Role; public_key: string; fingerprint: string; pairing_id: string | null; paired_at: string;
-  last_seen: string | null; last_report_at: string | null; app_version: string | null; queue_depth_total: number | null;
+  last_seen: string | null; last_report_at: string | null; last_upload_at: string | null; app_version: string | null; queue_depth_total: number | null;
   name: string | null;
 }
 
@@ -208,7 +208,7 @@ export async function finishPairing(ctx: Ctx, pairingId: string, role: Role): Pr
 // ---------------------------------------------------------------- devices
 
 export function listDevices(ctx: Ctx): DeviceRow[] {
-  return ctx.db.prepare("SELECT id, role, public_key, fingerprint, pairing_id, paired_at, last_seen, last_report_at, app_version, queue_depth_total, name FROM devices ORDER BY paired_at").all() as DeviceRow[];
+  return ctx.db.prepare("SELECT id, role, public_key, fingerprint, pairing_id, paired_at, last_seen, last_report_at, last_upload_at, app_version, queue_depth_total, name FROM devices ORDER BY paired_at").all() as DeviceRow[];
 }
 
 export function getDevice(ctx: Ctx, id: string): DeviceRow | undefined {

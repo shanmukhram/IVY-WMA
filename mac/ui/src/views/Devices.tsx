@@ -105,7 +105,7 @@ export function DevicesView() {
                 <div className="row-label">
                   <div style={{ fontWeight: 600 }} className={x.name ? undefined : "fingerprint"} data-testid={`device-title-${x.id}`}>{deviceLabel(x)}</div>
                   <div className="small muted">{roleLabel(x.role)} · {x.name ? <>fingerprint <span className="fingerprint">{x.fingerprint}</span></> : "no name yet (shown by its fingerprint)"} · <span className="faint hash">{x.id}</span></div>
-                  <div className="row-sub">Paired <Time at={x.pairedAt} /> · last seen {ago(x.lastSeen)} · last report {ago(x.lastReportAt)} · app {x.appVersion ?? "—"}</div>
+                  <div className="row-sub">Paired <Time at={x.pairedAt} /> · last heard {ago(x.lastHeard)} · last saved {ago(x.lastSeen)} · last report {ago(x.lastReportAt)} · app {x.appVersion ?? "—"}</div>
                   {renaming === x.id && <RenameField device={x} onDone={() => { setRenaming(null); devs.reload(); }} onCancel={() => setRenaming(null)} />}
                 </div>
                 <div className="row">

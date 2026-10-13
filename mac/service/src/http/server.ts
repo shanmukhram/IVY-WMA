@@ -31,7 +31,7 @@ import { redact } from "../r2/config.ts";
 import { auditBuckets, BUCKET_IDS, type BucketId } from "../r2/audit.ts";
 import { enrich, itemView } from "../query/details.ts";
 import { ITEM_TYPES, TYPE_DEFS, conversationScope, deviceScope, messageScope, selectList, type ItemType } from "../query/types.ts";
-import { parseBound } from "../util/time.ts";
+import { freshest, parseBound } from "../util/time.ts";
 import { setSetting } from "../db/index.ts";
 import { archiveStats, blobProgress, evictCachedOriginal, getArchive, keepMediaInR2, refetchArchived, type BlobRow } from "../ingest/blobs.ts";
 import { browse, browseSearch, catalogStats } from "../query/browse.ts";
@@ -636,7 +636,7 @@ export async function buildServer(svc: Service): Promise<FastifyInstance> {
 function deviceView(d: ReturnType<typeof listDevices>[number]) {
   return {
     id: d.id, role: d.role, name: d.name ?? null, fingerprint: d.fingerprint, publicKey: d.public_key, pairingId: d.pairing_id, pairedAt: d.paired_at,
-    lastSeen: d.last_seen, lastReportAt: d.last_report_at, appVersion: d.app_version, queueDepthTotal: d.queue_depth_total,
+    lastSeen: d.last_seen, lastReportAt: d.last_report_at, lastUploadAt: d.last_upload_at, lastHeard: freshest(d.last_report_at, d.last_upload_at), appVersion: d.app_version, queueDepthTotal: d.queue_depth_total,
     revokeWarning: "Revoking forgets this device's key: its uploads are quarantined and no commands reach it. Captured content stays in the vault. Its R2 tokens stay valid until rotated in Cloudflare.",
   };
 }

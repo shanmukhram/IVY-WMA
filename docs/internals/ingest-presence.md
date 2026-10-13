@@ -13,8 +13,20 @@ So the device was alive and the Mac was receiving its objects continuously; the 
 2. One ingest pass drained the whole media flood before it re-listed. The poll is single-flight and the per-pass budget (3,000) bounded a count, not wall-clock time; manifests and avatars bypassed it. With 2,131 photos assembling, one pass ran tens of minutes. Device reports (priority 0, processed first each pass) were never reached because the pass never completed to re-list, so `last_report_at` froze and the dot (driven by `last_report_at` age, amber after 15 min) went orange.
 
 Fix (mac/ only):
-- `ingester.touchDeviceSeen(deviceId, force?)` refreshes `last_seen` on every committed object including blob parts and manifests, throttled to once per 10 s per device; a standalone media blob's device is resolved by role (one device per role). A single record still forces an immediate touch.
+- ~~`touchDeviceSeen` refreshed `last_seen` on every committed blob.~~ Replaced the same day, see "Correction" below.
 - A wall-clock cap on the bulk/blob phase of a pass (`config.ingestPassBudgetMs`, default 20 s). High-priority records (heartbeat, control, conversations) are always committed first and in full; once the budget elapses the rest of the backlog stops for this pass so it completes and the next poll re-lists. The pass result carries `capped` and emits `ingest.capped`.
-- Presence (`coverage` device `status`) follows the freshest of `last_report_at` and `last_seen` (`lastHeard`); a device that has never once reported is still red. A heartbeat that lags while uploads continue is surfaced as an amber problem ("uploading, but no heartbeat for X"), distinct from a truly silent device ("last heard X ago").
+- Presence (`coverage` device `status`) follows `lastHeard`, the freshest of `last_report_at` and `last_upload_at` (see Correction); a device that has never once reported is still red. A heartbeat that lags while uploads continue is surfaced as an amber problem ("uploading, but no heartbeat for X"), distinct from a truly silent device ("last heard X ago").
 
-Tests: mac/service/test/presence.test.ts.
+## Correction (same day, 18:08 UTC): commit time is not "heard from"
+
+After the first fix ran live, the UI showed "last seen just now" with "last report 12 min ago". Evidence from vault.db and an R2 listing:
+
+- Windows writes a `device_report` every 30 s (oid times 17:52:37, 17:53:07, 17:53:37, 17:54:07). The newest one was made at 17:54:07 and was committed; `last_report_at` = 17:54:07.437Z matched it exactly.
+- The newest object of any kind the Mac had committed from Windows was made at 17:54:07. Objects committed at 18:08 were made at 16:47-16:53 (backlog).
+- Listing `ivy-up-windows` showed nothing newer than 17:54 waiting (the 23 `up/status/` objects left there date from 15:54).
+
+So Windows stopped uploading at 17:54:07, and the Mac was still committing its hour-old backlog. Touching `last_seen` with the Mac's clock on each commit made the quiet device look alive. That is a Mac bug in the first fix. Why Windows stopped is a Windows-side question.
+
+Fix: `devices.last_upload_at` (migration v16) holds the creation time of the newest committed object from the device, read from its oid and never later than the Mac's clock (`ingester.noteUpload`, called for records, blob parts and manifests). `lastHeard = freshest(last_report_at, last_upload_at)`; both are device times. `last_seen` is back to its original meaning (when the Mac last committed something; it is still what device-return detection uses) and the UI shows it as "Last saved", next to "Last heard" and "Last report".
+
+Tests: mac/service/test/presence.test.ts (including: an old backlog committed now leaves a quiet device stale; a future-dated oid is capped at the Mac's clock).

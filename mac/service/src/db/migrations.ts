@@ -907,6 +907,15 @@ ALTER TABLE forgotten_devices ADD COLUMN unpair_detail TEXT;
 ALTER TABLE forgotten_devices ADD COLUMN unpair_confirmed_at TEXT;
 `;
 
+/**
+ * v16: when the device made the newest object the Mac has committed from it (the time in the object's oid, never
+ * later than the Mac's clock). last_seen is when the Mac committed something, which stays recent while the Mac
+ * works through an old backlog; this column says how recently the device itself sent anything (PLAN decision 21).
+ */
+const v16 = `
+ALTER TABLE devices ADD COLUMN last_upload_at TEXT;
+`;
+
 export const MIGRATIONS: Migration[] = [
   { version: 1, name: "initial vault schema", sql: v1 },
   { version: 2, name: "import progress, manifest commandId, transferring commands", sql: v2 },
@@ -923,4 +932,5 @@ export const MIGRATIONS: Migration[] = [
   { version: 13, name: "forgotten devices: ignore list, 'ignored' ledger and blob status, device_id indexes", sql: v13 },
   { version: 14, name: "device names chosen by the owner (devices.name)", sql: v14 },
   { version: 15, name: "unpair on revoke and forget: revoked_devices, unpair columns on forgotten_devices", sql: v15 },
+  { version: 16, name: "devices.last_upload_at: when the device made its newest committed object", sql: v16 },
 ];

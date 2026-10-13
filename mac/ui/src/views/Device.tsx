@@ -32,7 +32,8 @@ export function DeviceStatusCard({ d }: { d: any }) {
         <div className="row"><h2 className="status-title">{title}</h2><Dot s={d.status} label={`${d.role} ${d.status}`} /><span className="small muted">{d.status === "green" ? "Working" : d.status === "amber" ? "Stale" : d.status === "red" ? "Needs attention" : "Off"}</span></div>
         <div className="stats">
           <span>Fingerprint <b className="fingerprint">{d.fingerprint}</b></span>
-          <span>Last seen <b title={d.lastSeen ?? ""}>{ago(d.lastSeen)}</b></span>
+          <span title="When the device last sent anything: its newest heartbeat or upload, by the device's own time">Last heard <b title={d.lastHeard ?? ""}>{ago(d.lastHeard)}</b></span>
+          <span title="When the Mac last saved something from this device. Stays recent while the Mac works through an old backlog">Last saved <b title={d.lastSeen ?? ""}>{ago(d.lastSeen)}</b></span>
           <span>Last report <b title={d.lastReportAt ?? ""}>{ago(d.lastReportAt)}</b></span>
           <span>Queue <b className="tnum">{d.queueDepthTotal ?? "—"}</b></span>
           <span>Paired <b><Time at={d.pairedAt} /></b></span>

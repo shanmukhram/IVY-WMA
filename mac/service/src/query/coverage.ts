@@ -122,7 +122,7 @@ export function coverage(ctx: Ctx, now = Date.now(), scope: { device?: string } 
   const ds = deviceScope("id", scope.device);
   const devices = ctx.db.prepare(`SELECT * FROM devices${ds ? ` WHERE ${ds.sql}` : ""} ORDER BY paired_at`).all(...(ds?.args ?? [])) as Array<{
     id: string; role: string; fingerprint: string; paired_at: string; last_seen: string | null; last_report_at: string | null;
-    app_version: string | null; queue_depth_total: number | null;
+    last_upload_at: string | null; app_version: string | null; queue_depth_total: number | null;
   }>;
   const problems: Problem[] = [];
   const unlocked = ctx.keystore.isUnlocked();
@@ -145,12 +145,12 @@ export function coverage(ctx: Ctx, now = Date.now(), scope: { device?: string } 
 
   const deviceViews = devices.map((d) => {
     const collectors = ctx.db.prepare("SELECT * FROM collector_state WHERE device_id = ? ORDER BY name").all(d.id) as CollectorRow[];
-    // "last heard" is the freshest of the heartbeat (last_report_at) and the newest committed object
-    // (last_seen, which now advances on every object including blobs). The device presence dot follows it, so
-    // a device actively uploading a backfill is shown alive even if its heartbeat is momentarily behind.
-    const lastHeard = freshest(d.last_report_at, d.last_seen);
-    // A device that has never once sent a heartbeat is red (its reporting never started). Otherwise presence
-    // follows the freshest of its heartbeat and its newest object, so an active backfill reads as alive.
+    // "last heard" is when the device itself last sent something: the freshest of its heartbeat (last_report_at)
+    // and the creation time of the newest object the Mac has committed from it (last_upload_at). Both are the
+    // device's times, so the Mac working through an old backlog does not make a quiet device look alive.
+    // last_seen (when the Mac last committed anything) is shown beside it but does not drive the dot.
+    const lastHeard = freshest(d.last_report_at, d.last_upload_at);
+    // A device that has never once sent a heartbeat is red (its reporting never started).
     const heardDot: Dot = d.last_report_at ? ageDot(ctx, lastHeard, now) : "red";
     let dot: Dot = heardDot;
     const colViews = collectors.map((c) => {
@@ -198,7 +198,7 @@ export function coverage(ctx: Ctx, now = Date.now(), scope: { device?: string } 
     };
     return {
       deviceId: d.id, role: d.role, fingerprint: d.fingerprint, pairedAt: d.paired_at, lastSeen: d.last_seen,
-      lastReportAt: d.last_report_at, lastHeard, reportStatus: ageDot(ctx, d.last_report_at, now),
+      lastReportAt: d.last_report_at, lastUploadAt: d.last_upload_at, lastHeard, reportStatus: ageDot(ctx, d.last_report_at, now),
       appVersion: d.app_version, queueDepthTotal: d.queue_depth_total,
       status: dot, collectors: colViews,
       pendingBlobs: pending.map((b) => ({ oid: b.oid, status: b.status, payloadKind: b.payload_kind, committedParts: (JSON.parse(b.committed_parts) as number[]).length, totalChunks: b.total_chunks, committedBytes: b.committed_bytes, totalSize: b.total_size, updatedAt: b.updated_at })),

@@ -81,7 +81,7 @@ export function CoverageView() {
               </div>
               <div className="card-body stack">
                 <p className="small muted">
-                  Last sync (last committed object) <b title={d.lastSeen ?? ""}>{ago(d.lastSeen)}</b> · last report <b title={d.lastReportAt ?? ""}>{ago(d.lastReportAt)}</b> <Dot s={d.reportStatus} label={`report ${d.reportStatus}`} />
+                  Last heard (device sent) <b title={d.lastHeard ?? ""}>{ago(d.lastHeard)}</b> · last saved on the Mac <b title={d.lastSeen ?? ""}>{ago(d.lastSeen)}</b> · last report <b title={d.lastReportAt ?? ""}>{ago(d.lastReportAt)}</b> <Dot s={d.reportStatus} label={`report ${d.reportStatus}`} />
                   {" "}· app {d.appVersion ?? "—"} · device queue {d.queueDepthTotal ?? "—"} · queued commands {d.queuedCommands} · quarantined {d.quarantined}
                 </p>
                 {d.collectors.length === 0 && <p className="muted small">The device has not reported any collectors.</p>}

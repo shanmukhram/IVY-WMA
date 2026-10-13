@@ -185,10 +185,9 @@ export class Ingester {
   private readonly draining = new Set<string>();
   private stopped = false;
   private pausedUntil: number | null = null;
-  // per device: last wall-clock ms we refreshed its last_seen, so a blob flood touches it at most every few
-  // seconds instead of once per part. Cleared implicitly by process lifetime; a stale entry only delays one
-  // touch by the throttle window.
-  private readonly lastSeenTouch = new Map<string, number>();
+  // per device: the newest upload time already written to devices.last_upload_at, so a flood of blob parts
+  // writes only when it actually moves forward
+  private readonly uploadSeen = new Map<string, number>();
   last: PollResult | null = null;
 
   constructor(ctx: Ctx) { this.ctx = ctx; }
@@ -939,6 +938,7 @@ export class Ingester {
       this.insertLedger(src.bucketName, key, kind, "committed", bytes, rec.deviceId, null);
       this.ctx.db.prepare("UPDATE devices SET last_seen = ? WHERE id = ?").run(nowIso(), rec.deviceId);
     })();
+    this.noteUpload(rec.deviceId, key.split("/")[2]);
     await this.remove(src, key);
     if (kind === "device_report") this.noteDeviceReport(src, rec.deviceId, dev.last_seen, (rec as unknown as { queueDepthTotal: number }).queueDepthTotal);
     for (const c of result!.deleteCommands ?? []) await deleteCommandObject(this.ctx, c.commandId);
@@ -984,17 +984,20 @@ export class Ingester {
    * showing it empty asks for one more full listing, for whatever drained in between.
    */
   /**
-   * Record that the Mac just heard from a device by committing one of its objects. Called for every committed
-   * object, including blob parts and manifests, so a device actively uploading a media backfill never shows
-   * stale. Throttled per device (default every 10 s) so a flood of parts does not write once per part; a
-   * single record passes force so its heartbeat lands immediately.
+   * Record when the device made an object the Mac just committed: the time in its oid, never later than the
+   * Mac's clock. devices.last_upload_at keeps the newest such time. It is the device's side of "last heard":
+   * last_seen (when the Mac committed something) stays recent while the Mac works through an hour-old backlog,
+   * this does not (PLAN decision 21). Called for records, blob parts and manifests.
    */
-  private touchDeviceSeen(deviceId: string | null | undefined, force = false): void {
-    if (!deviceId) return;
-    const now = Date.now();
-    if (!force && now - (this.lastSeenTouch.get(deviceId) ?? 0) < 10_000) return;
-    this.lastSeenTouch.set(deviceId, now);
-    this.ctx.db.prepare("UPDATE devices SET last_seen = ? WHERE id = ?").run(nowIso(), deviceId);
+  private noteUpload(deviceId: string | null | undefined, oid: string | undefined): void {
+    if (!deviceId || !oid) return;
+    const made = oidTime(oid);
+    if (made === null) return;
+    const t = Math.min(made, Date.now());
+    if (t <= (this.uploadSeen.get(deviceId) ?? 0)) return;
+    this.uploadSeen.set(deviceId, t);
+    const at = new Date(t).toISOString();
+    this.ctx.db.prepare("UPDATE devices SET last_upload_at = ? WHERE id = ? AND (last_upload_at IS NULL OR last_upload_at < ?)").run(at, deviceId, at);
   }
 
   // A standalone media blob's row carries no device_id until a record links it, but it always has a role, and
@@ -1059,7 +1062,7 @@ export class Ingester {
     })();
     // a media original is kept in R2 for on-demand full-quality fetch; everything else is deleted after commit
     if (!archivesPayload(this.ctx, m.payloadKind)) await this.remove(src, key);
-    this.touchDeviceSeen(getBlob(this.ctx, src.bucketName, oid)?.device_id ?? this.deviceIdForRole(src.role)); // the device is alive: it just uploaded this manifest
+    this.noteUpload(getBlob(this.ctx, src.bucketName, oid)?.device_id ?? this.deviceIdForRole(src.role), oid);
     const prog = blobProgress(getBlob(this.ctx, src.bucketName, oid)!);
     this.ctx.events.emit("blob.progress", { ...prog });
     if (commandId) this.ctx.events.emit("command.transferring", { commandId, ...transferOf(prog) });
@@ -1112,7 +1115,7 @@ export class Ingester {
     if (!keep) await this.remove(src, key); // a kept media original's part stays in R2
     else this.ctx.events.emit("ingest.archived", { bucket: src.bucketName, oid, part: index });
     const fresh = getBlob(this.ctx, src.bucketName, oid)!;
-    this.touchDeviceSeen(fresh.device_id ?? this.deviceIdForRole(src.role)); // the device is alive: it just uploaded this part
+    this.noteUpload(fresh.device_id ?? this.deviceIdForRole(src.role), oid);
     const prog = blobProgress(fresh);
     this.ctx.events.emit("blob.progress", { ...prog });
     if (fresh.command_id) this.ctx.events.emit("command.progress", { commandId: fresh.command_id, ...transferOf(prog) });
