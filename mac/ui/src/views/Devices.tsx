@@ -8,7 +8,7 @@
  * kept its archive); the same Forget sheet removes them, confirmed with the fingerprint when one is on record,
  * else the first 8 characters of the id, and nothing is sent to the device.
  */
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import QRCode from "qrcode";
 import { ApiError, errText } from "../api.ts";
 import { useApi, useEvents, useLoad, useServices } from "../ctx.tsx";
@@ -21,6 +21,9 @@ import { Link } from "../components/Controls.tsx";
 import { deviceLabel } from "../scope.tsx";
 
 interface Pairing { pairingId: string; role: string; pairingString: string; macFingerprint: string; expiresAt: string }
+
+/** Live state of a pairing code (GET /api/pairings/:id/state); carries no secret. */
+interface PairingState { pairingId: string; role: string; status: "pending" | "consumed" | "expired" | "cancelled"; usable: boolean; consumedAt: string | null; deviceId: string | null }
 
 export function countdown(ms: number): string {
   if (ms <= 0) return "expired";
@@ -40,14 +43,18 @@ export function DevicesView() {
 
   useEvents((ev) => {
     if (ev.type === "pairing.completed" && pairing && ev.data.pairingId === pairing.pairingId) {
+      // Keep the sheet open and let it show the code as "used": the owner may want to pair another device of
+      // the same role (a laptop and a PC), each needing its own fresh code (decision 20).
       setResult(`Paired ${ev.data.role ?? pairing.role} device. Device fingerprint ${ev.data.fingerprint ?? ev.data.deviceFingerprint ?? "(see list)"}: check that the device shows the same Mac fingerprint ${pairing.macFingerprint}.`);
-      setPairing(null);
     }
-    if ((ev.type === "pairing.expired" || ev.type === "pairing.cancelled") && pairing && ev.data.pairingId === pairing.pairingId) { setResult(`Pairing code ${ev.type.slice(8)}.`); setPairing(null); }
+    if ((ev.type === "pairing.expired" || ev.type === "pairing.cancelled") && pairing && ev.data.pairingId === pairing.pairingId) { setResult(`Pairing code ${ev.type.slice(8)}.`); }
     if (ev.type === "pairing.rejected") setResult(`A device answer was rejected: ${ev.data.reason ?? "unknown reason"}`);
     devs.reload();
   }, ["pairing.", "device.revoked", "device.forgotten", "device.renamed", "device.unpair_confirmed"]);
 
+  // Mint a FRESH code for `role` and show it. Used both to start pairing and to "Generate new code": each call
+  // is a new pairingId + a new one-time secret + a newly written bootstrap, so a laptop and a PC can each pair
+  // with their own code (a consumed code can never pair a second device — decision 20).
   const start = async (role: "windows" | "android") => {
     setErr(null); setResult(null);
     try { setPairing(await api.post<Pairing>("/api/pairings", { role })); } catch (e) { setErr(errText(e)); }
@@ -114,7 +121,7 @@ export function DevicesView() {
         {d && d.orphaned?.length > 0 && <OrphanedList orphaned={d.orphaned} onForget={(x) => setForgetting({ ...x, orphaned: true })} />}
         {d && d.removed?.length > 0 && <RemovedList removed={d.removed} />}
       </div>
-      {pairing && <PairingSheet p={pairing} onCancel={() => void cancel()} />}
+      {pairing && <PairingSheet p={pairing} onCancel={() => void cancel()} onRegenerate={() => void start(pairing.role as "windows" | "android")} />}
       {confirmRevoke && (
         <Sheet title={`Revoke ${roleLabel(confirmRevoke.role)} · ${deviceLabel(confirmRevoke)}?`} label="Confirm revoke" onClose={() => setConfirmRevoke(null)}
           footer={<><button className="btn" onClick={() => setConfirmRevoke(null)}>Keep</button><button className="btn btn-danger-fill" onClick={() => void revoke(confirmRevoke.id)}>Confirm revoke</button></>}>
@@ -265,7 +272,7 @@ export function RenameField({ device, onDone, onCancel }: { device: { id: string
   );
 }
 
-export function PairingSheet({ p, onCancel }: { p: Pairing; onCancel: () => void }) {
+export function PairingSheet({ p, onCancel, onRegenerate }: { p: Pairing; onCancel: () => void; onRegenerate: () => void }) {
   const { now, api } = useServices();
   const [checking, setChecking] = useState<string | null>(null);
   // the device answers through its up-bucket; the next poll completes pairing (or check now)
@@ -278,6 +285,17 @@ export function PairingSheet({ p, onCancel }: { p: Pairing; onCancel: () => void
   const [qrErr, setQrErr] = useState<string | null>(null);
   const [left, setLeft] = useState(() => Date.parse(p.expiresAt) - clock());
   const [copied, setCopied] = useState(false);
+  // Watch this exact code's live state so a consumed code is shown as "used" and the owner is never handed a dead
+  // code (decision 20). A device answers through R2 and the Mac ingests it on its next sync; the sheet polls the
+  // state and also reacts to pairing.* events. Carries no secret.
+  const [state, setState] = useState<PairingState | null>(null);
+  const used = (state && !state.usable && state.status === "consumed") || false;
+  const dead = (state && !state.usable) || left <= 0;
+  const refreshState = useCallback(async () => {
+    try { setState(await api.get<PairingState>(`/api/pairings/${p.pairingId}/state`)); } catch { /* code not found yet / gone */ }
+  }, [api, p.pairingId]);
+  useEffect(() => { setState(null); void refreshState(); }, [refreshState]);
+  useEvents(() => { void refreshState(); }, ["pairing."]);
   useEffect(() => {
     let live = true;
     QRCode.toString(p.pairingString, { type: "svg", errorCorrectionLevel: "L", margin: 2, color: { dark: "#000000", light: "#ffffff" } })
@@ -285,29 +303,40 @@ export function PairingSheet({ p, onCancel }: { p: Pairing; onCancel: () => void
     return () => { live = false; };
   }, [p.pairingString]);
   useEffect(() => {
-    const t = setInterval(() => setLeft(Date.parse(p.expiresAt) - clock()), 1000);
+    const t = setInterval(() => { setLeft(Date.parse(p.expiresAt) - clock()); void refreshState(); }, 1000);
     return () => clearInterval(t);
-  }, [p.expiresAt, clock]);
+  }, [p.expiresAt, clock, refreshState]);
   const copy = async () => {
     try { await navigator.clipboard.writeText(p.pairingString); setCopied(true); } catch { setCopied(false); }
   };
+  const newCode = (
+    <button className="btn btn-primary" data-testid="generate-new-code" onClick={onRegenerate}><Icon name="sync" size={13} />Generate new code</button>
+  );
   return (
     <Sheet title={`Pair ${roleLabel(p.role)}`} label="Pairing" wide onClose={onCancel}
-      footer={<>{checking && <span className="small muted" role="status" style={{ marginRight: "auto" }}>{checking}</span>}<button className="btn" onClick={onCancel}>Cancel pairing</button><button className="btn" onClick={() => void checkNow()}><Icon name="sync" size={13} />Check now</button><button className="btn btn-primary" onClick={() => void copy()}><Icon name="doc" size={13} />{copied ? "Copied" : "Copy pairing string"}</button></>}>
+      footer={dead
+        ? <><span className="small muted" role="status" style={{ marginRight: "auto" }}>{used ? "This code has been used." : "This code is no longer valid."}</span><button className="btn" onClick={onCancel}>Close</button>{newCode}</>
+        : <>{checking && <span className="small muted" role="status" style={{ marginRight: "auto" }}>{checking}</span>}<button className="btn" onClick={onCancel}>Cancel pairing</button><button className="btn" onClick={() => void checkNow()}><Icon name="sync" size={13} />Check now</button><button className="btn btn-primary" onClick={() => void copy()}><Icon name="doc" size={13} />{copied ? "Copied" : "Copy pairing string"}</button></>}>
       <section aria-label="Pairing code" className="stack">
-        <p className="muted">{p.role === "android" ? "Scan the QR code with the IVY Android app." : "Paste the pairing string into the IVY Windows app."} The Mac picks up the answer on its next sync. Expires in <span className="countdown" data-testid="countdown">{countdown(left)}</span>.</p>
-        <div className="pair-cols">
-          <div className="qr-box">
-            {svg ? <img alt="Pairing QR code" src={`data:image/svg+xml;utf8,${encodeURIComponent(svg)}`} width={200} height={200} /> : qrErr ? <p className="error">QR failed: {qrErr}</p> : <p className="muted">rendering QR…</p>}
+        {used
+          ? <Notice tone="ok" role="status"><span data-testid="code-used">This code has been used to pair a device{state?.deviceId ? <> (<span className="hash">{shortId(state.deviceId)}</span>)</> : null}. A pairing code works once, for one device. To pair another {p.role === "windows" ? "PC or laptop" : "device"}, generate a new code.</span></Notice>
+          : dead
+            ? <Notice tone="warn" role="status"><span data-testid="code-dead">This pairing code is no longer valid. Generate a new one to pair a device.</span></Notice>
+            : <p className="muted">{p.role === "android" ? "Scan the QR code with the IVY Android app." : "Paste the pairing string into the IVY Windows app."} The Mac picks up the answer on its next sync. Expires in <span className="countdown" data-testid="countdown">{countdown(left)}</span>.</p>}
+        {!dead && (
+          <div className="pair-cols">
+            <div className="qr-box">
+              {svg ? <img alt="Pairing QR code" src={`data:image/svg+xml;utf8,${encodeURIComponent(svg)}`} width={200} height={200} /> : qrErr ? <p className="error">QR failed: {qrErr}</p> : <p className="muted">rendering QR…</p>}
+            </div>
+            <div className="stack">
+              <label className="field"><span className="field-label">Pairing string</span>
+                <textarea readOnly className="textarea hash" rows={6} value={p.pairingString} aria-label="Pairing string" onFocus={(e) => e.currentTarget.select()} />
+              </label>
+              <div className="stack-sm"><span className="small muted">Mac fingerprint</span><span className="fingerprint">{p.macFingerprint}</span></div>
+            </div>
           </div>
-          <div className="stack">
-            <label className="field"><span className="field-label">Pairing string</span>
-              <textarea readOnly className="textarea hash" rows={6} value={p.pairingString} aria-label="Pairing string" onFocus={(e) => e.currentTarget.select()} />
-            </label>
-            <div className="stack-sm"><span className="small muted">Mac fingerprint</span><span className="fingerprint">{p.macFingerprint}</span></div>
-          </div>
-        </div>
-        <Notice tone="warn">The pairing string carries a one-time secret and a read token for the device's command bucket. Do not share it.</Notice>
+        )}
+        {!dead && <Notice tone="warn">The pairing string carries a one-time secret and a read token for the device's command bucket. Do not share it.</Notice>}
       </section>
     </Sheet>
   );

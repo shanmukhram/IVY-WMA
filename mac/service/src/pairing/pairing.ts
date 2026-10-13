@@ -121,6 +121,42 @@ export function listPairings(ctx: Ctx): PairingRow[] {
   return ctx.db.prepare("SELECT id, role, created_at, expires_at, status, device_id, consumed_at, bootstrap_deleted FROM pairings ORDER BY created_at DESC LIMIT 50").all() as PairingRow[];
 }
 
+/** The live state of a single pairing code as the pair screen needs it (decision 20). */
+export interface PairingState {
+  pairingId: string; role: Role; status: PairingRow["status"]; createdAt: string; expiresAt: string;
+  /** true while the code can still be consumed (pending and not past exp + grace) */
+  usable: boolean;
+  /** set once a device has paired with this exact code: it can never pair another device */
+  consumedAt: string | null; deviceId: string | null;
+}
+
+function pairingState(ctx: Ctx, p: PairingRow, now = Date.now()): PairingState {
+  const exp = msOf(p.expires_at) ?? 0;
+  const pastExp = now > exp + ctx.config.pairingGraceMs;
+  return {
+    pairingId: p.id, role: p.role, status: p.status, createdAt: p.created_at, expiresAt: p.expires_at,
+    usable: p.status === "pending" && !pastExp,
+    consumedAt: p.consumed_at, deviceId: p.device_id,
+  };
+}
+
+/**
+ * The most recent pairing code for a role and whether it is still usable (decision 20). The pair screen reads
+ * this to tell when the code it is showing has been consumed by a device (so it must mint a fresh one before
+ * pairing the next device) or has expired. Returns null when no code has ever been issued for the role.
+ * Carries no secret: the one-time secret lives only in the pairing string returned by startPairing.
+ */
+export function currentPairing(ctx: Ctx, role: Role, now = Date.now()): PairingState | null {
+  const p = ctx.db.prepare("SELECT * FROM pairings WHERE role = ? ORDER BY created_at DESC LIMIT 1").get(role) as PairingRow | undefined;
+  return p ? pairingState(ctx, p, now) : null;
+}
+
+/** The live state of one code by id (used by the pair screen to watch the code it holds). Null when unknown. */
+export function pairingById(ctx: Ctx, id: string, now = Date.now()): PairingState | null {
+  const p = ctx.db.prepare("SELECT * FROM pairings WHERE id = ?").get(id) as PairingRow | undefined;
+  return p ? pairingState(ctx, p, now) : null;
+}
+
 /**
  * Validate a decrypted pairing_device record and, if acceptable, record the
  * device. Runs INSIDE the ingest transaction. Returns a rejection reason or the

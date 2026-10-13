@@ -20,7 +20,7 @@ import { ZodError } from "zod";
 import type { Service } from "../service.ts";
 import { KeystoreError } from "../keystore/keystore.ts";
 import { ForgetError, forgetDevice, forgetFootprint, listOrphaned } from "../devices/forget.ts";
-import { PairingError, cancelPairing, getDevice, listDevices, listPairings, listRemovedDevices, renameDevice, revokeDevice, startPairing } from "../pairing/pairing.ts";
+import { PairingError, cancelPairing, currentPairing, getDevice, listDevices, listPairings, listRemovedDevices, pairingById, renameDevice, revokeDevice, startPairing } from "../pairing/pairing.ts";
 import { CommandError, cancelCommand, commandView, getCommand, issueCommand, listCommands, requestFile } from "../commands/commands.ts";
 import { search, SearchError } from "../query/search.ts";
 import { timeline, TimelineError } from "../query/timeline.ts";
@@ -254,6 +254,20 @@ export async function buildServer(svc: Service): Promise<FastifyInstance> {
     return startPairing(ctx, role as "windows" | "android");
   });
   app.get("/api/pairings", async () => ({ pairings: listPairings(ctx) }));
+  // The live state of the most recent code for a role (decision 20): the pair screen reads this to tell when the
+  // code it is showing has been consumed by a device or has expired, and whether a fresh one must be minted before
+  // pairing the next device. Carries no secret.
+  app.get("/api/pairings/current", async (req) => {
+    const role = (req.query as { role?: string }).role;
+    if (role !== "windows" && role !== "android") throw new HttpError(400, "bad_role", "role must be windows or android");
+    return { current: currentPairing(ctx, role) };
+  });
+  // The live state of one code by id: the open pair screen polls this to flip to "used" the moment its device pairs.
+  app.get("/api/pairings/:id/state", async (req) => {
+    const s = pairingById(ctx, (req.params as { id: string }).id);
+    if (!s) throw new HttpError(404, "not_found", "no such pairing code");
+    return s;
+  });
   app.delete("/api/pairings/:id", async (req) => ({ cancelled: await cancelPairing(ctx, (req.params as { id: string }).id) }));
   // `removed`: devices revoked or forgotten in the last 30 days, with whether each was told to reset (the unpair
   // command reached its cmd-bucket) and when it confirmed the reset. `orphaned`: device ids that still have

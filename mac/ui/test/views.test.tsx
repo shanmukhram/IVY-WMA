@@ -189,11 +189,16 @@ describe("coverage (D1-D5)", () => {
 });
 
 describe("devices and pairing", () => {
-  it("pairing sheet: string, client-rendered QR, Mac fingerprint, countdown; revoke needs a confirmation", async () => {
+  it("pairing sheet: string, client-rendered QR, Mac fingerprint, countdown; a used code is marked and a fresh one can be minted; revoke needs a confirmation", async () => {
     const t0 = Date.parse("2026-10-10T10:00:00.000Z");
+    let consumed = false; // the shown code flips to used once a device pairs with it
+    let minted = 0;
     const api = mockApi({
       "GET /api/devices": { macFingerprint: "MAC1-MAC2-MAC3-MAC4", devices: [{ id: "d1", role: "windows", fingerprint: "DEV1-DEV2-DEV3-DEV4", pairedAt: "2026-10-01T00:00:00Z", revokeWarning: "Revoking forgets this device's key." }] },
-      "POST /api/pairings": (b: any) => ({ pairingId: "p1", role: b.role, pairingString: "ivy1." + "A".repeat(600), macFingerprint: "MAC1-MAC2-MAC3-MAC4", expiresAt: new Date(t0 + 600_000).toISOString() }),
+      "POST /api/pairings": (b: any) => { minted++; consumed = false; return { pairingId: `p${minted}`, role: b.role, pairingString: "ivy1." + "A".repeat(600), macFingerprint: "MAC1-MAC2-MAC3-MAC4", expiresAt: new Date(t0 + 600_000).toISOString() }; },
+      "GET /api/pairings/p1/state": () => ({ pairingId: "p1", role: "android", status: consumed ? "consumed" : "pending", usable: !consumed, consumedAt: consumed ? new Date(t0).toISOString() : null, deviceId: consumed ? "newdev-123456" : null }),
+      "GET /api/pairings/p2/state": { pairingId: "p2", role: "android", status: "pending", usable: true, consumedAt: null, deviceId: null },
+      "DELETE /api/pairings/p2": { cancelled: true },
       "DELETE /api/devices/d1": { revoked: true },
     });
     const { events } = renderWith(<DevicesView />, api, { path: "/devices", now: () => t0 });
@@ -207,14 +212,23 @@ describe("devices and pairing", () => {
     expect(decodeURIComponent(qr.getAttribute("src")!)).toMatch(/^data:image\/svg\+xml;utf8,<svg/);
     expect(within(sheet).getByRole("region", { name: "Pairing code" })).toHaveTextContent("MAC1-MAC2-MAC3-MAC4");
     expect(screen.getByTestId("countdown")).toHaveTextContent("10:00");
-    act(() => events.emit("pairing.completed", { pairingId: "p1", role: "android", deviceFingerprint: "NEW1-NEW2-NEW3-NEW4" }));
-    expect(await screen.findByRole("status")).toHaveTextContent("NEW1-NEW2-NEW3-NEW4");
-    expect(screen.queryByRole("dialog", { name: "Pairing" })).toBeNull();
 
+    // a device pairs with this code: the sheet stays open and marks the code used, offering a fresh one
+    consumed = true;
+    act(() => events.emit("pairing.completed", { pairingId: "p1", role: "android", deviceFingerprint: "NEW1-NEW2-NEW3-NEW4" }));
+    expect(await within(screen.getByRole("dialog", { name: "Pairing" })).findByTestId("code-used")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Pairing string")).toBeNull(); // the consumed secret is no longer shown
+    // one click mints a fresh, different code in place
+    await u.click(screen.getByTestId("generate-new-code"));
+    await waitFor(() => expect(api.calls.filter((c) => c.method === "POST" && c.path === "/api/pairings").length).toBe(2));
+    expect(await within(screen.getByRole("dialog", { name: "Pairing" })).findByLabelText("Pairing string")).toBeInTheDocument();
+
+    // close the sheet, then exercise revoke
+    await u.click(screen.getByRole("button", { name: "Cancel pairing" }));
     await u.click(screen.getByRole("button", { name: "Revoke" }));
     const confirm = screen.getByRole("dialog", { name: "Confirm revoke" });
     expect(confirm).toHaveTextContent(/Revoking forgets/);
-    expect(api.calls.some((c) => c.method === "DELETE")).toBe(false);
+    expect(api.calls.some((c) => c.method === "DELETE" && c.path.startsWith("/api/devices/"))).toBe(false);
     await u.click(within(confirm).getByRole("button", { name: "Confirm revoke" }));
     expect(api.calls.some((c) => c.method === "DELETE" && c.path === "/api/devices/d1")).toBe(true);
     expect(countdown(61_000)).toBe("1:01");
