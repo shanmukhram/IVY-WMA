@@ -1,0 +1,12 @@
+# Build artifacts produced by windows/tools/build-installer.ps1.
+# None of these belong in the repo; they are regenerated on each build.
+
+# Self-contained publish staging folder.
+publish/
+
+# Compiled installer output (IVY-Setup-<version>.exe).
+out/
+
+# The bundled WebView2 Evergreen bootstrapper is downloaded by the build
+# script, not committed. Keep the redist folder itself (via .gitkeep).
+redist/*.exe

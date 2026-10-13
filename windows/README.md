@@ -212,3 +212,48 @@ PC steps: start the app, open the Telegram page, confirm the row reaches ok and 
 - **oid text encoding.** This follows the reference `toCrockford`, which zero-pads the last 3 bits on the right. Canonical ULID libraries left-pad, so do not use one; the vectors verify the reference behaviour.
 - **Chunked `objectId`.** The device uses the oid's 16 bytes. The spec does not require this, and the vector uses unrelated values, so the Mac should take `objectId` from the manifest rather than derive it from the key.
 - **Reserved header byte.** Byte 7 is not covered by any AAD, so Ivy.Core rejects non-zero values. It also checks that a chunk header's kind byte is `blob_chunk`. Both checks are stricter than the reference and accept every conforming object.
+
+## Installer
+
+A single per-user installer `.exe` packages the Windows app so its owner can
+install it on a clean Windows 11 PC that has neither the .NET SDK nor the
+Windows App SDK. The installer wraps a self-contained publish of `Ivy.App`
+(built with `WindowsAppSDKSelfContained=true`) with [Inno Setup](https://jrsoftware.org/isinfo.php).
+
+**Build it (one command, from the repo root):**
+
+```powershell
+pwsh windows/tools/build-installer.ps1
+```
+
+The script reads the version from `windows/Ivy.App/Ivy.App.csproj` (`<Version>`,
+so the version lives in one place), publishes `Ivy.App` self-contained for
+`win-x64`, makes sure Inno Setup's `ISCC.exe` is available (installing it via
+`winget install --id JRSoftware.InnoSetup` if missing), makes sure the WebView2
+Evergreen bootstrapper is in `windows/installer/redist` (downloading the
+official bootstrapper if missing), compiles the installer and prints the final
+path and size. Any failing step stops with a clear message. The build outputs
+(`windows/installer/publish/`, `out/` and the downloaded `redist/*.exe`) are
+gitignored.
+
+**What it produces:** `windows/installer/out/IVY-Setup-<version>.exe` — a
+per-user install (no administrator rights; installs to
+`%LOCALAPPDATA%\Programs\IVY`). It is self-contained, so the target PC needs no
+preinstalled .NET. During install it checks the registry for the WebView2
+Evergreen runtime (used by the locked-window cover surface) and, if it is
+missing, runs the bundled Microsoft Edge WebView2 bootstrapper silently; if that
+cannot run, IVY still installs and the locked-window dashboard simply stays
+blank until the runtime is present.
+
+**Install and upgrade:** run the `.exe`. The installer does not add a
+run-at-login entry — the app writes its own per-user `HKCU\...\Run` key on a
+paired start and manages it. Installing a newer `IVY-Setup-<version>.exe` over an
+older install upgrades it in place (the fixed AppId makes it an upgrade, not a
+second copy), and **keeps the owner's pairing and data**, because those live in
+`%LOCALAPPDATA%\IVY` (archive, DPAPI key store, upload queue, logs), which the
+installer never touches. If IVY is running during an upgrade, Inno Setup closes
+it first and the new version resumes capture on start.
+
+**Uninstall** removes only the program files and the Start menu entry. It
+deliberately leaves `%LOCALAPPDATA%\IVY` alone, so the owner keeps their archive,
+keys, queue and pairing across an uninstall or reinstall.
