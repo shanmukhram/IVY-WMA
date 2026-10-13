@@ -258,6 +258,34 @@ public sealed class FileIndexCollector : Collector<FileIndexSettings>
         return Task.CompletedTask;
     }
 
+    /// <summary>
+    /// Deletes agent_settings <c>scan</c> and <c>lastFullScan</c>, and empties <c>file_tombstones</c>,
+    /// <c>file_thumbs</c>, <c>file_originals</c> and <c>file_original_links</c>. Keeps roots, exclusions, caps and <c>autoScoped</c>.
+    /// </summary>
+    public override Task ClearProgressAsync()
+    {
+        Context.Settings.Delete(Name, ScanKey);
+        Context.Settings.Delete(Name, LastScanKey);
+        CollectorDb.ClearTables(Context.Db, "file_tombstones", "file_thumbs", "file_originals", "file_original_links");
+        _scan = null;
+        _lastFullScan = null;
+        _usnPositions.Clear();
+        _pending.Clear();
+        _walk?.Dispose();
+        _walk = null;
+        _walker = null;
+        _count?.Dispose();
+        _count = null;
+        _countRoot = 0;
+        _counted = 0;
+        _pendingScanReason = null;
+        _pendingScope = null;
+        _lastUsnPoll = DateTimeOffset.MinValue;
+        Cursor = null;
+        Import = null;
+        return Task.CompletedTask;
+    }
+
     /// <summary>Queue a path as changed (what the watcher and USN reader do).</summary>
     public void NotifyChanged(string path) => _pending[path] = Now;
 

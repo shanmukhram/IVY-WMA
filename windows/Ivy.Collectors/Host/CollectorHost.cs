@@ -154,6 +154,21 @@ public sealed class CollectorHost : IRescanHandler, ICollectorConfigHandler, IAs
         foreach (var slot in _slots.Values) await StopSlotAsync(slot).ConfigureAwait(false);
     }
 
+    /// <summary>
+    /// Forget every collector's capture progress kept outside <c>collector_state</c> (see
+    /// <see cref="CollectorBase.ClearProgressAsync"/>) so a re-paired device starts from scratch. Call after
+    /// <see cref="StopAsync"/>: collectors must not be running. A failure in one collector is logged and the
+    /// others still run.
+    /// </summary>
+    public async Task ClearProgressAsync()
+    {
+        foreach (var slot in _slots.Values)
+        {
+            try { await slot.Collector.ClearProgressAsync().ConfigureAwait(false); }
+            catch (Exception e) { _logger.LogWarning(e, "clearing progress of {Collector} failed", slot.Collector.Name); }
+        }
+    }
+
     public async ValueTask DisposeAsync() => await StopAsync().ConfigureAwait(false);
 
     public Task StartCollectorAsync(string name, CancellationToken ct = default) => StartSlotAsync(SlotOf(name), ct);

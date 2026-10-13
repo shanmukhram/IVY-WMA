@@ -30,6 +30,29 @@ public sealed class CollectorSettingsStore
     public void SaveJson(string collector, string key, JsonNode? value) =>
         _db.SetSetting(Key(collector, key), value?.ToJsonString() ?? "null");
 
+    /// <summary>Remove one <c>collector.&lt;name&gt;.&lt;key&gt;</c> row (no-op when absent).</summary>
+    public void Delete(string collector, string key)
+    {
+        using var guard = IvyUiThread.Write("CollectorSettingsStore.Delete");
+        using var c = _db.Open();
+        using var cmd = c.CreateCommand();
+        cmd.CommandText = "DELETE FROM agent_settings WHERE key = $k";
+        cmd.Parameters.AddWithValue("$k", Key(collector, key));
+        cmd.ExecuteNonQuery();
+    }
+
+    /// <summary>Remove every row of <paramref name="collector"/> whose key starts with <paramref name="keyPrefix"/> (e.g. <c>cursors:</c>).</summary>
+    public void DeleteByPrefix(string collector, string keyPrefix)
+    {
+        using var guard = IvyUiThread.Write("CollectorSettingsStore.DeleteByPrefix");
+        var prefix = Key(collector, keyPrefix);
+        using var c = _db.Open();
+        using var cmd = c.CreateCommand();
+        cmd.CommandText = "DELETE FROM agent_settings WHERE substr(key, 1, length($p)) = $p";
+        cmd.Parameters.AddWithValue("$p", prefix);
+        cmd.ExecuteNonQuery();
+    }
+
     public T? Load<T>(string collector, string key) where T : class
     {
         var s = _db.GetSetting(Key(collector, key));

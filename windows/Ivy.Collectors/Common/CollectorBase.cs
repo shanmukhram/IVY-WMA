@@ -63,6 +63,14 @@ public abstract class CollectorBase
     public virtual Task StartAsync(CancellationToken ct) => Task.CompletedTask;
     public virtual Task StopAsync() => Task.CompletedTask;
 
+    /// <summary>
+    /// Forget capture progress that is kept outside <c>collector_state</c> (sync tokens, baselines, per-chat and
+    /// per-account cursors, scan checkpoints, dedupe tables) so that, once the device is paired again, this
+    /// collector captures from the beginning. Never touches user settings (roots, exclusions, caps, enabled,
+    /// paused, include-channels, keys). The collector must be stopped first; the default does nothing.
+    /// </summary>
+    public virtual Task ClearProgressAsync() => Task.CompletedTask;
+
     /// <summary>Called when the collector is paused (e.g. usage closes its open interval).</summary>
     public virtual Task OnPauseAsync() => Task.CompletedTask;
     public abstract Task TickAsync(CancellationToken ct);

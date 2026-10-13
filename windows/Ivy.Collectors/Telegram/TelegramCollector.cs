@@ -130,6 +130,24 @@ public sealed class TelegramCollector : Collector<TelegramSettings>
         ResetConnection();
     }
 
+    /// <summary>
+    /// Deletes agent_settings <c>diffState</c> (the updates sync token) and empties <c>tg_chat_state</c> (per-chat
+    /// backfill and newest-seen cursors) and <c>tg_attachments</c> (uploaded-original dedupe). Keeps
+    /// <c>includeChannels</c>, caps and the passcode.
+    /// </summary>
+    public override Task ClearProgressAsync()
+    {
+        Context.Settings.Delete(CollectorName, "diffState");
+        _store.ClearProgress();
+        _resyncRequested = false;
+        _floodUntil = null;
+        _dialogsStale = false;
+        ResetConnection();
+        Cursor = null;
+        Detail = null;
+        return Task.CompletedTask;
+    }
+
     private void ResetConnection()
     {
         _client = null;

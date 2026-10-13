@@ -193,6 +193,19 @@ public sealed class TelegramStore
         return cmd.ExecuteNonQuery();
     }
 
+    /// <summary>Forget all per-chat cursors and attachment dedupe so the next pass re-walks and re-sends everything.</summary>
+    public void ClearProgress()
+    {
+        using var guard = IvyUiThread.Write("TelegramStore.ClearProgress");
+        using var c = _db.Open();
+        foreach (var table in new[] { "tg_chat_state", "tg_attachments" })
+        {
+            using var cmd = c.CreateCommand();
+            cmd.CommandText = "DELETE FROM " + table;
+            cmd.ExecuteNonQuery();
+        }
+    }
+
     // ---- attachments ----
 
     public sealed record AttachmentRow(string AttRef, string ConvKey, long MsgId, string Kind, string Filename, long Size, string? OriginHash, string? BlobOid, string Status);

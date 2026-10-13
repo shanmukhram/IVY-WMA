@@ -44,6 +44,18 @@ public sealed class NotificationCollector : Collector<NotificationSettings>
         return Task.CompletedTask;
     }
 
+    /// <summary>
+    /// No agent_settings keys: the last notification id lives in <c>collector_state.cursor</c>, which the agent
+    /// clears. Resets the in-memory id so a later start reads from the beginning.
+    /// </summary>
+    public override Task ClearProgressAsync()
+    {
+        LastId = 0;
+        Cursor = null;
+        Detail = null;
+        return Task.CompletedTask;
+    }
+
     public override Task TickAsync(CancellationToken ct)
     {
         var sink = Sink;

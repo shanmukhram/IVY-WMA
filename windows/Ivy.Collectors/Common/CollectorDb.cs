@@ -8,6 +8,20 @@ namespace Ivy.Collectors.Common;
 /// </summary>
 internal static class CollectorDb
 {
+    /// <summary>Delete every row of the named collector-owned tables (fixed names from this file, never user input).</summary>
+    public static void ClearTables(VaultDb db, params string[] tables)
+    {
+        using var guard = IvyUiThread.Write("CollectorDb.ClearTables");
+        EnsureSchema(db);
+        using var c = db.Open();
+        foreach (var t in tables)
+        {
+            using var cmd = c.CreateCommand();
+            cmd.CommandText = "DELETE FROM " + t;
+            cmd.ExecuteNonQuery();
+        }
+    }
+
     public static void EnsureSchema(VaultDb db)
     {
         using var c = db.Open();

@@ -64,6 +64,16 @@ public sealed class UsageCollector : Collector<UsageSettings>
         return Task.CompletedTask;
     }
 
+    /// <summary>Deletes agent_settings <c>open</c> (the interval being tracked). Keeps sampling, idle and title settings.</summary>
+    public override Task ClearProgressAsync()
+    {
+        Context.Settings.Delete(Name, OpenKey);
+        _coalescer = NewCoalescer(null);
+        Cursor = null;
+        Detail = null;
+        return Task.CompletedTask;
+    }
+
     public override Task StopAsync()
     {
         if (_coalescer.Flush(Now) is { } interval && Sink is { } sink) Write(sink, interval);

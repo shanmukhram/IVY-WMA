@@ -226,6 +226,30 @@ public sealed class LineDesktopCollector : Collector<LineSettings>
         if (s.BatchSize is < 1 or > 100_000) throw new ArgumentException("batchSize must be 1..100000");
     }
 
+    /// <summary>
+    /// Deletes agent_settings <c>cursors</c>, <c>accountHash</c>, <c>resyncEpoch</c>, <c>lastCaptured</c> and every
+    /// per-account <c>cursors:*</c>, <c>listings:*</c>, <c>accountHash:*</c> and <c>resyncEpoch:*</c>. Keeps
+    /// the account/poll settings, <c>lastStore</c> and the one-time migration flags.
+    /// </summary>
+    public override Task ClearProgressAsync()
+    {
+        foreach (var k in new[] { LegacyCursorsKey, LegacyAccountHashKey, ResyncEpochKey, LastCapturedKey })
+            Context.Settings.Delete(Name, k);
+        foreach (var p in new[] { "cursors:", "listings:", "accountHash:", "resyncEpoch:" })
+            Context.Settings.DeleteByPrefix(Name, p);
+        _cursors = new Dictionary<string, long>(StringComparer.Ordinal);
+        _listings = new Dictionary<string, string>(StringComparer.Ordinal);
+        _storeKey = null;
+        _account = null;
+        _lastAccountHash = null;
+        _lastKeepHash = null;
+        _idleStamp = null;
+        _resyncRequested = false;
+        _epochResyncApplied = false;
+        Cursor = null;
+        return Task.CompletedTask;
+    }
+
     public override Task StartAsync(CancellationToken ct)
     {
         // Cursors and the account-snapshot hash are per account; they load when the first tick opens a store

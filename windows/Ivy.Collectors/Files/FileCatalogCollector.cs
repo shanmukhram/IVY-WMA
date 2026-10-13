@@ -83,6 +83,27 @@ public sealed class FileCatalogCollector : Collector<FileCatalogSettings>
             if (!string.IsNullOrWhiteSpace(r) && !Path.IsPathFullyQualified(r)) throw new ArgumentException($"root must be an absolute path: {r}");
     }
 
+    /// <summary>
+    /// Deletes agent_settings <c>scan</c>, <c>lastScanCompletedAt</c> and <c>lastScanScope</c>, and empties
+    /// <c>catalog_entry</c>. Keeps roots, exclusions and the <c>autoScoped</c>/<c>rebatchV1</c> flags.
+    /// </summary>
+    public override Task ClearProgressAsync()
+    {
+        Context.Settings.Delete(Name, ScanKey);
+        Context.Settings.Delete(Name, LastScanKey);
+        Context.Settings.Delete(Name, LastScopeKey);
+        _store.Clear();
+        _walk?.Dispose();
+        _walk = null;
+        _scan = null;
+        _pendingRescanReason = null;
+        _pending.Clear();
+        _pendingDeletions.Clear();
+        Cursor = null;
+        Import = null;
+        return Task.CompletedTask;
+    }
+
     protected override void OnSettingsChanged(FileCatalogSettings previous, FileCatalogSettings current)
     {
         _exclusions = new ExclusionMatcher(current.Exclusions);

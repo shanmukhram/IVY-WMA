@@ -90,6 +90,22 @@ public sealed class ScreenshotCollector : Collector<ScreenshotSettings>
         return Task.CompletedTask;
     }
 
+    /// <summary>
+    /// Deletes agent_settings <c>baseline</c> and empties <c>screenshot_seen</c> and <c>screenshot_files</c>.
+    /// Keeps roots, caps and <c>uploadExisting</c>.
+    /// </summary>
+    public override Task ClearProgressAsync()
+    {
+        Context.Settings.Delete(Name, "baseline");
+        CollectorDb.ClearTables(Context.Db, "screenshot_seen", "screenshot_files");
+        _baseline = null;
+        _candidates.Clear();
+        _signals.Clear();
+        _lastSweep = DateTimeOffset.MinValue;
+        Cursor = null;
+        return Task.CompletedTask;
+    }
+
     /// <summary>What the watcher does: mark a path as possibly new/changed.</summary>
     public void NotifyChanged(string path) => _signals[path] = 0;
 
