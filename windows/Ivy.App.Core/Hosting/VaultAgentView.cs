@@ -28,6 +28,7 @@ public sealed class VaultAgentView : IAgentView, IDisposable
         _agent = agent;
         _agent.Activity.Appended += OnAppended;
         _agent.Pairing.DeviceFingerprintAvailable += OnFingerprint;
+        _agent.Unpaired += OnUnpaired;
         Attach();
         RefreshPairedState();
     }
@@ -64,14 +65,16 @@ public sealed class VaultAgentView : IAgentView, IDisposable
         }
     }
 
-    public async Task UnpairAsync()
+    public event EventHandler? Unpaired;
+
+    public Task WaitForFirstPollAsync() => _agent.FirstPollCompleted;
+
+    /// <summary>The agent reset itself after an unpair command (worker thread): detach from the old uploader and refresh the cache first.</summary>
+    private void OnUnpaired(object? sender, EventArgs e)
     {
-        try { await _agent.UnpairAsync().ConfigureAwait(false); }
-        finally
-        {
-            Attach(); // the uploader is gone: detach from it
-            RefreshPairedState();
-        }
+        Attach();
+        RefreshPairedState();
+        Unpaired?.Invoke(this, EventArgs.Empty);
     }
 
     public IReadOnlyList<ActivityEntry> RecentActivity(int limit) => _agent.Activity.Recent(limit);
@@ -216,6 +219,7 @@ public sealed class VaultAgentView : IAgentView, IDisposable
     {
         _agent.Activity.Appended -= OnAppended;
         _agent.Pairing.DeviceFingerprintAvailable -= OnFingerprint;
+        _agent.Unpaired -= OnUnpaired;
         lock (_lock)
         {
             if (_attached is not null) _attached.Progress -= OnProgress;

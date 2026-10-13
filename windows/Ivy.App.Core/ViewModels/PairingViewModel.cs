@@ -128,7 +128,7 @@ public sealed class PairingViewModel : ObservableObject
         ErrorHint = e?.Hint ?? "";
     }
 
-    /// <summary>Back to a blank pairing page (after Unpair).</summary>
+    /// <summary>Back to a blank pairing page (after the Mac unpairs this PC).</summary>
     public void Reset()
     {
         Completed = false;

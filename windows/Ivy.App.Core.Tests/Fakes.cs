@@ -80,15 +80,19 @@ public sealed class FakeAgent : IAgentView
         return Task.FromResult(r);
     }
 
-    public int Unpairs { get; private set; }
-    public Task UnpairAsync()
+    public event EventHandler? Unpaired;
+
+    /// <summary>What <see cref="WaitForFirstPollAsync"/> returns; completed by default, set a pending one to hold the start.</summary>
+    public Task FirstPoll { get; set; } = Task.CompletedTask;
+    public Task WaitForFirstPollAsync() => FirstPoll;
+
+    /// <summary>The Mac unpaired this PC: the agent has reset itself, then raises the event (like the real agent, on the caller's thread).</summary>
+    public void RaiseUnpaired()
     {
-        Threads.Record("agent.UnpairAsync");
-        Unpairs++;
         IsPaired = false;
         DeviceFingerprint = null;
         MacFingerprint = null;
-        return Task.CompletedTask;
+        Unpaired?.Invoke(this, EventArgs.Empty);
     }
 
     public IReadOnlyList<ActivityEntry> RecentActivity(int limit) => History.OrderByDescending(e => e.Id).Take(limit).ToList();

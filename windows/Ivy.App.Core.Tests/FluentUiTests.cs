@@ -489,31 +489,75 @@ public class PageViewModelTests
     }
 
     [Fact]
-    public async Task Unpair_runs_off_the_ui_thread_then_shows_the_pairing_page()
+    public async Task Unpaired_event_from_the_agent_shows_the_pairing_page()
     {
-        var vm = Create();
+        var ui = new QueueDispatcher();
+        var vm = new MainViewModel(_agent, _host, ui, new FakeStartup(), () => Task.FromResult<string?>(null), @"C:IVYIvy.App.exe", "1.2.3", _time);
         await vm.StartAsync();
-        // The window opens locked by design (PRD "Window privacy lock").
-        Assert.True(vm.ShowLocked);
-        Assert.False(vm.ShowMain);
-        Assert.True(vm.UnpairCommand.CanExecute(null));
+        ui.Pump();
+        Assert.True(vm.SyncNowCommand.CanExecute(null));
+        Assert.Equal(1, _host.Starts);
 
-        await vm.UnpairAsync();
+        await Task.Run(() => _agent.RaiseUnpaired()); // the agent raises it on a worker thread
+        Assert.False(vm.ShowPairing); // nothing changes until the UI thread runs the posted work
+        ui.Pump();
 
-        Assert.Equal(1, _agent.Unpairs);
-        Assert.All(_agent.Threads.Calls.Where(c => c.Op == "agent.UnpairAsync"), c => Assert.NotEqual(Environment.CurrentManagedThreadId, c.Thread));
         Assert.True(vm.ShowPairing);
+        Assert.False(vm.ShowMain);
+        Assert.False(vm.ShowLocked);
         Assert.False(vm.Pairing.Completed);
         Assert.True(vm.Pairing.CanEdit);
-        Assert.False(vm.Pairing.HasFingerprints);
         Assert.Equal(PairingViewModel.DefaultStatus, vm.Pairing.Status);
-        Assert.False(vm.SyncNowCommand.CanExecute(null));
-        Assert.False(vm.UnpairCommand.CanExecute(null));
+        Assert.Equal("not paired", vm.FingerprintText);
         Assert.Equal("not paired", vm.Overview.MacFingerprint);
-        Assert.Equal("", vm.UnpairStatusText);
+        Assert.False(vm.SyncNowCommand.CanExecute(null));
+    }
 
-        await vm.UnpairAsync(); // not paired: no-op
-        Assert.Equal(1, _agent.Unpairs);
+    [Fact]
+    public async Task Paired_start_waits_for_the_first_poll_before_starting_the_host()
+    {
+        var firstPoll = new TaskCompletionSource();
+        _agent.FirstPoll = firstPoll.Task;
+        var vm = Create();
+        var start = vm.StartAsync();
+        await Task.Delay(100);
+        Assert.False(start.IsCompleted);
+        Assert.Equal(0, _host.Starts);
+
+        firstPoll.SetResult();
+        await start;
+        Assert.Equal(1, _host.Starts);
+        Assert.False(vm.ShowPairing);
+    }
+
+    [Fact]
+    public async Task An_unpair_handled_by_the_first_poll_means_the_host_is_never_started()
+    {
+        var firstPoll = new TaskCompletionSource();
+        _agent.FirstPoll = firstPoll.Task;
+        var vm = Create();
+        var start = vm.StartAsync();
+        await Task.Delay(100);
+        Assert.Equal(0, _host.Starts);
+
+        _agent.IsPaired = false; // the Mac's unpair command ran during the first poll
+        _agent.DeviceFingerprint = null;
+        _agent.MacFingerprint = null;
+        firstPoll.SetResult();
+        await start;
+
+        Assert.Equal(0, _host.Starts);
+        Assert.True(vm.ShowPairing);
+        Assert.False(vm.ShowMain);
+        Assert.False(vm.SyncNowCommand.CanExecute(null));
+    }
+
+    /// <summary>Holds posted UI work until <see cref="Pump"/>, like a real dispatcher queue.</summary>
+    private sealed class QueueDispatcher : IUiDispatcher
+    {
+        private readonly System.Collections.Concurrent.ConcurrentQueue<Action> _q = new();
+        public bool Post(Action action) { _q.Enqueue(action); return true; }
+        public void Pump() { while (_q.TryDequeue(out var a)) a(); }
     }
 }
 
@@ -580,7 +624,7 @@ public class UnpairEndToEndTests : IDisposable
     public void Dispose() => _dir.Dispose();
 
     [Fact]
-    public async Task Unpair_forgets_the_keys_stops_the_workers_and_allows_pairing_again()
+    public async Task Reset_forgets_the_keys_stops_the_workers_and_allows_pairing_again()
     {
         var r2 = new MemoryR2();
         await using var agent = new VaultAgent(new VaultAgentOptions { DataDirectory = Path.Combine(_dir.Path, "data") },
@@ -600,15 +644,15 @@ public class UnpairEndToEndTests : IDisposable
         view.UploadsPaused = true; // hold the queue still while the workers run
         agent.Queue.EnqueueCiphertext("up/meta/kept", Kind.FileMeta, new byte[10], "files");
 
-        await vm.UnpairAsync();
+        await agent.ResetPairingAsync(); // what the Mac's unpair command runs
+        view.RefreshPairedState(); // the view does this when the agent raises Unpaired
         Assert.False(view.IsPaired);
         Assert.False(agent.IsRunning);
         Assert.Null(agent.Uploader);
         Assert.Null(agent.Sink);
         Assert.Null(view.MacFingerprint);
         Assert.False(agent.Keys.HasSecretKey);
-        Assert.True(vm.ShowPairing);
-        Assert.Equal(1, view.Snapshot().For("files").Objects); // ciphertext queue kept for the next pairing
+        Assert.Equal(0, view.Snapshot().For("files").Objects); // the reset empties the queue
         Assert.Contains(agent.Activity.Recent(10), e => e.Event == ActivityEvents.Unpaired);
         view.UploadsPaused = true; // detached from the old uploader: ignored, not thrown
 

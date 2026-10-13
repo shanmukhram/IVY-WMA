@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Settings, grouped like Windows Settings: Startup, Appearance, Network, Advanced (folders, version, unpair). -->
+<!-- Settings, grouped like Windows Settings: Startup, Appearance, Network, Advanced (folders, version). -->
 <Page
     x:Class="Ivy.App.Pages.SettingsPage"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
@@ -152,27 +152,6 @@
                         <TextBlock Text="Version" />
                         <TextBlock Text="{x:Bind ViewModel.VersionText}" Style="{StaticResource SecondaryTextStyle}" IsTextSelectionEnabled="True" />
                     </StackPanel>
-                </Grid>
-            </Border>
-            <Border Style="{StaticResource SettingsRowStyle}">
-                <Grid ColumnSpacing="16">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="Auto" />
-                        <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="Auto" />
-                    </Grid.ColumnDefinitions>
-                    <FontIcon Glyph="&#xE71B;" FontSize="16" VerticalAlignment="Center" />
-                    <StackPanel Grid.Column="1" VerticalAlignment="Center">
-                        <TextBlock Text="Unpair this PC" />
-                        <TextBlock Style="{StaticResource SecondaryTextStyle}"
-                                   Text="Forgets this PC's key and tokens. Nothing is captured or uploaded until you pair again; what is already queued stays encrypted on this PC." />
-                        <TextBlock Text="{x:Bind ViewModel.UnpairStatusText, Mode=OneWay}" Style="{StaticResource SecondaryTextStyle}"
-                                   Foreground="{ThemeResource SystemFillColorCriticalBrush}"
-                                   Visibility="{x:Bind local:Ui.VisibleIfText(ViewModel.UnpairStatusText), Mode=OneWay}" />
-                    </StackPanel>
-                    <Button Grid.Column="2" Content="Unpair..." VerticalAlignment="Center" AccessKey="U" Click="Unpair_Click"
-                            IsEnabled="{x:Bind ViewModel.ShowMain, Mode=OneWay}"
-                            AutomationProperties.Name="Unpair this PC" />
                 </Grid>
             </Border>
         </StackPanel>

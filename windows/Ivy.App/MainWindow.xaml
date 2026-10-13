@@ -116,7 +116,7 @@
                             <TextBlock Grid.Row="1" Grid.Column="1" Text="{x:Bind ViewModel.Pairing.MacFingerprint, Mode=OneWay}"
                                        Style="{StaticResource MonoValueStyle}" FontSize="18" />
                             <TextBlock Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="2" Style="{StaticResource SecondaryTextStyle}"
-                                       Text="Both must match what the Mac shows. If they differ, do not continue: unpair on the Mac and start again." />
+                                       Text="Both must match what the Mac shows. If they differ, do not continue: revoke this device on the Mac and start again." />
                         </Grid>
                     </Border>
                     <Button Content="Continue" Style="{StaticResource AccentButtonStyle}" MinWidth="96" AccessKey="C"

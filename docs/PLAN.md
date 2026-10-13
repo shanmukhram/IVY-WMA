@@ -65,6 +65,8 @@ tools/           zero-plaintext audit, honesty/kill tests, gate scripts.
 
     Service commits: 4bb7c49 (device scope on every read API) and 1336691 (forget). Migration v13 adds the `forgotten_devices` table, the `ignored` ledger status, and device indexes.
 
+    PC side (Oct 13 2026): pairing and unpairing happen only from the Mac. The Windows app accepts an `unpair` command (C# `UnpairParams`, type `unpair`): it stops every collector, drops the unsent backlog, sends the `done` status first (bounded to 20 s), then clears the key store, pairing state, queue, collector cursors and file cache and shows the pairing page; a pending unpair is handled on the first command poll after start, before any collector runs or anything uploads. The Settings → Unpair button is gone; re-pairing mints a new device id.
+
 ## Phase 1 tasks
 
 | # | Task | Model | Depends on |

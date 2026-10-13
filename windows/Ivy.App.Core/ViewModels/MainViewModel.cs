@@ -51,7 +51,6 @@ public sealed class MainViewModel : ObservableObject
     private string _cmdBucket = "";
     private string _fingerprints = "";
     private string _hostError = "";
-    private string _unpairStatus = "";
     private readonly Action<string>? _openFile;
 
     public MainViewModel(IAgentView agent, ICollectorHostView host, IUiDispatcher ui, IStartupRegistration startup,
@@ -75,12 +74,10 @@ public sealed class MainViewModel : ObservableObject
         Folders = folders ?? new AppFolders("", "");
         OpenDataFolderCommand = new RelayCommand(() => Open(Folders.DataDirectory), () => Folders.DataDirectory.Length > 0);
         OpenLogFolderCommand = new RelayCommand(() => Open(Folders.LogDirectory), () => Folders.LogDirectory.Length > 0);
-        UnpairCommand = new AsyncRelayCommand(UnpairAsync, () => _agent.IsPaired);
         foreach (var n in CollectorNames.All) Collectors.Add(new CollectorRowViewModel(n, SetCollectorEnabled));
         SyncNowCommand = new AsyncRelayCommand(SyncNowAsync, () => _agent.IsPaired);
         Pairing.Paired += (_, _) =>
         {
-            UnpairCommand.RaiseCanExecuteChanged();
             LastHostWork = OnPairedAsync();
         };
         Pairing.Continued += (_, _) => ShowMain = true;
@@ -132,12 +129,6 @@ public sealed class MainViewModel : ObservableObject
     public AppFolders Folders { get; }
     public RelayCommand OpenDataFolderCommand { get; }
     public RelayCommand OpenLogFolderCommand { get; }
-
-    /// <summary>
-    /// Settings > Advanced > Unpair. The shell asks for confirmation first (a ContentDialog), then executes this.
-    /// </summary>
-    public AsyncRelayCommand UnpairCommand { get; }
-    public string UnpairStatusText { get => _unpairStatus; private set => Set(ref _unpairStatus, value); }
 
     private void Open(string path)
     {
@@ -214,6 +205,7 @@ public sealed class MainViewModel : ObservableObject
         _started = true;
         _agent.ActivityAppended += (_, e) => EnqueueFeed(FeedEntry.FromActivity(e));
         _agent.UploadProgress += (_, p) => OnProgress(p);
+        _agent.Unpaired += (_, _) => _ui.Post(OnUnpaired);
         Navigation.Load();
         Appearance.Load();
         try
@@ -224,6 +216,13 @@ public sealed class MainViewModel : ObservableObject
         }
         catch (Exception e) { HostErrorText = "Could not read activity_log: " + e.Message; }
 
+        if (_agent.IsPaired)
+        {
+            // The Mac may have sent an unpair command while this PC was off. Let the first poll handle it before any
+            // collector starts; if it did, the agent is no longer paired and the pairing page stays up.
+            try { await _agent.WaitForFirstPollAsync(); }
+            catch (Exception e) { HostErrorText = "First command poll: " + e.Message; }
+        }
         if (_agent.IsPaired)
         {
             ShowMain = true;
@@ -496,27 +495,14 @@ public sealed class MainViewModel : ObservableObject
     }
 
     /// <summary>
-    /// Forget the pairing (keys, tokens, pairing state) on the thread pool, then show the pairing page. Collectors keep
-    /// running and idle in "waiting for pairing" (the sink is gone); the encrypted queue is kept for the next pairing.
+    /// UI thread. The Mac sent an unpair command and the agent already reset itself and stopped the collectors
+    /// (its StopCollectors hook), so only the window state changes here.
     /// </summary>
-    public async Task UnpairAsync()
+    private void OnUnpaired()
     {
-        if (!_agent.IsPaired) return;
-        using (UiBreadcrumb.Enter("Unpair")) UnpairStatusText = "Unpairing...";
-        try
-        {
-            await _work.Run(() => _agent.UnpairAsync());
-        }
-        catch (Exception e)
-        {
-            UnpairStatusText = "Unpair failed: " + e.Message;
-            return;
-        }
-        UnpairStatusText = "";
         Pairing.Reset();
         ShowMain = false;
         SyncNowCommand.RaiseCanExecuteChanged();
-        UnpairCommand.RaiseCanExecuteChanged();
         UpdateFingerprints();
     }
 

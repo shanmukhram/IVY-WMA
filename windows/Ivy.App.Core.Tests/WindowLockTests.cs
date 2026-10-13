@@ -291,7 +291,7 @@ public class MainViewModelWindowLockTests
               .Append(r.QueueDepthText).Append('\n');
         sb.Append("running=").Append(vm.IsRunning).Append(" run=").Append(vm.RunStateText).Append(" hostPaused=").Append(_host.Paused)
           .Append(" starts=").Append(_host.Starts).Append(" enabled=").Append(_host.EnabledCalls.Count).Append(" applied=").Append(_host.Applied.Count)
-          .Append(" syncs=").Append(_agent.SyncCalls).Append(" unpairs=").Append(_agent.Unpairs).Append(" uploadsPaused=").Append(_agent.UploadsPaused)
+          .Append(" syncs=").Append(_agent.SyncCalls).Append(" uploadsPaused=").Append(_agent.UploadsPaused)
           .Append(" startupCmd=").Append(_startup.Command).Append('\n');
         sb.Append("agent:").AppendJoin(',', _agent.Threads.Calls.Select(c => c.Op)).Append('\n');
         sb.Append("host:").AppendJoin(',', _host.Threads.Calls.Select(c => c.Op)).Append('\n');

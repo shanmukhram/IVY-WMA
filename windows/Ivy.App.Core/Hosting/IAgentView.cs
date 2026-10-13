@@ -63,10 +63,16 @@ public interface IAgentView
     Task SyncNowAsync(CancellationToken ct = default);
 
     /// <summary>
-    /// Forget this device's key, tokens and pairing state and stop the workers (Settings > Advanced > Unpair). The
-    /// encrypted queue is kept. Runs on a worker thread (key-store and SQLite writes).
+    /// The Mac sent an <c>unpair</c> command and the agent has already reset itself (keys, tokens, pairing state, queue
+    /// and cursors cleared, collectors stopped). Raised on a worker thread.
     /// </summary>
-    Task UnpairAsync();
+    event EventHandler? Unpaired;
+
+    /// <summary>
+    /// Completes after the first command poll following start (or a 10 s timeout), so a pending unpair is handled
+    /// before any collector runs. Already complete when not paired.
+    /// </summary>
+    Task WaitForFirstPollAsync();
 
     string? GetSetting(string key);
     void SetSetting(string key, string value);

@@ -49,7 +49,16 @@ public sealed class CollectorHostAdapter : ICollectorHostView
                 : null;
         }
         var options = new CollectorHostOptions { Loggers = loggers, TelegramPasscodeStore = passcode, LineKeyStore = lineKey, TelegramSessionProtector = protector };
-        return new CollectorHostAdapter(CollectorHost.CreateFor(agent, options));
+        var host = CollectorHost.CreateFor(agent, options);
+        // An unpair command from the Mac makes the agent stop every collector through this hook, then forget the
+        // capture progress the collectors keep in agent_settings and their own tables, so a re-paired device
+        // starts from the beginning.
+        agent.StopCollectors = async ct =>
+        {
+            await host.StopAsync();
+            await host.ClearProgressAsync();
+        };
+        return new CollectorHostAdapter(host);
     }
 
     public CollectorHost Host => _host;
