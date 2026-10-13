@@ -123,24 +123,60 @@ public sealed class LineStore : IDisposable
         return LineVerifyResult.Pass();
     }
 
-    /// <summary>All chats, with resolved titles and kind.</summary>
+    /// <summary>
+    /// Every chat IVY can see in this store, with resolved titles and kind. The chat id comes from three
+    /// sources unioned, so no conversation is ever missed: the chat-list table (<c>_chat</c>), every distinct
+    /// <c>_chatId</c> that has a message (a chat dropped from <c>_chat</c> but whose messages remain), and the
+    /// per-chat options table (<c>_chatOption</c>, which also carries hidden chats). A chat is kept once, keyed
+    /// by its id. The row id orders the <c>_chat</c> ones first (their natural order), with message-only and
+    /// option-only chats after. This captures every chat the desktop store holds; it cannot invent chats that
+    /// are not in the store at all (older history LINE keeps only on the phone — WL2).
+    /// </summary>
     public IReadOnlyList<LineChat> Chats()
     {
         EnsureNames();
+        var seen = new HashSet<string>(StringComparer.Ordinal);
         var chats = new List<LineChat>();
-        using var cmd = _c.CreateCommand();
-        cmd.CommandText = $"SELECT rowid, {Q(_map.Chats.ChatId)} FROM {Q(_map.Chats.Table)} ORDER BY rowid";
-        using var r = cmd.ExecuteReader();
-        while (r.Read())
+
+        void Add(string? chatId, long rowid)
         {
-            if (r.IsDBNull(1)) continue;
-            var rowid = r.GetInt64(0);
-            var chatId = Convert.ToString(r.GetValue(1), CultureInfo.InvariantCulture) ?? "";
-            if (chatId.Length == 0) continue;
+            if (string.IsNullOrEmpty(chatId) || !seen.Add(chatId)) return;
             var (title, chatType) = Resolve(chatId);
             var kind = chatType == "private" ? "dm" : "group";
             chats.Add(new LineChat(chatId, title, kind, chatType, rowid));
         }
+
+        // 1) The chat-list table, in its own order.
+        using (var cmd = _c.CreateCommand())
+        {
+            cmd.CommandText = $"SELECT rowid, {Q(_map.Chats.ChatId)} FROM {Q(_map.Chats.Table)} ORDER BY rowid";
+            using var r = cmd.ExecuteReader();
+            while (r.Read())
+                if (!r.IsDBNull(1)) Add(Convert.ToString(r.GetValue(1), CultureInfo.InvariantCulture), r.GetInt64(0));
+        }
+
+        // 2) Every chat that has at least one message but is no longer in the chat-list table.
+        var nextRow = (chats.Count > 0 ? chats[^1].RowId : 0) + 1;
+        try
+        {
+            using var cmd = _c.CreateCommand();
+            cmd.CommandText = $"SELECT DISTINCT {Q(_map.Messages.ChatId)} FROM {Q(_map.Messages.Table)} WHERE {Q(_map.Messages.ChatId)} IS NOT NULL";
+            using var r = cmd.ExecuteReader();
+            while (r.Read())
+                if (!r.IsDBNull(0)) Add(Convert.ToString(r.GetValue(0), CultureInfo.InvariantCulture), nextRow++);
+        }
+        catch (SqliteException) { /* message table unreadable here is already a verify failure elsewhere */ }
+
+        // 3) The per-chat options table (also lists hidden chats that may have no local messages).
+        if (TableNames().Contains("_chatOption") && Columns("_chatOption").Contains("_id"))
+        {
+            using var cmd = _c.CreateCommand();
+            cmd.CommandText = $"SELECT {Q("_id")} FROM {Q("_chatOption")} WHERE {Q("_id")} IS NOT NULL";
+            using var r = cmd.ExecuteReader();
+            while (r.Read())
+                if (!r.IsDBNull(0)) Add(Convert.ToString(r.GetValue(0), CultureInfo.InvariantCulture), nextRow++);
+        }
+
         return chats;
     }
 

@@ -284,6 +284,49 @@ public class LineCollectorTests : IDisposable
     }
 
     [Fact]
+    public async Task Chat_with_messages_but_absent_from_chat_table_is_still_captured()
+    {
+        // A conversation whose messages are in _message but whose row was dropped from the _chat list (LINE
+        // prunes _chat). It must still be enumerated and captured, not lost, so every chat the store holds is sent.
+        Seed(c =>
+        {
+            LineFixture.Chat(c, "cINLIST");
+            LineFixture.Message(c, "m1", "cINLIST", "u1", 1_760_000_000_000, "in the list");
+            // No LineFixture.Chat for uDROPPED: it exists only through its messages.
+            LineFixture.Message(c, "m2", "uDROPPED", "uDROPPED", 1_760_000_100_000, "only in _message");
+            // And a hidden chat that exists only through _chatOption (no message, no _chat row).
+            LineFixture.ChatOption(c, "uOPTONLY", hidden: true);
+        });
+
+        var line = NewCollector();
+        await line.StartAsync(default);
+        await line.TickAsync(default);
+
+        var keys = Batches().Select(b => b.Root.GetProperty("convKey").GetString()).ToHashSet();
+        Assert.Contains("cINLIST", keys);
+        Assert.Contains("uDROPPED", keys); // captured via the _message union, though absent from _chat
+    }
+
+    [Fact]
+    public async Task Media_attachment_carries_the_real_file_size_from_metadata()
+    {
+        Seed(c =>
+        {
+            LineFixture.Chat(c, "uBOB");
+            LineFixture.Message(c, "m1", "uBOB", "uBOB", 1_760_000_000_000, "photo.jpg", contentType: 1,
+                meta: "{\"FILE_SIZE\":\"202482\",\"OID\":\"abc\"}");
+        });
+
+        var line = NewCollector();
+        await line.StartAsync(default);
+        await line.TickAsync(default);
+
+        var att = Batches().Single().Root.GetProperty("messages")[0].GetProperty("attachments")[0];
+        Assert.Equal("image", att.GetProperty("kind").GetString());
+        Assert.Equal(202482, att.GetProperty("size").GetInt64()); // real size, not 0 — the Mac shows the photo
+    }
+
+    [Fact]
     public async Task Cursor_resumes_across_restart_and_only_new_messages_are_emitted()
     {
         Seed(c =>
