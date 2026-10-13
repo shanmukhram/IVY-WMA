@@ -13,7 +13,7 @@ export type EventType =
   | "command.issued" | "command.sent" | "command.transferring" | "command.progress" | "command.status" | "command.completed" | "command.cancelled"
   | "file.cached" | "file.extracted"
   | "pairing.started" | "pairing.completed" | "pairing.rejected" | "pairing.expired" | "pairing.cancelled"
-  | "device.revoked" | "device.forgotten" | "device.renamed"
+  | "device.revoked" | "device.forgotten" | "device.renamed" | "device.unpair_confirmed"
   | "keystore.initialized" | "keystore.unlocked" | "keystore.locked" | "keystore.passphrase_changed"
   | "r2.configured"
   | "coverage.changed"

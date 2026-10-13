@@ -279,7 +279,7 @@ Buckets (PRD): `ivy-up-windows`, `ivy-up-android` (device → Mac);
 | `up/cstat/<oid>` | up | command-status report |
 | `up/status/<oid>` | up | device heartbeat / collector-state report |
 | `pair/<pairingId>/device` | up | pairing: device public key, wrapped to Mac |
-| `cmd/<oid>` | cmd | one command (file request, rescan, config) |
+| `cmd/<oid>` | cmd | one command (file request, rescan, config, unpair) |
 | `pair/<pairingId>` | cmd | pairing bootstrap, sealed to the one-time secret |
 
 ### 4.1 Object id (`oid`) — time-ordered
@@ -439,11 +439,20 @@ union on `type`:
 - `file_request`: `{ type, fileId?, path? }` (F2, WR1/AR1)
 - `rescan`: `{ type, collector, scope? }` (WR3/AC2a)
 - `collector_config`: `{ type, collector, enabled?, settings? }` (WR3)
+- `unpair`: `{ type }`, no other fields. The Mac sends it when the owner revokes
+  or forgets the device on the Mac. The device stops its collectors and uploads,
+  reports `command_status` `done` for it (best effort, bounded), then clears its
+  pairing state and shows its pairing page. A device that was offline does this
+  on its first command poll after it starts. A device that pairs again chooses a
+  new device id.
 
 **command_status** — `commandId, status(uploaded|done|not_found|access_denied|
 too_large|error), detail?, resultOid?, reportedAt` (WR2/AR1). `uploaded` is for
 `file_request` (with `resultOid` = the blob oid); `done` is the success status for
-`rescan` and `collector_config`. A command whose `deviceId` is not the receiving
+`rescan`, `collector_config` and `unpair`. The Mac accepts the `command_status`
+of an `unpair` command from a device it has already revoked or forgotten (only
+that one record; every other record from that device stays refused), marks the
+command done, deletes `cmd/<oid>` and records that the device confirmed the reset. A command whose `deviceId` is not the receiving
 device's own id is ignored and reported as `error`.
 
 **device_report** — `role(windows|android), appVersion?, queueDepthTotal,

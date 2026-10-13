@@ -880,6 +880,33 @@ const v14 = `
 ALTER TABLE devices ADD COLUMN name TEXT;
 `;
 
+/**
+ * v15: telling a removed device to reset. A revoke or a forget sends the device an `unpair` command first; the
+ * device row is gone by the time its final command_status arrives, so the removal is remembered here: the
+ * command id, when it reached the cmd-bucket (or why it could not), and when the device confirmed the reset.
+ * revoked_devices is new; forgotten_devices gains the same columns plus the device's name. The Devices page
+ * lists both for 30 days.
+ */
+const v15 = `
+CREATE TABLE revoked_devices (
+  id TEXT PRIMARY KEY,                     -- the device id that was revoked
+  role TEXT NOT NULL,
+  fingerprint TEXT NOT NULL,
+  name TEXT,
+  revoked_at TEXT NOT NULL,
+  unpair_command_id TEXT,                  -- commands.id of the unpair command, when one was issued
+  unpair_sent_at TEXT,                     -- when cmd/<oid> was written to the device's cmd-bucket
+  unpair_detail TEXT,                      -- why the device could not be told, or what it answered other than done
+  unpair_confirmed_at TEXT                 -- when the Mac committed the device's done status
+);
+CREATE INDEX revoked_devices_at ON revoked_devices(revoked_at);
+ALTER TABLE forgotten_devices ADD COLUMN name TEXT;
+ALTER TABLE forgotten_devices ADD COLUMN unpair_command_id TEXT;
+ALTER TABLE forgotten_devices ADD COLUMN unpair_sent_at TEXT;
+ALTER TABLE forgotten_devices ADD COLUMN unpair_detail TEXT;
+ALTER TABLE forgotten_devices ADD COLUMN unpair_confirmed_at TEXT;
+`;
+
 export const MIGRATIONS: Migration[] = [
   { version: 1, name: "initial vault schema", sql: v1 },
   { version: 2, name: "import progress, manifest commandId, transferring commands", sql: v2 },
@@ -895,4 +922,5 @@ export const MIGRATIONS: Migration[] = [
   { version: 12, name: "conversation listing (normal | archived | hidden) from chatMeta.listing", sql: v12 },
   { version: 13, name: "forgotten devices: ignore list, 'ignored' ledger and blob status, device_id indexes", sql: v13 },
   { version: 14, name: "device names chosen by the owner (devices.name)", sql: v14 },
+  { version: 15, name: "unpair on revoke and forget: revoked_devices, unpair columns on forgotten_devices", sql: v15 },
 ];

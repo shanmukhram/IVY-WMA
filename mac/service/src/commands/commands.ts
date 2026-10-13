@@ -15,7 +15,8 @@ import { randomUUID } from "node:crypto";
 import { cmdKey, encryptEnvelope, fromBase64, newOid, utf8, validateRecordKind } from "@ivy/protocol";
 import type { CommandRecordT } from "@ivy/protocol";
 import type { Ctx } from "../context.ts";
-import { getDevice } from "../pairing/pairing.ts";
+import { getDevice, type DeviceRow } from "../pairing/pairing.ts";
+import type { Role } from "../r2/config.ts";
 import { getArchive, refetchArchived } from "../ingest/blobs.ts";
 import { nowIso } from "../util/time.ts";
 
@@ -88,14 +89,60 @@ export async function sendQueued(ctx: Ctx): Promise<number> {
 export async function deleteCommandObject(ctx: Ctx, commandId: string): Promise<boolean> {
   const c = getCommand(ctx, commandId);
   if (!c || c.cmd_deleted) return false;
-  const device = getDevice(ctx, c.device_id);
-  const cmd = device ? ctx.r2()?.bucket("cmd", device.role) : undefined;
+  const role = commandRole(ctx, c.device_id);
+  const cmd = role ? ctx.r2()?.bucket("cmd", role) : undefined;
   if (!cmd) return false;
   try {
     await cmd.delete(c.object_key);
     ctx.db.prepare("UPDATE commands SET cmd_deleted = 1 WHERE id = ?").run(c.id);
     return true;
   } catch { return false; }
+}
+
+/**
+ * The role (so the cmd-bucket) of a command's device. A device that was revoked or forgotten has no devices row,
+ * but its unpair command still has to be deleted from its cmd-bucket when the device answers.
+ */
+function commandRole(ctx: Ctx, deviceId: string): Role | undefined {
+  for (const t of ["devices", "revoked_devices", "forgotten_devices"]) {
+    const r = ctx.db.prepare(`SELECT role FROM ${t} WHERE id = ?`).get(deviceId) as { role: Role } | undefined;
+    if (r) return r.role;
+  }
+  return undefined;
+}
+
+/** What a revoke or forget reports about telling the device to reset. */
+export interface UnpairOutcome {
+  /** true when cmd/<oid> with the unpair command is in the device's cmd-bucket */
+  unpairSent: boolean;
+  unpairCommandId: string | null;
+  unpairSentAt: string | null;
+  /** why the device could not be told; null when it was sent */
+  unpairReason: string | null;
+}
+
+/**
+ * Tell a device it is being removed: issue and send an `unpair` command while its key is still known. Called by
+ * revoke and forget before they drop the device. Never throws: when R2 is not reachable the removal goes ahead
+ * and the outcome says the device could not be told. A command that could not be written is cancelled, so it is
+ * not retried for a device that no longer exists. The sent command is left in the cmd-bucket until the device's
+ * command_status arrives (then deleted, PLAN decision 4) or the 30-day lifecycle rule removes it.
+ */
+export async function sendUnpair(ctx: Ctx, device: DeviceRow): Promise<UnpairOutcome> {
+  const notSent = (reason: string, id: string | null = null): UnpairOutcome => ({ unpairSent: false, unpairCommandId: id, unpairSentAt: null, unpairReason: reason });
+  if (!ctx.r2()?.bucket("cmd", device.role)) {
+    return notSent(ctx.keystore.isUnlocked()
+      ? "R2 is not configured, so the device could not be told to reset. It still considers itself paired, and the Mac refuses its uploads."
+      : "The vault is locked, so the device could not be told to reset. It still considers itself paired, and the Mac refuses its uploads.");
+  }
+  let c: CommandRow;
+  try { c = await issueCommand(ctx, device.id, { type: "unpair" }); }
+  catch (e) { return notSent(`The unpair command could not be created: ${(e as Error).message}`); }
+  if (c.status === "sent") return { unpairSent: true, unpairCommandId: c.id, unpairSentAt: c.sent_at, unpairReason: null };
+  const why = c.last_error ?? "unknown error";
+  ctx.db.prepare("UPDATE commands SET status = 'cancelled', status_at = ?, cmd_deleted = 1, detail = ? WHERE id = ? AND status = 'queued'")
+    .run(nowIso(), `could not be written to R2: ${why}`, c.id);
+  return notSent(`The unpair command could not be written to R2 (${why}), so the device was not told to reset. It still considers itself paired, and the Mac refuses its uploads.`, c.id);
 }
 
 /** Retry deletes that failed earlier, and expire commands the 30-day lifecycle has removed. */

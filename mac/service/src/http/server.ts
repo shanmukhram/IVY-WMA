@@ -20,7 +20,7 @@ import { ZodError } from "zod";
 import type { Service } from "../service.ts";
 import { KeystoreError } from "../keystore/keystore.ts";
 import { ForgetError, forgetDevice, forgetFootprint } from "../devices/forget.ts";
-import { PairingError, cancelPairing, getDevice, listDevices, listPairings, renameDevice, revokeDevice, startPairing } from "../pairing/pairing.ts";
+import { PairingError, cancelPairing, getDevice, listDevices, listPairings, listRemovedDevices, renameDevice, revokeDevice, startPairing } from "../pairing/pairing.ts";
 import { CommandError, cancelCommand, commandView, getCommand, issueCommand, listCommands, requestFile } from "../commands/commands.ts";
 import { search, SearchError } from "../query/search.ts";
 import { timeline, TimelineError } from "../query/timeline.ts";
@@ -255,7 +255,13 @@ export async function buildServer(svc: Service): Promise<FastifyInstance> {
   });
   app.get("/api/pairings", async () => ({ pairings: listPairings(ctx) }));
   app.delete("/api/pairings/:id", async (req) => ({ cancelled: await cancelPairing(ctx, (req.params as { id: string }).id) }));
-  app.get("/api/devices", async () => ({ macFingerprint: ctx.keystore.macFingerprint(), devices: listDevices(ctx).map(deviceView) }));
+  // `removed`: devices revoked or forgotten in the last 30 days, with whether each was told to reset (the unpair
+  // command reached its cmd-bucket) and when it confirmed the reset.
+  app.get("/api/devices", async () => ({
+    macFingerprint: ctx.keystore.macFingerprint(),
+    devices: listDevices(ctx).map(deviceView),
+    removed: listRemovedDevices(ctx),
+  }));
   app.get("/api/devices/:id", async (req) => {
     const d = getDevice(ctx, (req.params as { id: string }).id);
     if (!d) throw new HttpError(404, "not_found", "no such device");
@@ -277,11 +283,13 @@ export async function buildServer(svc: Service): Promise<FastifyInstance> {
   });
   // DELETE without ?wipe: revoke only (the captured records stay). With ?wipe=1 and { confirm: <fingerprint> }:
   // forget the device, removing everything it contributed from the vault and the local cache (devices/forget.ts).
-  // R2 is not touched; whatever the device left there is ignored by ingest.
+  // Both first send the device an unpair command (unpairSent says whether it reached R2, unpairReason why not);
+  // nothing the device uploaded is touched in R2, and whatever it left there is quarantined (revoke) or ignored
+  // (forget). Both run between ingest passes, so the device's answer is matched against the removed device.
   app.delete("/api/devices/:id", async (req) => {
     const id = (req.params as { id: string }).id;
     const wipe = (req.query as { wipe?: string }).wipe;
-    if (wipe === undefined || wipe === "0" || wipe === "false") return revokeDevice(ctx, id);
+    if (wipe === undefined || wipe === "0" || wipe === "false") return svc.ingester.exclusive(() => revokeDevice(ctx, id));
     const confirm = (req.body as { confirm?: unknown } | undefined)?.confirm;
     try {
       return await svc.ingester.exclusive(() => forgetDevice(ctx, id, confirm));
@@ -386,6 +394,7 @@ export async function buildServer(svc: Service): Promise<FastifyInstance> {
     const b = req.body as { deviceId?: string; params?: unknown } | undefined;
     if (!b?.deviceId || !b.params) throw new HttpError(400, "bad_command", "deviceId and params are required");
     const p = b.params as { type?: string; fileId?: string };
+    if (p.type === "unpair") throw new HttpError(400, "bad_command", "unpair is sent only by revoking or forgetting the device (DELETE /api/devices/:id)");
     if (p.type === "file_request" && p.fileId) return requestFile(ctx, p.fileId);
     return commandView(ctx, await issueCommand(ctx, b.deviceId, b.params as never));
   });

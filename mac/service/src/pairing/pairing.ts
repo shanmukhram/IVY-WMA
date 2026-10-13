@@ -21,6 +21,7 @@ import type { PairingDeviceRecordT, PairingPayload } from "@ivy/protocol";
 import type { Ctx } from "../context.ts";
 import { bucketName, endpointOf, type Role } from "../r2/config.ts";
 import { nowIso, msOf } from "../util/time.ts";
+import { sendUnpair } from "../commands/commands.ts";
 
 export class PairingError extends Error {
   readonly code: string;
@@ -154,6 +155,12 @@ export function acceptDeviceRecord(
                     pairing_id = excluded.pairing_id, paired_at = excluded.paired_at, last_seen = excluded.last_seen`)
     .run(rec.deviceId, rec.role, rec.publicKey, fp, rec.pairingId, at, at);
   ctx.db.prepare("UPDATE pairings SET status = 'consumed', device_id = ?, consumed_at = ? WHERE id = ?").run(rec.deviceId, at, rec.pairingId);
+  // a revoked device that pairs again under the same id is no longer "recently removed"
+  ctx.db.prepare("DELETE FROM revoked_devices WHERE id = ?").run(rec.deviceId);
+  // and an unpair command it has not answered must not reset it now: cancelled here, its cmd object is deleted by
+  // the next command maintenance pass
+  ctx.db.prepare(`UPDATE commands SET status = 'cancelled', status_at = ?, detail = 'device paired again'
+                  WHERE device_id = ? AND type = 'unpair' AND status IN ('queued','sent')`).run(at, rec.deviceId);
   return { ok: true, deviceId: rec.deviceId, fingerprint: fp, pairingId: rec.pairingId, role: rec.role };
 }
 
@@ -195,26 +202,59 @@ export function renameDevice(ctx: Ctx, id: string, name: unknown): { deviceId: s
 export const TOKEN_WARNING = "The device's R2 tokens remain valid until you rotate them in the Cloudflare dashboard.";
 
 /**
- * Revoke a device: forget its public key (no further commands can be wrapped to
- * it and its uploads are quarantined as from an unknown device), cancel its
- * outstanding commands and remove them from the cmd-bucket. Captured content is
- * kept. The device's R2 tokens stay valid until rotated in Cloudflare; the UI
- * must say so.
+ * Revoke a device: tell it to reset (an `unpair` command, when R2 is reachable), then forget its public key (no
+ * further commands can be wrapped to it and its uploads are quarantined as from an unknown device), cancel its
+ * other outstanding commands and remove them from the cmd-bucket. The unpair command is exempt: it stays in the
+ * cmd-bucket until the device's command_status for it arrives (accepted although the device is gone; see the
+ * ingester) or the 30-day lifecycle rule removes it. The device is remembered in revoked_devices so the
+ * Devices page can show whether it confirmed the reset. Captured content is kept. The device's R2 tokens stay
+ * valid until rotated in Cloudflare; the UI must say so.
  */
-export async function revokeDevice(ctx: Ctx, id: string): Promise<{ revoked: boolean; cancelledCommands: number; tokenWarning: string }> {
+export async function revokeDevice(ctx: Ctx, id: string): Promise<{
+  revoked: boolean; cancelledCommands: number; tokenWarning: string;
+  unpairSent: boolean; unpairCommandId: string | null; unpairSentAt: string | null; unpairReason: string | null;
+}> {
   const d = getDevice(ctx, id);
   const tokenWarning = TOKEN_WARNING;
-  if (!d) return { revoked: false, cancelledCommands: 0, tokenWarning };
-  const open = ctx.db.prepare("SELECT id, object_key, cmd_deleted FROM commands WHERE device_id = ? AND status IN ('queued','sent','transferring','uploaded')").all(id) as Array<{ id: string; object_key: string; cmd_deleted: number }>;
+  if (!d) return { revoked: false, cancelledCommands: 0, tokenWarning, unpairSent: false, unpairCommandId: null, unpairSentAt: null, unpairReason: "no such device" };
+  const unpair = await sendUnpair(ctx, d);
+  const keep = unpair.unpairCommandId ?? "";
+  const open = ctx.db.prepare("SELECT id, object_key, cmd_deleted FROM commands WHERE device_id = ? AND id <> ? AND status IN ('queued','sent','transferring','uploaded')").all(id, keep) as Array<{ id: string; object_key: string; cmd_deleted: number }>;
   const cmd = ctx.r2()?.bucket("cmd", d.role);
   for (const c of open) {
     if (cmd && !c.cmd_deleted) { try { await cmd.delete(c.object_key); ctx.db.prepare("UPDATE commands SET cmd_deleted = 1 WHERE id = ?").run(c.id); } catch { /* lifecycle is the backstop */ } }
   }
+  const at = nowIso();
   ctx.db.transaction(() => {
-    ctx.db.prepare("UPDATE commands SET status = 'cancelled', detail = 'device revoked', status_at = ? WHERE device_id = ? AND status IN ('queued','sent','transferring','uploaded')").run(nowIso(), id);
+    ctx.db.prepare("UPDATE commands SET status = 'cancelled', detail = 'device revoked', status_at = ? WHERE device_id = ? AND id <> ? AND status IN ('queued','sent','transferring','uploaded')").run(at, id, keep);
     ctx.db.prepare("DELETE FROM collector_state WHERE device_id = ?").run(id);
     ctx.db.prepare("DELETE FROM devices WHERE id = ?").run(id);
+    ctx.db.prepare(`INSERT INTO revoked_devices(id, role, fingerprint, name, revoked_at, unpair_command_id, unpair_sent_at, unpair_detail, unpair_confirmed_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL)
+                    ON CONFLICT(id) DO UPDATE SET role = excluded.role, fingerprint = excluded.fingerprint, name = excluded.name, revoked_at = excluded.revoked_at,
+                      unpair_command_id = excluded.unpair_command_id, unpair_sent_at = excluded.unpair_sent_at, unpair_detail = excluded.unpair_detail, unpair_confirmed_at = NULL`)
+      .run(id, d.role, d.fingerprint, d.name, at, unpair.unpairCommandId, unpair.unpairSentAt, unpair.unpairReason);
   })();
-  ctx.events.emit("device.revoked", { deviceId: id, role: d.role, fingerprint: d.fingerprint });
-  return { revoked: true, cancelledCommands: open.length, tokenWarning };
+  ctx.events.emit("device.revoked", { deviceId: id, role: d.role, fingerprint: d.fingerprint, unpairSent: unpair.unpairSent });
+  return { revoked: true, cancelledCommands: open.length, tokenWarning, ...unpair };
+}
+
+/** How long a revoked or forgotten device stays in the Devices page's "Recently removed" list. */
+export const REMOVED_LIST_MS = 30 * 24 * 3600_000;
+
+export interface RemovedDevice {
+  id: string; role: Role; name: string | null; fingerprint: string; removedAt: string; kind: "revoked" | "forgotten";
+  unpairSentAt: string | null; unpairConfirmedAt: string | null; unpairDetail: string | null;
+}
+
+/** Devices revoked or forgotten in the last 30 days, newest first, with whether each confirmed its reset. */
+export function listRemovedDevices(ctx: Ctx, now = Date.now()): RemovedDevice[] {
+  const since = new Date(now - REMOVED_LIST_MS).toISOString();
+  return ctx.db.prepare(`
+    SELECT id, role, name, fingerprint, revoked_at AS removedAt, 'revoked' AS kind, unpair_sent_at AS unpairSentAt,
+           unpair_confirmed_at AS unpairConfirmedAt, unpair_detail AS unpairDetail FROM revoked_devices WHERE revoked_at >= @since
+    UNION ALL
+    SELECT id, role, name, fingerprint, forgotten_at AS removedAt, 'forgotten' AS kind, unpair_sent_at AS unpairSentAt,
+           unpair_confirmed_at AS unpairConfirmedAt, unpair_detail AS unpairDetail FROM forgotten_devices WHERE forgotten_at >= @since
+    ORDER BY removedAt DESC`).all({ since }) as RemovedDevice[];
 }
