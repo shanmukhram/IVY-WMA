@@ -236,6 +236,7 @@ public sealed class MemoryR2 : IR2ClientFactory
         public Task<string> UploadPartAsync(string key, string uploadId, int partNumber, Stream content, long length, CancellationToken ct = default) => throw new NotSupportedException();
         public Task CompleteMultipartAsync(string key, string uploadId, IReadOnlyList<UploadedPart> parts, CancellationToken ct = default) => throw new NotSupportedException();
         public Task AbortMultipartAsync(string key, string uploadId, CancellationToken ct = default) => Task.CompletedTask;
+        public void ResetConnections() { }
     }
 
     private sealed class CmdClient(MemoryR2 r2, string bucket) : ICmdBucketClient

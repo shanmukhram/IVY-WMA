@@ -171,6 +171,7 @@ public sealed class EndToEndTests : IDisposable
         }
         public Task CompleteMultipartAsync(string key, string uploadId, IReadOnlyList<UploadedPart> parts, CancellationToken ct = default) => _inner.CompleteMultipartAsync(key, uploadId, parts, ct);
         public Task AbortMultipartAsync(string key, string uploadId, CancellationToken ct = default) => _inner.AbortMultipartAsync(key, uploadId, ct);
+        public void ResetConnections() => _inner.ResetConnections();
     }
 
     [Fact]

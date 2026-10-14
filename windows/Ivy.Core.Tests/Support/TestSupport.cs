@@ -74,6 +74,10 @@ public sealed class FakeUpClient : IUpBucketClient
     /// <summary>Hook invoked before each Put; may throw.</summary>
     public Action<string>? BeforePut { get; set; }
 
+    /// <summary>How many times ResetConnections() was called (so tests can assert the uploader healed the pool).</summary>
+    public int Resets { get; private set; }
+    public void ResetConnections() => Resets++;
+
     private static async Task<byte[]> ReadAll(Stream s, CancellationToken ct)
     {
         using var ms = new MemoryStream();
