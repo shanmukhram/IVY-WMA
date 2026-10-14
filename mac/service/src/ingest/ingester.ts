@@ -89,6 +89,9 @@ const ZERO_RANDOM = new Uint8Array(10);
 // between R2 and the Mac; inside it the object is fetched and its hash compared (see unchangedSinceLedger).
 const REWRITE_MARGIN_MS = 60_000;
 const PREFETCH = 64; // objects fetched from R2 concurrently during a pass; commit stays sequential.
+// New manifests, and new data parts, each blob phase handles per pass even when the time budget is already
+// spent: a backlog that only a full listing reaches must still move every time it is listed.
+const MIN_BLOB_PROGRESS = PREFETCH;
 // Fetch latency (the per-object round-trip) is the ingest bottleneck, so a wider window drains a large
 // backlog far faster — the whole up-bucket after the PC first syncs, for instance.
 
@@ -128,6 +131,12 @@ export interface BucketPassResult {
   full: boolean;
   /** true when the bulk/blob phase hit the per-pass wall-clock budget and the rest continues next pass */
   capped?: boolean;
+  /**
+   * true when this pass stopped with listed blob work still to do (a manifest not opened, a data part not
+   * fetched). After a full listing this asks for another full listing on the next pass: a blob below the
+   * listing position is reached only by a full listing, so waiting an hour for the next one is not enough.
+   */
+  blobsLeft?: boolean;
   error?: string;
 }
 
@@ -192,11 +201,23 @@ export class Ingester {
 
   constructor(ctx: Ctx) { this.ctx = ctx; }
 
-  /** Single flight: concurrent callers share one pass. */
+  /**
+   * Single flight: concurrent callers share one pass. A full listing asked for while an ordinary pass runs
+   * is not folded into it (that pass already chose its listing): it runs as soon as that pass ends, and
+   * callers asking meanwhile share it.
+   */
   poll(opts: { full?: boolean } = {}): Promise<PollResult> {
+    if (opts.full && this.running) {
+      this.fullAfter ??= this.running.catch(() => undefined).then(() => {
+        this.fullAfter = null;
+        return this.poll({ full: true });
+      });
+      return this.fullAfter;
+    }
     this.running ??= this.pass(opts).finally(() => { this.running = null; });
     return this.running;
   }
+  private fullAfter: Promise<PollResult> | null = null;
 
   isRunning(): boolean { return this.running !== null; }
 
@@ -300,6 +321,8 @@ export class Ingester {
       const res = await this.pollBucket({ bucket: up, bucketName: name, role }, full);
       if (full && !res.error) this.lastFull.set(name, Date.now());
       if (deviceBack && res.error) this.fullNext.add(name);
+      // a full listing that left blob work behind lists in full again, until the backlog is in
+      if (full && res.blobsLeft) this.fullNext.add(name);
       results.push(res);
       setSetting(this.ctx.db, `poll:${name}`, JSON.stringify({
         at, ok: !res.error, error: res.error ?? null, lastOkAt: res.error ? this.lastOk(name) : at,
@@ -505,6 +528,7 @@ export class Ingester {
     // backlog continues next pass.
     const deadline = Date.now() + this.ctx.config.ingestPassBudgetMs;
     let capped = false;
+    let blobsLeft = false; // listed blob work this pass did not reach (see BucketPassResult.blobsLeft)
     for (let i = 0; i < bulkSingles.length && budget > 0; i += PREFETCH) {
       if (Date.now() > deadline) { capped = true; break; }
       budget -= await runWindow(bulkSingles.slice(i, i + PREFETCH));
@@ -527,23 +551,51 @@ export class Ingester {
     }
     // Phase 1: ingest every manifest first (they are tiny), which records each blob's payload kind so the
     // chunks can then be fetched avatars-first. A blob whose parts arrived before its manifest waits as before.
+    // Everything before this phase shares the pass's time budget, so each blob phase always makes progress
+    // (MIN_BLOB_PROGRESS new manifests here, as many new parts below) even when the budget is already spent;
+    // otherwise a backlog only a full listing reaches would never move.
+    let manifestsDone = 0;
     for (const [oid, g] of blobEntries) {
       if (!g.manifest) continue;
-      if (Date.now() > deadline) { capped = true; break; }
+      // a blob already assembling had this manifest opened and recorded, and its parts are checked against
+      // that record, so the listed manifest is settled from the ledger: no download and no share of the budget
+      const known = getBlob(this.ctx, src.bucketName, oid);
+      if (known?.status === "assembling" && this.ledger(src.bucketName, g.manifest.key)?.status === "committed") {
+        const out = await this.replay(src, g.manifest.key, { status: "committed" }, archivesPayload(this.ctx, known.payload_kind));
+        tally(out); note(g.manifest, out);
+        continue;
+      }
+      if (Date.now() > deadline) {
+        capped = true;
+        if (manifestsDone >= MIN_BLOB_PROGRESS) {
+          blobsLeft ||= blobEntries.some(([, x]) => !!x.manifest && !this.settledByLedger(src, x.manifest));
+          break;
+        }
+      }
       const out = await this.guard(src, g.manifest.key, "manifest", () => this.ingestManifest(src, oid, g.manifest!.key, g.parts, undefined, false, g.manifest));
       tally(out); note(g.manifest, out);
+      if (out === "committed") manifestsDone++;
     }
     await this.flushDeletes(src.bucketName);
     // Phase 2: fetch the chunks, avatars before thumbnails before large media, so pictures land first.
     blobEntries.sort(([a], [b]) =>
       blobPriority(getBlob(this.ctx, src.bucketName, a)?.payload_kind) - blobPriority(getBlob(this.ctx, src.bucketName, b)?.payload_kind)
       || (a < b ? -1 : a > b ? 1 : 0));
-    for (const [oid, g] of blobEntries) {
+    let partsDone = 0;
+    // whether any blob from index i on still has a listed part to fetch (the work a break leaves behind)
+    const partsLeftFrom = (i: number) => blobEntries.slice(i).some(([oid, g]) => g.parts.some((p) => this.partNeedsBytes(src, oid, p)));
+    for (const [i, [oid, g]] of blobEntries.entries()) {
       const mrow = getBlob(this.ctx, src.bucketName, oid);
       if (mrow?.status === "quarantined") continue; // the manifest was quarantined with its parts
       const isBulkBlob = blobPriority(mrow?.payload_kind) > 0; // avatars (0) always; thumbnails and media share the budget
-      if (isBulkBlob && budget <= 0) break; // avatars done; the rest of the media continues next pass
-      if (Date.now() > deadline) { capped = true; break; } // time's up for this pass; the rest continues next pass
+      // avatars always; the rest of the media continues next pass once this one has made its minimum progress,
+      // so a full listing that asks for another (blobsLeft) has always moved the backlog forward
+      if (isBulkBlob && budget <= 0 && partsDone >= MIN_BLOB_PROGRESS) { blobsLeft ||= partsLeftFrom(i); break; }
+      if (Date.now() > deadline) {
+        capped = true;
+        // time's up for this pass, once it has made its minimum progress; the rest continues next pass
+        if (partsDone >= MIN_BLOB_PROGRESS) { blobsLeft ||= partsLeftFrom(i); break; }
+      }
       if (isBulkBlob) budget -= g.parts.length;
       // a blob with no manifest yet still runs its parts: ingestPart leaves them waiting, or quarantines orphans
       g.parts.sort((a, b) => a.index - b.index);
@@ -557,6 +609,7 @@ export class Ingester {
         for (const { p, bytes } of fetched) {
           const out = await this.guard(src, p.key, "blob_chunk", () => this.ingestPart(src, oid, p.key, p.index, bytes));
           tally(out); note(p, out);
+          if (out === "committed") partsDone++;
         }
         await this.flushDeletes(src.bucketName);
       }
@@ -579,6 +632,7 @@ export class Ingester {
     // positions last: after the commits and the delete flush above (crash safety)
     this.advancePositions(src, pos, singles, singleOutcome, [...blobs.keys()], blobCut);
     res.capped = capped;
+    res.blobsLeft = blobsLeft;
     if (capped) this.ctx.events.emit("ingest.capped", { bucket: src.bucketName, committed: res.committed, budgetMs: this.ctx.config.ingestPassBudgetMs });
     res.marker = highest(pos);
     // kept for the coverage view, which shows it per bucket

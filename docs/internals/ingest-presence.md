@@ -30,3 +30,15 @@ So Windows stopped uploading at 17:54:07, and the Mac was still committing its h
 Fix: `devices.last_upload_at` (migration v16) holds the creation time of the newest committed object from the device, read from its oid and never later than the Mac's clock (`ingester.noteUpload`, called for records, blob parts and manifests). `lastHeard = freshest(last_report_at, last_upload_at)`; both are device times. `last_seen` is back to its original meaning (when the Mac last committed something; it is still what device-return detection uses) and the UI shows it as "Last saved", next to "Last heard" and "Last report".
 
 Tests: mac/service/test/presence.test.ts (including: an old backlog committed now leaves a quiet device stale; a future-dated oid is capped at the Mac's clock).
+
+## A backlog only the full listing reaches (Oct 14 2026, PLAN decision 23)
+
+Live evidence, Oct 14 2026 around 02:40 UTC: 1,044 photo blobs (1,042 Telegram attachments) `assembling` since 17:13–19:04 UTC on Oct 13, `committed_parts` empty, no ledger row for any `p/00000000`, yet `up/blob/<oid>/p/00000000` present in R2 for every sampled oid. The blob position (`pos:ivy-up-windows:blob`) was far above their oids. A full listing forced through pause/resume listed 22,686 keys, replayed 1,040 manifests and ended `capped` with no part fetched.
+
+Order inside a pass, all after the deadline is set: bulk singles (file listings), the forgotten-device loop over leftover blob objects (no deadline check of its own), phase 1 (manifests), phase 2 (parts). Phase 2 checked the deadline before its first blob, so whatever the earlier steps cost came out of phase 2 only.
+
+Now:
+- `MIN_BLOB_PROGRESS` (= PREFETCH, 64): phase 1 opens at least that many new manifests and phase 2 commits at least that many new parts before honouring the deadline or the count budget. `capped` still reports that the pass ran over.
+- Phase 1 settles the manifest of a blob already `assembling` straight from the ledger (its parts are verified against the manifest recorded when it was opened), without the deadline check.
+- `blobsLeft` on a bucket result: the pass stopped with listed manifests or parts it did not reach. After a full listing it puts the bucket in `fullNext`, so the next pass lists in full again. Each such pass has made its minimum progress, so the chain ends; a pass that only ran long does not set it.
+- `poll({ full: true })` while a pass runs waits for it and then runs one full pass, shared by every caller asking meanwhile.
