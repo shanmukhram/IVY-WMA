@@ -21,6 +21,24 @@ public sealed class UploaderOptions
     public int Concurrency { get; init; } = 16;
     /// <summary>Idle re-check interval for <see cref="Uploader.RunAsync"/>.</summary>
     public TimeSpan IdlePoll { get; init; } = TimeSpan.FromSeconds(30);
+
+    /// <summary>
+    /// How many consecutive failed uploads across a drain before the uploader rebuilds the R2 connection pool
+    /// once (<see cref="IUpBucketClient.ResetConnections"/>). A single R2 timeout rebuilds immediately regardless.
+    /// The rebuild happens at most once per bad streak and the streak clears on the next success. 0 disables the
+    /// count-based rebuild (a timeout still rebuilds).
+    /// </summary>
+    public int ResetAfterConsecutiveFailures { get; init; } = 3;
+
+    /// <summary>
+    /// The liveness watchdog rebuilds connections and nudges the drain when there is work due but no upload has
+    /// completed or failed for at least this long. The default is comfortably longer than the 180 s part-upload
+    /// deadline, so a slow-but-progressing drain is never disturbed.
+    /// </summary>
+    public TimeSpan StallWindow { get; init; } = TimeSpan.FromMinutes(3);
+
+    /// <summary>How often the liveness watchdog checks for a stalled drain.</summary>
+    public TimeSpan WatchdogInterval { get; init; } = TimeSpan.FromSeconds(30);
 }
 
 public enum UploadPhase { Started, Progress, Completed, Failed }
@@ -51,6 +69,15 @@ public sealed class Uploader
     private readonly SemaphoreSlim _drainLock = new(1, 1);
     private volatile bool _paused;
 
+    // --- liveness / health state: written by the drain workers and the watchdog, read by the UI ---
+    // Timestamps are kept as UTC ticks (0 = "never") so they can be read and written with Interlocked.
+    private long _lastSuccessAtTicks;
+    private long _lastErrorAtTicks;
+    private long _lastProgressAtTicks;   // updated whenever an item completes OR fails (forward progress)
+    private volatile string? _lastError;
+    private int _consecutiveFailures;
+    private int _resetDoneThisStreak;    // 0/1 guard so one bad streak rebuilds the pool at most once
+
     public Uploader(UploadQueue queue, IUpBucketClient client, UploaderOptions? options = null, ActivityLog? activity = null,
         VaultDb? settingsDb = null, TimeProvider? time = null, ILogger<Uploader>? logger = null)
     {
@@ -70,10 +97,28 @@ public sealed class Uploader
         if (settingsDb?.GetSetting(ConcurrencySetting) is { } cs && int.TryParse(cs, out var savedConc)) conc = savedConc;
         _concurrency = Math.Clamp(conc, 1, 64);
         _paused = settingsDb?.GetSetting(PausedSetting) == "1";
+        _lastProgressAtTicks = _time.GetUtcNow().UtcTicks; // the drain starts "fresh", so the watchdog waits a full window
         _queue.Enqueued += (_, _) => Nudge();
     }
 
     public event EventHandler<UploadProgress>? Progress;
+
+    /// <summary>When the last object uploaded successfully (null until the first success). For the UI.</summary>
+    public DateTimeOffset? LastSuccessfulUploadAt => TicksToOffset(Interlocked.Read(ref _lastSuccessAtTicks));
+
+    /// <summary>The most recent failed-attempt error (trimmed, no secrets), or null. For the UI.</summary>
+    public string? LastError => _lastError;
+
+    /// <summary>When the most recent attempt failed (null until the first failure). For the UI.</summary>
+    public DateTimeOffset? LastErrorAt => TicksToOffset(Interlocked.Read(ref _lastErrorAtTicks));
+
+    /// <summary>Consecutive failed uploads in the current bad streak; back to 0 after any success.</summary>
+    public int ConsecutiveFailures => Volatile.Read(ref _consecutiveFailures);
+
+    /// <summary>Internal "last forward progress" (a completed OR failed item), used by the watchdog.</summary>
+    private DateTimeOffset LastProgressAt => new(Interlocked.Read(ref _lastProgressAtTicks), TimeSpan.Zero);
+
+    private static DateTimeOffset? TicksToOffset(long ticks) => ticks == 0 ? null : new DateTimeOffset(ticks, TimeSpan.Zero);
 
     /// <summary>Pause/resume uploads (persisted). An in-flight object finishes its current part, then stops.</summary>
     public bool Paused
@@ -128,7 +173,18 @@ public sealed class Uploader
             {
                 while (!_paused && !token.IsCancellationRequested)
                 {
-                    var item = _queue.ClaimNextDue();
+                    QueueItem? item;
+                    try
+                    {
+                        item = _queue.ClaimNextDue();
+                    }
+                    catch (Exception e)
+                    {
+                        // A transient store error (e.g. a briefly locked SQLite file) must never fault the whole
+                        // drain / Task.WhenAll. End this worker; RunAsync retries the drain on its next cycle.
+                        _logger.LogWarning(e, "claiming the next upload failed; ending this worker for now");
+                        break;
+                    }
                     if (item is null) break; // nothing due right now; another worker may still be finishing
                     if (await UploadOneAsync(item, token).ConfigureAwait(false)) Interlocked.Increment(ref done);
                 }
@@ -143,21 +199,79 @@ public sealed class Uploader
     /// <summary>Background loop: drain, then sleep until nudged, the next backoff gate, or the idle poll.</summary>
     public async Task RunAsync(CancellationToken ct)
     {
-        while (!ct.IsCancellationRequested)
+        // The liveness watchdog runs on its OWN task with its OWN timer, tied to the same token. It never shares a
+        // thread with the drain, so a fully wedged drain cannot starve it: it still rebuilds connections and nudges,
+        // which is what lets the fast-lane heartbeat resume. Starting it here keeps VaultAgent's wiring unchanged.
+        var watchdog = Task.Run(() => WatchdogAsync(ct), ct);
+        try
         {
-            try { await DrainAsync(ct).ConfigureAwait(false); }
-            catch (OperationCanceledException) when (ct.IsCancellationRequested) { break; }
-            catch (Exception e) { _logger.LogError(e, "uploader drain failed"); }
-
-            var wait = _options.IdlePoll;
-            if (!_paused && _queue.NextAttemptTime() is { } next)
+            while (!ct.IsCancellationRequested)
             {
-                var until = next - _time.GetUtcNow();
-                if (until < wait) wait = until < TimeSpan.FromMilliseconds(50) ? TimeSpan.FromMilliseconds(50) : until;
+                try { await DrainAsync(ct).ConfigureAwait(false); }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested) { break; }
+                catch (Exception e) { _logger.LogError(e, "uploader drain failed"); }
+
+                var wait = _options.IdlePoll;
+                if (!_paused && _queue.NextAttemptTime() is { } next)
+                {
+                    var until = next - _time.GetUtcNow();
+                    if (until < wait) wait = until < TimeSpan.FromMilliseconds(50) ? TimeSpan.FromMilliseconds(50) : until;
+                }
+                try { await _wake.WaitAsync(wait, ct).ConfigureAwait(false); }
+                catch (OperationCanceledException) { break; }
             }
-            try { await _wake.WaitAsync(wait, ct).ConfigureAwait(false); }
-            catch (OperationCanceledException) { break; }
         }
+        finally
+        {
+            try { await watchdog.ConfigureAwait(false); }
+            catch (OperationCanceledException) { }
+            catch (Exception e) { _logger.LogWarning(e, "upload watchdog ended abnormally"); }
+        }
+    }
+
+    /// <summary>
+    /// Self-contained liveness monitor. Each tick, if there is work due or overdue but the drain has made no forward
+    /// progress for <see cref="UploaderOptions.StallWindow"/>, it rebuilds the R2 connections and nudges the drain,
+    /// so even a fully wedged drain recovers and the 30-second device-report heartbeat gets back out.
+    /// </summary>
+    private async Task WatchdogAsync(CancellationToken ct)
+    {
+        using var timer = new PeriodicTimer(_options.WatchdogInterval, _time);
+        try
+        {
+            while (await timer.WaitForNextTickAsync(ct).ConfigureAwait(false))
+            {
+                try { WatchdogTick(); }
+                catch (Exception e) { _logger.LogWarning(e, "upload watchdog tick failed"); }
+            }
+        }
+        catch (OperationCanceledException) { }
+    }
+
+    private void WatchdogTick()
+    {
+        if (_paused) return;
+        var now = _time.GetUtcNow();
+        var age = now - LastProgressAt;
+        if (!ShouldResetForStall(age, _queue.Depth(), _queue.NextAttemptTime(), now, _options.StallWindow)) return;
+        _logger.LogWarning("upload stalled: no progress in {Age}; rebuilding connections", age);
+        TryResetConnections();
+        Nudge();
+        // Treat the rebuild itself as progress so a persistent stall gets a full window to recover before the next
+        // rebuild, rather than reset-storming on every tick.
+        MarkProgress();
+    }
+
+    /// <summary>
+    /// The watchdog's decision, pure so it can be unit-tested: rebuild only when there is work that is due or
+    /// overdue (queue depth &gt; 0 and the next attempt is null or already passed) AND the drain has made no forward
+    /// progress — no completed or failed item — for at least <paramref name="window"/>.
+    /// </summary>
+    internal static bool ShouldResetForStall(TimeSpan progressAge, int queueDepth, DateTimeOffset? nextAttempt, DateTimeOffset now, TimeSpan window)
+    {
+        if (queueDepth <= 0) return false;
+        if (progressAge < window) return false;
+        return nextAttempt is null || nextAttempt <= now;
     }
 
     private void Emit(UploadProgress p)
@@ -185,6 +299,7 @@ public sealed class Uploader
             else await UploadSingleAsync(item, path, ct).ConfigureAwait(false);
 
             _queue.Complete(item.Id);
+            OnUploadSucceeded();
             _activity?.Append(item.Collector, ActivityEvents.Uploaded, $"{item.ObjectKey} {item.Size} bytes");
             Emit(new UploadProgress(item.ObjectKey, item.Collector, item.Size, item.Size, UploadPhase.Completed));
             return true;
@@ -205,11 +320,55 @@ public sealed class Uploader
             _logger.LogWarning("upload of {ObjectKey} failed (retry in {Delay}): {Error}", item.ObjectKey, delay, e.Message);
             _activity?.Append(item.Collector, ActivityEvents.UploadFailed, $"{item.ObjectKey} attempt {item.Attempts + 1}: {Trim(e.Message)}");
             Emit(new UploadProgress(item.ObjectKey, item.Collector, 0, item.Size, UploadPhase.Failed, e.Message));
+            OnUploadFailed(e);
             return false;
         }
     }
 
     private static string Trim(string s) => s.Length > 200 ? s[..200] : s;
+
+    /// <summary>A confirmed upload: record it, mark forward progress, and clear the failure streak and reset guard.</summary>
+    private void OnUploadSucceeded()
+    {
+        var now = _time.GetUtcNow().UtcTicks;
+        Interlocked.Exchange(ref _lastSuccessAtTicks, now);
+        Interlocked.Exchange(ref _lastProgressAtTicks, now);
+        Interlocked.Exchange(ref _consecutiveFailures, 0);
+        Interlocked.Exchange(ref _resetDoneThisStreak, 0);
+    }
+
+    /// <summary>
+    /// A failed attempt: record the error (trimmed, no secrets) and mark forward progress (the drain is moving, even
+    /// if failing). Then, once per bad streak, rebuild the R2 connection pool — immediately on an R2 timeout, or
+    /// after <see cref="UploaderOptions.ResetAfterConsecutiveFailures"/> consecutive failures. The guard keeps a long
+    /// failing streak from reset-storming; the next success clears it.
+    /// </summary>
+    private void OnUploadFailed(Exception e)
+    {
+        var now = _time.GetUtcNow().UtcTicks;
+        _lastError = Trim(e.Message);
+        Interlocked.Exchange(ref _lastErrorAtTicks, now);
+        Interlocked.Exchange(ref _lastProgressAtTicks, now);
+        var streak = Interlocked.Increment(ref _consecutiveFailures);
+
+        var isTimeout = e is R2Exception { IsTimeout: true };
+        var threshold = _options.ResetAfterConsecutiveFailures;
+        var reachedThreshold = threshold > 0 && streak >= threshold;
+        if (!isTimeout && !reachedThreshold) return;
+        if (Interlocked.CompareExchange(ref _resetDoneThisStreak, 1, 0) != 0) return; // already rebuilt this streak
+
+        if (isTimeout) _logger.LogInformation("rebuilding R2 connections after an upload timeout");
+        else _logger.LogInformation("rebuilding R2 connections after {Failures} consecutive upload failures", streak);
+        TryResetConnections();
+    }
+
+    private void MarkProgress() => Interlocked.Exchange(ref _lastProgressAtTicks, _time.GetUtcNow().UtcTicks);
+
+    private void TryResetConnections()
+    {
+        try { _client.ResetConnections(); }
+        catch (Exception e) { _logger.LogWarning(e, "rebuilding R2 connections failed"); }
+    }
 
     private sealed class PausedException : Exception { }
 

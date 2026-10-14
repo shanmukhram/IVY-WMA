@@ -1,4 +1,6 @@
+using Ivy.Core.Agent;
 using Ivy.Core.Protocol;
+using Ivy.Core.R2;
 using Ivy.Core.Sink;
 using Ivy.Core.Storage;
 using Ivy.Core.Tests.Support;
@@ -411,5 +413,220 @@ public class UploaderTests : IDisposable
         Assert.True(take.IsCompleted);
         Assert.True(bucket.TakeAsync(0).IsCompleted);
         Assert.True(new TokenBucket(0, time).TakeAsync(10_000_000).IsCompleted);
+    }
+}
+
+/// <summary>
+/// The uploader's self-healing and liveness behaviour: a repeated-failure streak or an R2 timeout rebuilds the
+/// connection pool once, the watchdog rebuilds and nudges a stalled drain, the fast-lane heartbeat recovers after a
+/// rebuild while a bulk item keeps failing, and last-success / last-error are tracked for the UI.
+/// </summary>
+public class UploaderResilienceTests : IDisposable
+{
+    private readonly TempDir _dir = new();
+    private readonly MacSim _mac = new();
+    public void Dispose() => _dir.Dispose();
+
+    private byte[] Env(string key, Kind kind = Kind.FileMeta, int size = 100) =>
+        Envelope.Encrypt(_mac.PublicKey, kind, key, new byte[size]);
+
+    [Fact]
+    public async Task Repeated_failures_rebuild_connections_once_then_the_item_uploads()
+    {
+        var server = new FakeBucketServer();
+        var time = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        using var p = new AgentProcess(_dir.Path, time);
+        var key = ObjectKeys.Up(Kind.FileMeta, Oids.New());
+        p.Queue.EnqueueCiphertext(key, Kind.FileMeta, Env(key));
+
+        var fails = 3; // the default ResetAfterConsecutiveFailures threshold
+        var client = new FakeUpClient(server)
+        {
+            BeforePut = _ => { if (Volatile.Read(ref fails) > 0) { Interlocked.Decrement(ref fails); throw new HttpRequestException("offline"); } },
+        };
+        // One drain = one attempt (concurrency 1); the same uploader instance carries the failure streak across drains.
+        var uploader = new Uploader(p.Queue, client, new UploaderOptions { Concurrency = 1 }, time: time);
+
+        foreach (var backoff in new[] { 5, 10 }) // first two failures: no rebuild yet
+        {
+            Assert.Equal(0, await uploader.DrainAsync());
+            Assert.Equal(0, client.Resets);
+            time.Advance(TimeSpan.FromSeconds(backoff));
+        }
+        Assert.Equal(0, await uploader.DrainAsync());   // third consecutive failure reaches the threshold
+        Assert.Equal(1, client.Resets);                 // exactly one rebuild for the streak
+        Assert.Equal(3, uploader.ConsecutiveFailures);
+
+        time.Advance(TimeSpan.FromSeconds(20));
+        Assert.Equal(1, await uploader.DrainAsync());   // the loop never died; the item finally uploads
+        Assert.Equal(1, client.Resets);                 // success clears the streak; no reset-storm
+        Assert.Equal(0, uploader.ConsecutiveFailures);
+        Assert.Empty(p.Queue.All());
+        Assert.True(server.Up.ContainsKey(key));
+    }
+
+    [Fact]
+    public async Task A_timeout_rebuilds_connections_immediately_and_the_loop_recovers()
+    {
+        var server = new FakeBucketServer();
+        var time = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        using var p = new AgentProcess(_dir.Path, time);
+        var key = ObjectKeys.Up(Kind.FileMeta, Oids.New());
+        p.Queue.EnqueueCiphertext(key, Kind.FileMeta, Env(key));
+
+        var failed = false;
+        var client = new FakeUpClient(server)
+        {
+            BeforePut = _ => { if (!failed) { failed = true; throw new R2Exception("t", null, "Timeout"); } },
+        };
+        var uploader = new Uploader(p.Queue, client, new UploaderOptions { Concurrency = 1 }, time: time);
+
+        Assert.Equal(0, await uploader.DrainAsync());   // a single timeout rebuilds at once, even below the threshold
+        Assert.Equal(1, client.Resets);
+
+        time.Advance(TimeSpan.FromSeconds(5));
+        Assert.Equal(1, await uploader.DrainAsync());   // recovered
+        Assert.Equal(1, client.Resets);
+        Assert.Empty(p.Queue.All());
+        Assert.True(server.Up.ContainsKey(key));
+    }
+
+    [Fact]
+    public void Watchdog_decision_fires_only_when_work_is_due_and_progress_is_stale()
+    {
+        var now = DateTimeOffset.Parse("2026-10-10T00:00:00Z");
+        var window = TimeSpan.FromMinutes(3);
+        var stale = TimeSpan.FromMinutes(5);
+        var fresh = TimeSpan.FromMinutes(1);
+
+        // no work queued: never reset, however stale
+        Assert.False(Uploader.ShouldResetForStall(stale, 0, null, now, window));
+        // work present but progress still within the window
+        Assert.False(Uploader.ShouldResetForStall(fresh, 3, null, now, window));
+        // work present and stale, but the next attempt is gated in the future (not due yet)
+        Assert.False(Uploader.ShouldResetForStall(stale, 3, now.AddMinutes(10), now, window));
+        // stale, with items in flight and nothing queued (NextAttemptTime null) -> due -> reset
+        Assert.True(Uploader.ShouldResetForStall(stale, 1, null, now, window));
+        // stale, with a due/overdue backoff gate -> reset
+        Assert.True(Uploader.ShouldResetForStall(stale, 2, now.AddSeconds(-1), now, window));
+    }
+
+    [Fact]
+    public async Task Watchdog_rebuilds_connections_and_nudges_a_stalled_drain_then_it_drains()
+    {
+        var server = new FakeBucketServer();
+        var time = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        using var p = new AgentProcess(_dir.Path, time);
+        var key = ObjectKeys.Up(Kind.FileMeta, Oids.New());
+        p.Queue.EnqueueCiphertext(key, Kind.FileMeta, Env(key));
+
+        var started = new SemaphoreSlim(0);
+        var gate = new SemaphoreSlim(0);
+        var blockedOnce = 1;
+        var client = new FakeUpClient(server)
+        {
+            // The first (and only) put wedges the single worker until the test releases it, simulating a drain that
+            // makes no progress. ResetConnections on the fake just counts; the test releases the gate to model recovery.
+            BeforePut = _ =>
+            {
+                if (Interlocked.Exchange(ref blockedOnce, 0) == 1) { started.Release(); gate.Wait(); }
+            },
+        };
+        var options = new UploaderOptions
+        {
+            Concurrency = 1,
+            WatchdogInterval = TimeSpan.FromSeconds(30),
+            StallWindow = TimeSpan.FromMinutes(3),
+        };
+        var uploader = new Uploader(p.Queue, client, options, time: time);
+        using var cts = new CancellationTokenSource();
+        var run = uploader.RunAsync(cts.Token);
+
+        await started.WaitAsync();                       // the worker has claimed the item and is wedged in the put
+
+        for (var i = 0; i < 50 && client.Resets == 0; i++) // advance past the stall window; the watchdog ticks on its own task
+        {
+            time.Advance(TimeSpan.FromSeconds(30));
+            await Task.Delay(5);
+        }
+        Assert.True(client.Resets >= 1);                 // the watchdog rebuilt connections despite the wedged drain
+
+        gate.Release();                                  // recovery: the put completes
+        for (var i = 0; i < 100 && p.Queue.Depth() > 0; i++)
+        {
+            time.Advance(TimeSpan.FromSeconds(1));
+            await Task.Delay(5);
+        }
+        Assert.Equal(0, p.Queue.Depth());                // the nudge kicked the drain and the queue emptied
+        Assert.True(server.Up.ContainsKey(key));
+
+        cts.Cancel();
+        try { await run; } catch (OperationCanceledException) { }
+    }
+
+    [Fact]
+    public async Task Fast_lane_heartbeat_gets_out_after_a_rebuild_while_a_bulk_item_keeps_failing()
+    {
+        var server = new FakeBucketServer();
+        var time = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        using var p = new AgentProcess(_dir.Path, time);
+
+        var bulkKey = ObjectKeys.BlobChunk(Oids.New(), 0);
+        p.Queue.EnqueueCiphertext(bulkKey, Kind.BlobChunk, new byte[1000], "files", lane: UploadQueue.BulkLane);
+
+        var client = new FakeUpClient(server)
+        {
+            BeforePut = k => { if (k == bulkKey) throw new HttpRequestException("bulk offline"); }, // only the bulk path fails
+        };
+        var uploader = new Uploader(p.Queue, client, new UploaderOptions { Concurrency = 1 }, time: time);
+
+        foreach (var backoff in new[] { 5, 10, 20 }) // three failures on the bulk item -> one rebuild
+        {
+            await uploader.DrainAsync();
+            time.Advance(TimeSpan.FromSeconds(backoff));
+        }
+        Assert.Equal(1, client.Resets);
+
+        // A fast-lane device report arrives; it must get out even though the bulk item is still failing.
+        var statusKey = ObjectKeys.DeviceReport(Oids.New());
+        p.Queue.EnqueueCiphertext(statusKey, Kind.DeviceReport, Env(statusKey, Kind.DeviceReport), DeviceReporter.Collector);
+
+        var done = await uploader.DrainAsync();
+        Assert.True(server.Up.ContainsKey(statusKey));   // heartbeat delivered
+        Assert.False(server.Up.ContainsKey(bulkKey));    // the bulk item is still failing
+        Assert.Equal(1, done);                           // only the heartbeat uploaded this drain
+        Assert.Equal(1, client.Resets);                  // the heartbeat's success cleared the streak; no extra rebuild
+    }
+
+    [Fact]
+    public async Task Tracks_last_success_and_last_error()
+    {
+        var server = new FakeBucketServer();
+        var time = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        using var p = new AgentProcess(_dir.Path, time);
+
+        var okKey = ObjectKeys.Up(Kind.FileMeta, Oids.New());
+        p.Queue.EnqueueCiphertext(okKey, Kind.FileMeta, Env(okKey));
+        var uploader = new Uploader(p.Queue, new FakeUpClient(server), new UploaderOptions { Concurrency = 1 }, time: time);
+        Assert.Null(uploader.LastSuccessfulUploadAt);
+        Assert.Null(uploader.LastError);
+        Assert.Null(uploader.LastErrorAt);
+
+        Assert.Equal(1, await uploader.DrainAsync());
+        Assert.Equal(time.GetUtcNow(), uploader.LastSuccessfulUploadAt);
+        Assert.Null(uploader.LastError);
+        Assert.Equal(0, uploader.ConsecutiveFailures);
+
+        time.Advance(TimeSpan.FromMinutes(1));
+        var badKey = ObjectKeys.Up(Kind.FileMeta, Oids.New());
+        p.Queue.EnqueueCiphertext(badKey, Kind.FileMeta, Env(badKey));
+        var failing = new Uploader(p.Queue, new FakeUpClient(server) { BeforePut = _ => throw new HttpRequestException("boom") },
+            new UploaderOptions { Concurrency = 1 }, time: time);
+        Assert.Equal(0, await failing.DrainAsync());
+        Assert.Equal(time.GetUtcNow(), failing.LastErrorAt);
+        Assert.NotNull(failing.LastError);
+        Assert.Contains("boom", failing.LastError);
+        Assert.Equal(1, failing.ConsecutiveFailures);
+        Assert.Null(failing.LastSuccessfulUploadAt); // this instance never completed one
     }
 }
