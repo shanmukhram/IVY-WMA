@@ -16,8 +16,13 @@
  *   GET /api/views/chats?source=&role=&device=&platform=&q=&listing=&page=&pageSize=
  *       conversations seen by a source (or by any source of a role), newest first,
  *       with the last message preview, counts, first/last message time, coverage and
- *       listing (normal | archived | hidden | null when no source has said);
- *       listing=normal|archived|hidden|all filters (default all; normal includes null)
+ *       tags (query/chat-tags.ts): listing (normal | archived | hidden | null when no
+ *       source has said; hidden also when LINE's own chat options say so), muted and
+ *       pinned (LINE's chat options; null when unknown);
+ *       listing=normal|archived|hidden|all filters (default all; normal includes null).
+ *       After every captured conversation come the LINE chats known only from LINE's
+ *       chat options (placeholder: true, no messages), so total counts every chat;
+ *       page through it with page/pageSize (pageSize at most 500)
  *   GET /api/views/chats/:id/profile?device=
  *       profile pane: counts, first/last message, coverage and counts per source,
  *       top senders, edited / deleted-at-source / attachment counts
@@ -37,6 +42,7 @@ import type { Service } from "../service.ts";
 import { enrich, itemView, type BaseItem } from "../query/details.ts";
 import { ITEM_TYPES, TYPE_DEFS, conversationScope, deviceScope, filterSql, isDeviceRole, selectList, type ItemType } from "../query/types.ts";
 import { coverageView } from "../query/sources.ts";
+import { countOptionOnlyChats, lineOptionsJoin, listingFilterSql, optionOnlyChats, tagColumns, tagView } from "../query/chat-tags.ts";
 import { callView, type CallCols } from "../util/call.ts";
 
 const int = (v: unknown, dflt: number, min: number, max: number): number => {
@@ -68,6 +74,28 @@ export function attachmentStatusSql(a = "a"): string {
       AND EXISTS (SELECT 1 FROM message_sources ps WHERE ps.message_id = ${a}.message_id AND ps.source_session = '${LINE_WINDOWS_SOURCE}')
       AND NOT EXISTS (SELECT 1 FROM message_sources ps WHERE ps.message_id = ${a}.message_id AND ps.source_session <> '${LINE_WINDOWS_SOURCE}')
     THEN 'phone_only' ELSE ${a}.status END`;
+}
+
+/**
+ * The device scope, source and role of the chats view, as predicates on conversation alias `a`.
+ * The real chats use them on `c`; a placeholder chat (LINE options only) needs one conversation of
+ * its account that passes them. `source` and `role` must already be validated.
+ */
+function conversationPredicates(a: string, f: { device?: string; source?: string; role?: string }): { sql: string[]; args: unknown[] } {
+  const sql: string[] = []; const args: unknown[] = [];
+  const scope = conversationScope(a, f.device);
+  if (scope) { sql.push(scope.sql); args.push(...scope.args); }
+  if (f.source) {
+    sql.push(`(json_type(${a}.coverage_by_source, ?) IS NOT NULL OR EXISTS (SELECT 1 FROM message_sources ms JOIN messages m ON m.id = ms.message_id
+               WHERE m.conversation_id = ${a}.id AND ms.source_session = ?))`);
+    args.push(`$."${f.source}"`, f.source);
+  }
+  if (f.role) {
+    sql.push(`EXISTS (SELECT 1 FROM message_sources ms JOIN messages m ON m.id = ms.message_id
+               WHERE m.conversation_id = ${a}.id AND ms.source_session LIKE ? || ':%')`);
+    args.push(f.role);
+  }
+  return { sql, args };
 }
 
 export function registerViewRoutes(app: FastifyInstance, svc: Service): void {
@@ -111,6 +139,12 @@ export function registerViewRoutes(app: FastifyInstance, svc: Service): void {
       }
     }
     const all = [...rows, ...[...extra.values()].map((e) => ({ ...e, messages: 0, lastMessageAt: null, deviceId: null }))];
+    // a LINE source also lists the chats LINE knows but that have no captured message (placeholders),
+    // counted by the same rule the chats view uses, so the sidebar count equals the list's total
+    for (const r of all) {
+      if (r.platform !== "line") continue;
+      r.conversations += countOptionOnlyChats(db(), { accountConv: (a) => conversationPredicates(a, { device, source: r.source }), listing: "all" });
+    }
     return {
       sources: all.map((r) => {
         const [role, collector] = r.source.split(":") as [string, string];
@@ -122,41 +156,37 @@ export function registerViewRoutes(app: FastifyInstance, svc: Service): void {
   app.get("/api/views/chats", async (req, reply) => {
     const q = req.query as { source?: string; role?: string; device?: string; platform?: string; q?: string; listing?: string; page?: string; pageSize?: string };
     const pageSize = int(q.pageSize, 200, 1, 500), page = int(q.page, 1, 1, 1e9);
-    const where = ["c.deleted_at IS NULL"]; const args: unknown[] = [];
-    const scope = conversationScope("c", q.device);
-    if (scope) { where.push(scope.sql); args.push(...scope.args); }
-    if (q.source) {
-      if (!SOURCE_RE.test(q.source)) return reply.status(400).send({ error: "bad_source", message: "source must be <role>:<collector>" });
-      where.push(`(json_type(c.coverage_by_source, ?) IS NOT NULL OR EXISTS (SELECT 1 FROM message_sources ms JOIN messages m ON m.id = ms.message_id
-                   WHERE m.conversation_id = c.id AND ms.source_session = ?))`);
-      args.push(`$."${q.source}"`, q.source);
-    }
-    if (q.role) {
-      if (!ROLE_RE.test(q.role)) return reply.status(400).send({ error: "bad_role", message: "role must be windows or android" });
-      where.push(`EXISTS (SELECT 1 FROM message_sources ms JOIN messages m ON m.id = ms.message_id
-                   WHERE m.conversation_id = c.id AND ms.source_session LIKE ? || ':%')`);
-      args.push(q.role);
-    }
-    if (q.platform) { where.push("lower(c.platform) = lower(?)"); args.push(q.platform); }
+    if (q.source && !SOURCE_RE.test(q.source)) return reply.status(400).send({ error: "bad_source", message: "source must be <role>:<collector>" });
+    if (q.role && !ROLE_RE.test(q.role)) return reply.status(400).send({ error: "bad_role", message: "role must be windows or android" });
     const listing = q.listing || "all";
     if (!(LISTINGS as readonly string[]).includes(listing)) return reply.status(400).send({ error: "bad_listing", message: "listing must be normal, archived, hidden or all" });
-    // a conversation no source has given a listing for is shown as normal
-    if (listing === "normal") where.push("(c.listing IS NULL OR c.listing = 'normal')");
-    else if (listing !== "all") { where.push("c.listing = ?"); args.push(listing); }
+    const convPreds = (a: string) => conversationPredicates(a, q);
+    const preds = convPreds("c");
+    const where = ["c.deleted_at IS NULL", ...preds.sql]; const args: unknown[] = [...preds.args];
+    if (q.platform) { where.push("lower(c.platform) = lower(?)"); args.push(q.platform); }
+    const lf = listingFilterSql(listing);
+    if (lf) { where.push(lf.sql); args.push(...lf.args); }
     if (q.q?.trim()) {
       where.push("(instr(lower(COALESCE(c.peer, '')), lower(?)) > 0 OR instr(lower(COALESCE(c.chat_title, '')), lower(?)) > 0 OR instr(lower(c.conv_key), lower(?)) > 0)");
       args.push(q.q.trim(), q.q.trim(), q.q.trim());
     }
     const w = where.join(" AND ");
-    const total = (db().prepare(`SELECT COUNT(*) AS n FROM conversations c WHERE ${w}`).get(...args) as { n: number }).n;
-    const rows = db().prepare(`
+    const offset = (page - 1) * pageSize;
+    const realTotal = (db().prepare(`SELECT COUNT(*) AS n FROM conversations c ${lineOptionsJoin()} WHERE ${w}`).get(...args) as { n: number }).n;
+    // LINE chats known only from LINE's own chat options come after every captured conversation
+    const withPlaceholders = !q.platform || q.platform.toLowerCase() === "line";
+    const optFilter = { accountConv: convPreds, listing, q: q.q };
+    const placeholderTotal = withPlaceholders ? countOptionOnlyChats(db(), optFilter) : 0;
+    const total = realTotal + placeholderTotal;
+    const rows = (db().prepare(`
       SELECT c.id, c.device_id AS deviceId, c.platform, c.account, c.conv_key AS convKey, c.peer, c.kind, c.coverage, c.coverage_by_source,
-             c.chat_title AS chatTitle, c.participant_count AS participantCount, c.chat_type AS chatType, c.avatar_local_path AS avatarLocalPath, c.listing,
+             c.chat_title AS chatTitle, c.participant_count AS participantCount, c.chat_type AS chatType, c.avatar_local_path AS avatarLocalPath, ${tagColumns()},
              (SELECT COUNT(*) FROM messages m WHERE m.conversation_id = c.id AND m.deleted_at IS NULL) AS messageCount,
              (SELECT MIN(m.sent_at) FROM messages m WHERE m.conversation_id = c.id AND m.deleted_at IS NULL) AS firstMessageAt,
              (SELECT MAX(m.sent_at) FROM messages m WHERE m.conversation_id = c.id AND m.deleted_at IS NULL) AS lastMessageAt
-      FROM conversations c WHERE ${w}
-      ORDER BY lastMessageAt IS NULL, lastMessageAt DESC, c.rid DESC LIMIT ? OFFSET ?`).all(...args, pageSize, (page - 1) * pageSize) as Array<Record<string, unknown> & { id: string; coverage_by_source: string; avatarLocalPath: string | null }>;
+      FROM conversations c ${lineOptionsJoin()} WHERE ${w}
+      ORDER BY lastMessageAt IS NULL, lastMessageAt DESC, c.rid DESC LIMIT ? OFFSET ?`).all(...args, pageSize, offset) as Array<Record<string, unknown> & { id: string; coverage_by_source: string; avatarLocalPath: string | null }>)
+      .map(tagView);
     const last = db().prepare(`SELECT id, sender, sent_at AS sentAt, substr(text, 1, 200) AS text, media_kind AS mediaKind, source_status AS sourceStatus,
                                       call_kind, call_outcome, call_duration_s, call_direction
                                FROM messages WHERE conversation_id = ? AND deleted_at IS NULL ORDER BY sent_at DESC, rid DESC LIMIT 1`);
@@ -175,17 +205,20 @@ export function registerViewRoutes(app: FastifyInstance, svc: Service): void {
         source: cov.coverageSources[0]?.source ?? null,
       };
     });
-    return { total, page, pageSize, pages: Math.max(1, Math.ceil(total / pageSize)), items };
+    const placeholders = withPlaceholders
+      ? optionOnlyChats(db(), optFilter, pageSize - items.length, Math.max(0, offset - realTotal))
+      : [];
+    return { total, page, pageSize, pages: Math.max(1, Math.ceil(total / pageSize)), items: [...items, ...placeholders] };
   });
 
   app.get("/api/views/chats/:id/profile", async (req, reply) => {
     const id = (req.params as { id: string }).id;
-    const c = db().prepare(`SELECT id, device_id AS deviceId, platform, account, conv_key AS convKey, peer, kind, coverage, coverage_by_source,
-                                   chat_title AS chatTitle, participant_count AS participantCount, chat_type AS chatType, created_at AS createdAt,
-                                   avatar_local_path AS avatarLocalPath, listing
-                            FROM conversations WHERE id = ? AND deleted_at IS NULL`).get(id) as (Record<string, unknown> & { coverage_by_source: string; avatarLocalPath: string | null; kind: string }) | undefined;
+    const c = db().prepare(`SELECT c.id, c.device_id AS deviceId, c.platform, c.account, c.conv_key AS convKey, c.peer, c.kind, c.coverage, c.coverage_by_source,
+                                   c.chat_title AS chatTitle, c.participant_count AS participantCount, c.chat_type AS chatType, c.created_at AS createdAt,
+                                   c.avatar_local_path AS avatarLocalPath, ${tagColumns()}
+                            FROM conversations c ${lineOptionsJoin()} WHERE c.id = ? AND c.deleted_at IS NULL`).get(id) as (Record<string, unknown> & { coverage_by_source: string; avatarLocalPath: string | null; kind: string }) | undefined;
     if (!c || !inScope(id, (req.query as { device?: string }).device)) return reply.status(404).send({ error: "not_found", message: "no such conversation" });
-    const { coverage_by_source, avatarLocalPath, ...conv } = c;
+    const { coverage_by_source, avatarLocalPath, ...conv } = tagView(c);
     const stats = db().prepare(`SELECT COUNT(*) AS messages, MIN(sent_at) AS firstMessageAt, MAX(sent_at) AS lastMessageAt,
                                        SUM(edited_at IS NOT NULL) AS edited, SUM(source_status = 'deleted_at_source') AS deletedAtSource,
                                        SUM(text_quality = 'preview') AS previewOnly
@@ -228,11 +261,11 @@ export function registerViewRoutes(app: FastifyInstance, svc: Service): void {
   app.get("/api/views/chats/:id/messages", async (req, reply) => {
     const id = (req.params as { id: string }).id;
     const q = req.query as { around?: string; before?: string; after?: string; device?: string };
-    const c = db().prepare(`SELECT id, platform, account, conv_key AS convKey, peer, kind, coverage, coverage_by_source,
-                                   chat_title AS chatTitle, participant_count AS participantCount, chat_type AS chatType, avatar_local_path AS avatarLocalPath, listing
-                            FROM conversations WHERE id = ? AND deleted_at IS NULL`).get(id) as (Record<string, unknown> & { coverage_by_source: string; avatarLocalPath: string | null }) | undefined;
+    const c = db().prepare(`SELECT c.id, c.platform, c.account, c.conv_key AS convKey, c.peer, c.kind, c.coverage, c.coverage_by_source,
+                                   c.chat_title AS chatTitle, c.participant_count AS participantCount, c.chat_type AS chatType, c.avatar_local_path AS avatarLocalPath, ${tagColumns()}
+                            FROM conversations c ${lineOptionsJoin()} WHERE c.id = ? AND c.deleted_at IS NULL`).get(id) as (Record<string, unknown> & { coverage_by_source: string; avatarLocalPath: string | null }) | undefined;
     if (!c || !inScope(id, q.device)) return reply.status(404).send({ error: "not_found", message: "no such conversation" });
-    const { coverage_by_source, avatarLocalPath, ...convCols } = c;
+    const { coverage_by_source, avatarLocalPath, ...convCols } = tagView(c);
     const conversation = {
       ...convCols, ...coverageView(coverage_by_source),
       title: (convCols.chatTitle as string | null) || (convCols.peer as string | null) || (convCols.convKey as string),

@@ -22,6 +22,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useApi, useDebounced, useEvents, useLoad } from "../ctx.tsx";
 import type { ServiceEvent } from "../events.ts";
+import type { Api, Query } from "../api.ts";
 import { href, navigate, useLocation } from "../router.ts";
 import { useScope } from "../scope.tsx";
 import { COVERAGE_LABEL, dayKey, dayLabel, fmtTime, friendlyTime, hm, platformLabel, shortWhen, sourceLabel } from "../format.ts";
@@ -39,10 +40,14 @@ import { BlockedContactsSheet, HiddenChatsSheet, LineSettingsSheet, LineToolbar,
 
 type SourceClaim = { source: string; coverage: string };
 export interface Chat {
-  id: string; platform: string; account: string; convKey: string; peer: string | null; kind: string; coverage: string;
+  id: string; platform: string; account: string; convKey: string; peer: string | null; kind: string | null; coverage: string;
   chatTitle?: string | null; chatType?: string | null; participantCount?: number | null;
   /** where the owner's own app lists the chat: normal, archived (Telegram) or hidden (LINE); null/absent when unknown */
   listing?: "normal" | "archived" | "hidden" | null;
+  /** LINE's own chat options: notifications off, pinned; null/absent when no source has said */
+  muted?: boolean | null; pinned?: boolean | null;
+  /** a chat LINE lists but with no message captured on this PC (no conversation to open) */
+  placeholder?: boolean;
   coverageSources?: SourceClaim[]; coverageText?: string;
   title?: string | null; avatarUrl?: string | null; source?: string; lastText?: string | null; lastAt?: string | null;
   messageCount: number; firstMessageAt?: string | null; lastMessageAt: string | null;
@@ -150,6 +155,45 @@ export function ListingBadge({ listing, platform }: { listing?: string | null; p
   );
 }
 
+/** A small labelled badge for one more tag (Pinned, Muted); nothing when the tag is off or unknown. */
+function TagBadge({ on, word, platform, testId }: { on?: boolean | null; word: string; platform?: string; testId: string }) {
+  if (!on) return null;
+  return (
+    <span className="listing-badge" data-testid={testId} style={{ flex: "none", fontSize: "var(--text-xs)" }}>
+      <Badge title={`${word} in ${platformLabel(platform ?? "")}`}>{word}</Badge>
+    </span>
+  );
+}
+
+/** Every tag the owner's own app gives a chat, each with its own label: Archived or Hidden, Pinned, Muted. */
+export function ChatTags({ chat }: { chat: Pick<Chat, "listing" | "muted" | "pinned" | "platform"> }) {
+  return (
+    <>
+      <ListingBadge listing={chat.listing} platform={chat.platform} />
+      <TagBadge on={chat.pinned} word="Pinned" platform={chat.platform} testId="pinned-badge" />
+      <TagBadge on={chat.muted} word="Muted" platform={chat.platform} testId="muted-badge" />
+    </>
+  );
+}
+
+/** The chats view pages through the service at most this many at a time. */
+const CHATS_PAGE = 500;
+
+/**
+ * Every chat for a query, not just the first page: the first page says how many pages there are,
+ * the rest follow in order. A chat that moved between pages while they were fetched is kept once.
+ */
+export async function fetchAllChats(api: Api, query: Query): Promise<{ total: number; items: Chat[] }> {
+  const first = await api.get<{ total: number; pages?: number; items: Chat[] }>("/api/views/chats", { ...query, page: 1, pageSize: CHATS_PAGE });
+  const items = [...first.items];
+  for (let page = 2; page <= (first.pages ?? 1); page++) {
+    const r = await api.get<{ items: Chat[] }>("/api/views/chats", { ...query, page, pageSize: CHATS_PAGE });
+    items.push(...r.items);
+  }
+  const seen = new Set<string>();
+  return { ...first, items: items.filter((c) => !seen.has(c.id) && !!seen.add(c.id)) };
+}
+
 export type ListingFilter = "all" | "normal" | "archived" | "hidden";
 export const LISTING_FILTERS: Array<[ListingFilter, string]> = [["all", "All"], ["normal", "Normal"], ["archived", "Archived"], ["hidden", "Hidden"]];
 const LISTING_KEY = "ivy.chats.listing";
@@ -183,7 +227,7 @@ export function ConversationsView(scope: ChatsScope = {}) {
   const [lineOpen, setLineOpen] = useState<null | "hidden" | "blocked" | "settings">(null);
   const [listing, setListing] = useListingFilter();
   const device = useScope().scope ?? undefined;
-  const list = useLoad<any>((a) => a.get("/api/views/chats", { source, role, device, platform, q: q.trim() || undefined, listing: listing === "all" ? undefined : listing }),
+  const list = useLoad((a) => fetchAllChats(a, { source, role, device, platform, q: q.trim() || undefined, listing: listing === "all" ? undefined : listing }),
     [source, role, device, platform, q, listing]);
   const reload = useDebounced(list.reload, 1500);
   useEvents(() => reload(), ["ingest.committed"]);
@@ -223,12 +267,14 @@ export function ConversationsView(scope: ChatsScope = {}) {
             const mine = lm ? lm.fromMe ?? isMine(lm.sender, c.account) : false;
             const who = lm ? (lm.senderName ?? lm.sender) : "";
             const preview = lm?.call ? callLabel(lm.call)
-              : c.lastText ?? (lm ? `${mine ? "You: " : c.kind === "group" ? `${who}: ` : ""}${lm.text || (lm.mediaKind ? `[${lm.mediaKind}]` : "")}` : "No messages");
+              : c.lastText ?? (lm ? `${mine ? "You: " : c.kind === "group" ? `${who}: ` : ""}${lm.text || (lm.mediaKind ? `[${lm.mediaKind}]` : "")}`
+                : c.placeholder ? "No messages captured on this PC" : "No messages");
             return (
-              <button key={c.id} className="chat-item" aria-current={c.id === selected ? "true" : undefined} onClick={() => open(c.id)} data-testid="chat-item">
+              <button key={c.id} className="chat-item" aria-current={c.id === selected ? "true" : undefined} onClick={() => open(c.id)} data-testid="chat-item"
+                data-listing={c.listing ?? undefined} data-placeholder={c.placeholder ? "true" : undefined}>
                 <Avatar name={name} size={40} colorKey={`${c.platform}:${c.convKey}`} src={c.avatarUrl} />
                 <span className="ci-main">
-                  <span className="ci-top"><span className="ci-name" title={name}>{name}</span><ListingBadge listing={c.listing} platform={c.platform} /><span className="ci-time">{shortWhen(c.lastAt ?? c.lastMessageAt)}</span></span>
+                  <span className="ci-top"><span className="ci-name" title={name}>{name}</span><ChatTags chat={c} /><span className="ci-time">{shortWhen(c.lastAt ?? c.lastMessageAt)}</span></span>
                   <span className="ci-preview">{preview}</span>
                 </span>
               </button>
@@ -236,7 +282,9 @@ export function ConversationsView(scope: ChatsScope = {}) {
           })}
         </div>
       </section>
-      {selected ? (
+      {current?.placeholder ? (
+        <PlaceholderPane chat={current} />
+      ) : selected ? (
         // keyed on the anchor too: dropping or changing `around` starts a fresh window (and fresh earlier history)
         <Thread key={`${selected}|${around ?? ""}`} id={selected} around={around} hintAvatar={current?.avatarUrl ?? null} onOpenProfile={() => setProfileOpen(true)}
           onJumpLatest={() => {
@@ -251,6 +299,29 @@ export function ConversationsView(scope: ChatsScope = {}) {
       {isLine && lineOpen === "blocked" && <BlockedContactsSheet onClose={() => setLineOpen(null)} />}
       {isLine && lineOpen === "settings" && <LineSettingsSheet account={lineAccount.data} onClose={() => setLineOpen(null)} />}
     </div>
+  );
+}
+
+/** A chat LINE lists but with no message captured on this PC: its name and tags, and why it is empty. */
+function PlaceholderPane({ chat }: { chat: Chat }) {
+  const name = chatName(chat);
+  return (
+    <section className="pane pane-main" aria-label="Chat" data-testid="placeholder-chat">
+      <div className="pane-head">
+        <Avatar name={name} size={32} colorKey={`${chat.platform}:${chat.convKey}`} src={chat.avatarUrl} />
+        <span className="thread-id-text">
+          <span className="thread-id-name ellipsis">{name}</span>
+          <span className="small faint ellipsis row" style={{ gap: 4 }}><AppIcon app={chat.platform} size={14} />{platformLabel(chat.platform)} · {chat.account}</span>
+        </span>
+        <span className="spacer" />
+        <ChatTags chat={chat} />
+      </div>
+      <div className="msgs">
+        <Empty icon="chat" title="No messages captured on this PC">
+          LINE lists this chat, but LINE for Windows holds none of its messages on this PC, so there is nothing to show yet.
+        </Empty>
+      </div>
+    </section>
   );
 }
 
@@ -443,7 +514,7 @@ function Thread({ id, around, hintAvatar, onOpenProfile, onJumpLatest }: { id: s
           </button>
         )}
         <span className="spacer" />
-        {conv && <ListingBadge listing={conv.listing} platform={conv.platform} />}
+        {conv && <ChatTags chat={conv} />}
         {conv && <span data-testid="coverage-sources" title={conv.coverageText}><CoverageBadge coverage={conv.coverage} sources={conv.coverageSources} /></span>}
       </div>
       <div className="msgs" ref={scroller} role="log" aria-label="Messages">

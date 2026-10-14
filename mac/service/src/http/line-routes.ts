@@ -41,14 +41,18 @@ function sendPicture(reply: FastifyReply, path: string | null | undefined): Fast
 export function registerLineRoutes(app: FastifyInstance, svc: Service): void {
   const db = () => svc.ctx.db;
 
-  /** The account asked for, or the single LINE account present when none is given. */
+  /**
+   * The account asked for, or, when none is given, the account with the newest snapshot. Each
+   * snapshot rewrites its account's rows, so an account signed out of LINE keeps its last rows
+   * but stops getting newer ones; the newest is the account LINE is using now.
+   */
   const resolveAccount = (asked: string | undefined): string | null => {
     if (asked) return asked;
-    const rows = db().prepare(`SELECT account FROM (
-        SELECT account FROM line_account_profile UNION SELECT account FROM line_contacts
-        UNION SELECT account FROM line_chat_options UNION SELECT account FROM line_settings)
-      ORDER BY account`).all() as Array<{ account: string }>;
-    return rows.length ? rows[0]!.account : null;
+    const row = db().prepare(`SELECT account, MAX(updated_at) AS at FROM (
+        SELECT account, updated_at FROM line_account_profile UNION ALL SELECT account, updated_at FROM line_contacts
+        UNION ALL SELECT account, updated_at FROM line_chat_options UNION ALL SELECT account, updated_at FROM line_settings)
+      GROUP BY account ORDER BY at DESC, account LIMIT 1`).get() as { account: string } | undefined;
+    return row?.account ?? null;
   };
 
   const profileAvatarUrl = (account: string, hasPicture: boolean) =>
