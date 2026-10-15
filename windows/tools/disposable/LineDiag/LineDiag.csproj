@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <AssemblyName>LineDiag</AssemblyName>
+    <RootNamespace>LineDiag</RootNamespace>
+  </PropertyGroup>
+
+  <!-- Relative references so this builds from a clean clone (it reuses the collector's verified LINE crypto). -->
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\Ivy.Collectors\Ivy.Collectors.csproj" />
+    <ProjectReference Include="..\..\..\Ivy.Core\Ivy.Core.csproj" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,6 @@
+# Build outputs for the disposable diagnostics — never commit these.
+**/bin/
+**/obj/
+# Local scratch output (recovered previews, decrypted copies, dumps).
+previews/
+*.plain
