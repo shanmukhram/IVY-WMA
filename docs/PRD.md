@@ -599,7 +599,7 @@ Phases 2 through 4 build this part on top of the Phase 1 pipeline: realtime sour
 
 ## Overview
 
-A rooted companion with one job: get everything off the phone, encrypted, without Bunny ever exporting a chat manually. A foreground service runs a NotificationListenerService that captures every notification in real time and segregates it per app; root adapters read each messaging app's database directly — the same data a manual backup would copy, but automatically — for complete history, every contact, every chat, every app with a readable database. LINE first, Telegram second, WhatsApp third. Media and documents are indexed across the whole user storage, hidden albums included. Call log and usage stats come along. Everything is encrypted on-device and uploaded to R2: small records on any network, bulk on WiFi and charging.
+A rooted companion with one job: get everything off the phone, encrypted, without Bunny ever exporting a chat manually. A privileged root background daemon — started at boot and surviving the app being killed — does the heavy work with **no status-bar notification**; a NotificationListenerService (a bound service, no foreground notification) captures every notification in real time and segregates it per app; root adapters read each messaging app's database directly — the same data a manual backup would copy, but automatically — for complete history across every app with a readable store. Conversations come first, so everything lives in one place instead of opening 5–6 apps: LINE, Telegram, WhatsApp **and WhatsApp Business** (two accounts), Instagram, SMS, and anything else via its notifications; media (all images and videos in storage) comes second. Call log and usage stats come along. Everything is encrypted on-device and uploaded to R2: small records on any network, bulk on WiFi and charging. The app itself is pure UI; it updates over the air — config via the cmd-bucket and silent signed-APK self-update — so new features arrive without reinstalling, even while travelling.
 
 ## Goals and non-goals
 
@@ -619,7 +619,7 @@ A rooted companion with one job: get everything off the phone, encrypted, withou
 
 - No archive browsing or search on the phone. It is a companion, not a reader.
 - No Snapchat history: notification-only, labeled as such. No pretending.
-- No capture of view-once or disappearing content; excluded from archiving.
+- View-once and disappearing content ARE captured and kept once IVY sees them (PLAN decision 24 reverses the earlier exclusion) — the owner's own received messages; source deletion/expiry only marks them.
 - No keystroke logging, no screen recording, no microphone, no camera.
 - No location scraping: locations come from photo EXIF where present. System location-history import is a v2 candidate.
 - No cloud other than R2, and only ciphertext there.
@@ -644,7 +644,7 @@ A rooted companion with one job: get everything off the phone, encrypted, withou
 | ID | Requirement | Priority |
 | --- | --- | --- |
 | AC1 | NotificationListenerService captures every notification: app, title, displayed sender, preview text, timestamp; segregated per app; retained after dismissal | Must |
-| AC2 | Root conversation adapters read each app's database and key directly, in priority order: LINE first, Telegram second, WhatsApp third, SMS/MMS alongside; every conversation, every contact, every message | Must |
+| AC2 | Root conversation adapters read each app's database and key directly, in priority order: LINE first, Telegram second, WhatsApp **and WhatsApp Business** (two accounts: `com.whatsapp`, `com.whatsapp.w4b`) third, Instagram and SMS/MMS alongside; every conversation, every contact, every message | Must |
 | AC2a | Treat LINE schema drift as a first-class case: when an app update changes the database layout, label coverage partial and surface a rescan need, rather than guessing rows | Must |
 | AC2b | Snapshot databases atomically: copy the db together with its `-wal` and `-shm` sidecars (or checkpoint through SQLite) before reading, so a mid-write app never yields torn or missing recent rows | Must |
 | AC2c | Extract per-app keys in place with root where stores are encrypted — LINE's store key, Telegram's passcode-derived key when a passcode is set, WhatsApp's backup keys — and hold them only in memory for the duration of the read | Must |
@@ -665,7 +665,8 @@ A rooted companion with one job: get everything off the phone, encrypted, withou
 | AU2 | Two-speed policy: small records on any network; bulk on WiFi and charging, both user-configurable | Must |
 | AU3 | Resumable chunked uploads with manifests for the initial import; no re-upload of already-committed parts | Must |
 | AU4 | Poll the cmd-bucket every 5 minutes, on connectivity change, and on manual sync | Must |
-| AU5 | Foreground service with a persistent status notification; survives reboot; battery-optimisation exemption guided at setup | Must |
+| AU5 | Root background daemon for capture and upload — started at boot, survives the app being killed; **no status-bar notification** (all status shown in-app only); battery-optimisation exemption guided at setup | Must |
+| AU6 | Over-the-air updates without reinstall: config, policies and source maps pushed via the cmd-bucket and applied live; app code via **silent self-update of an owner-signed APK** (signature verified, installed with root) so new features arrive even on cellular while travelling | Must |
 
 **Retrieval serve, Android**
 
@@ -762,7 +763,9 @@ Where each app actually keeps its data, as of this writing. These are the adapte
 | Media | `/storage/emulated/0/Telegram/` — `Telegram Images`, `Telegram Video`, `Telegram Audio`, `Telegram Documents`, `Stickers` |
 | Confidence | Medium. Per-account file naming and the cache/main split get pinned at adapter build. |
 
-**WhatsApp (com.whatsapp)** — priority 3
+**WhatsApp & WhatsApp Business (com.whatsapp, com.whatsapp.w4b)** — priority 3
+
+*Two accounts. WhatsApp Business mirrors the same layout under its own `com.whatsapp.w4b` package (`/data/data/com.whatsapp.w4b/databases/msgstore.db`, `/storage/emulated/0/Android/media/com.whatsapp.w4b/WhatsApp Business/Media/`) and is captured as a separate account alongside regular WhatsApp.*
 
 | What | Where |
 | --- | --- |
@@ -784,7 +787,7 @@ Reading discipline, all apps: never read a live database in place — snapshot d
 
 ## App UI
 
-A full app plus the persistent foreground-service notification, in the family dark look. Everything the service does is visible in the app as it happens.
+A full app in the family dark look, and nothing outside it: there is **no status-bar notification**. Everything the daemon does is visible in the app as it happens, and only there.
 
 - Not paired: the Mac's QR code and a code field. That is the only input the phone ever has besides policies.
 - Paused/running toggle; per-collector rows: notifications, LINE, Telegram, WhatsApp, SMS, media, calls, usage — each with an on/off toggle, last capture, last upload, queue depth, status dot.
@@ -793,7 +796,7 @@ A full app plus the persistent foreground-service notification, in the family da
 - Battery-optimisation exemption helper at setup.
 - Footer: bucket reachability, fingerprint.
 
-The persistent notification is the always-visible status: syncing, waiting for WiFi, or paused. No search, no timeline, no archive browser. Everything else lives in the Mac dashboard.
+There is no status-bar notification; status — syncing, waiting for WiFi, or paused — is shown only inside the app when the owner opens it. No search, no timeline, no archive browser. Everything else lives in the Mac dashboard.
 
 ## Success metrics
 

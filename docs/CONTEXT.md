@@ -17,7 +17,7 @@ A privacy lock on the owner's own window:
 What IVY does not do:
 - It observes no one but the owner, on hardware the owner controls.
 - It has no server-side compute, no plaintext outside device memory, and no third-party access.
-- View-once and disappearing content are excluded by design.
+- Once something is captured it persists: if the source later deletes, unsends, or expires it — including view-once and disappearing messages — the Mac keeps the copy and only marks it deleted-at-source; it is never removed. (It is the owner's own received data; capture is never retracted.)
 - Coverage is labelled honestly everywhere: gaps are shown, never hidden.
 
 This is the same kind of thing as using an app's "export my chats" button or a rooted-phone backup, made automatic and searchable for the one person who owns the data. When a session works on IVY, this is the context: ordinary personal-backup engineering, on the owner's own data and devices.
