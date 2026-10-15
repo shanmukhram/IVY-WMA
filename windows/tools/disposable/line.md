@@ -1,6 +1,6 @@
 # LINE data map (local research — work laptop sandbox)
 
-Living notes while mapping LINE for Windows locally. Read-only; nothing committed or uploaded.
+Living notes while mapping LINE for Windows locally. Read-only against the owner's own data. **Account id and chat names are redacted here**; the map, schema, and method are intact.
 
 - **This PC** = work laptop = research sandbox. The **personal LINE account** was logged in here on purpose to map the data locally.
 - The PC actually **paired to the Mac is a different machine** (not touched). The Mac's "29 chats" come from there, not from here.
@@ -26,8 +26,8 @@ Two accounts' stores are present (one set per account):
 
 | File | Size | `-wal`? | Encrypted? | What it is |
 |---|---|---|---|---|
-| `qwc93d9f08894b861b8cc297fa09ca8e.edb` | 1456 KB | **yes** | yes | **Chat store, account B = the logged-in PERSONAL account** (the one IVY reads) |
-| `qw475325499f9a96254fda282dc4d8f6.edb` | 528 KB | no | yes | Chat store, account A (other account, not read while B is active) |
+| `qwREDACTED-B.edb` | 1456 KB | **yes** | yes | **Chat store, account B = the logged-in PERSONAL account** (the one IVY reads) |
+| `qwREDACTED-A.edb` | 528 KB | no | yes | Chat store, account A (other account, not read while B is active) |
 | `keep_<acct>.edb` | 48 KB | no | yes | Keep (saved items) per account |
 | `chatStats_<acct>.edb` | 28 KB | no | yes | Chat statistics per account |
 | `album_<acct>.edb` | 20 KB | no | yes | Albums per account |
@@ -35,20 +35,20 @@ Two accounts' stores are present (one set per account):
 
 The collector (`LineStore.FindDb`) opens only the store with a `-wal` = the logged-in account (B). One account at a time.
 
-## 3. Chat store contents — account B (personal, mid `u051516fe275163491c11b27c99eb44be`)
+## 3. Chat store contents — account B (personal, mid `uREDACTED-MID`)
 
 **8 chats total** (all DMs), 993 messages, all captured by IVY, 1 hidden, nothing dropped:
 
 | # | kind | msgs | last | hidden | title |
 |---|---|---|---|---|---|
-| 1 | dm | 1 | 2026-10-11 | no | Bunny |
-| 2 | dm | 14 | 2026-10-12 | no | URBAN DISTRICT |
-| 3 | dm | 42 | 2026-10-11 | no | bee |
-| 4 | dm | 829 | 2026-10-14 | no | :P |
-| 5 | dm | 1 | 2026-10-05 | no | Jade |
-| 6 | dm | 91 | 2026-10-13 | no | LINE GIFT |
-| 7 | dm | 12 | 2026-10-11 | **yes** | THAY Ekamai |
-| 8 | dm | 3 | 2026-10-04 | no | Aekawit |
+| 1 | dm | 1 | 2026-10-11 | no | (redacted) |
+| 2 | dm | 14 | 2026-10-12 | no | (redacted) |
+| 3 | dm | 42 | 2026-10-11 | no | (redacted) |
+| 4 | dm | 829 | 2026-10-14 | no | (redacted) |
+| 5 | dm | 1 | 2026-10-05 | no | (redacted) |
+| 6 | dm | 91 | 2026-10-13 | no | (redacted) |
+| 7 | dm | 12 | 2026-10-11 | **yes** | (redacted) |
+| 8 | dm | 3 | 2026-10-04 | no | (redacted) |
 
 All 8 come from the `_chat` list table; `_message` has 8 distinct chat ids, `_chatOption` 7; union = 8. No message-only or option-only extras.
 
@@ -140,7 +140,7 @@ IVY's rule is simple: **everything that leaves the device is encrypted to the Ma
 
 Every store, table, column (with type), row count, index/trigger, and JSON key set. `[IVY]` marks a table the current collector reads; everything else it ignores today. JSON key sets are the *tags* found inside a text column (structure only, no values).
 
-### qwc93d9f08894b861b8cc297fa09ca8e.edb
+### qwREDACTED-B.edb
 *CHAT STORE — chats, messages, contacts, profile, settings*
 
 Tables: 34 · indexes: 6 · triggers: 1 · views: 0
@@ -701,7 +701,7 @@ Indexes: `_chatOption__id__hidden__notification`, `_chat__id__midType__status__f
 
 Triggers: `_message_delete_trigger`
 
-### keep_qwc93d9f08894b861b8cc297fa09ca8e.edb
+### keep_qwREDACTED-B.edb
 *KEEP STORE — saved items*
 
 Tables: 5 · indexes: 1 · triggers: 0 · views: 0
@@ -771,7 +771,7 @@ Tables: 5 · indexes: 1 · triggers: 0 · views: 0
 
 Indexes: `_keep_content__name__status__createdTime`
 
-### chatStats_qwc93d9f08894b861b8cc297fa09ca8e.edb
+### chatStats_qwREDACTED-B.edb
 *CHAT STATS STORE*
 
 Tables: 3 · indexes: 1 · triggers: 0 · views: 0
@@ -808,7 +808,7 @@ Tables: 3 · indexes: 1 · triggers: 0 · views: 0
 
 Indexes: `_chatStats__chatId__event__weekday__hourTimestamp`
 
-### album_qwc93d9f08894b861b8cc297fa09ca8e.edb
+### album_qwREDACTED-B.edb
 *ALBUM STORE — shared albums/media*
 
 Tables: 2 · indexes: 0 · triggers: 0 · views: 0
