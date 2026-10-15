@@ -1,20 +1,19 @@
 #!/usr/bin/env python3
-"""IVY milestone 1 verifier. Runs on the HOST after `adb pull <stage> ./ivy_stage`.
+"""Staging check. Runs on the host after `adb pull <out> ./out`.
 
-Reads the manifest, re-checks each staged file's sha256, and for every PLAIN SQLite
-database lists its tables with row counts using Python's stdlib sqlite3 (no external
-tools). Encrypted stores (LINE's naver_line, Telegram cache4.db when a passcode is set)
-are reported as "needs key" - decrypting them is the parser layer's job, not this check.
+Reads the manifest, re-checks each file's sha256, and for every plain SQLite database
+lists its tables with row counts using Python's stdlib sqlite3 (no external tools).
+Encrypted stores are reported as "needs key" - decrypting them is the parser layer.
 
-Usage:  python3 ivy-verify.py [./ivy_stage]
+Usage:  python3 stack.py [./out]
 """
 import os, sys, hashlib, sqlite3
 
-stage = sys.argv[1] if len(sys.argv) > 1 else "./ivy_stage"
+stage = sys.argv[1] if len(sys.argv) > 1 else "./out"
 manifest = os.path.join(stage, "manifest.tsv")
 
 if not os.path.isfile(manifest):
-    sys.exit(f"no manifest at {manifest} (did you adb pull the staging dir?)")
+    sys.exit(f"no manifest at {manifest} (did you pull the staging dir?)")
 
 def sha256(path):
     h = hashlib.sha256()
@@ -45,14 +44,13 @@ def tables_and_counts(path):
 
 rows, verified, sha_ok, sha_bad, missing = [], 0, 0, 0, 0
 with open(manifest, encoding="utf-8") as f:
-    header = f.readline()
+    f.readline()
     for line in f:
         parts = line.rstrip("\n").split("\t")
-        if len(parts) != 5:
-            continue
-        rows.append(parts)
+        if len(parts) == 5:
+            rows.append(parts)
 
-print(f"=== IVY verify: {stage} ===\n{len(rows)} manifest rows\n")
+print(f"=== check: {stage} ===\n{len(rows)} manifest rows\n")
 
 for src, staged, b, want_sha, typ in rows:
     if typ == "inventory-only":
