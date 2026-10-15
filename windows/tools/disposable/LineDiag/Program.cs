@@ -8,7 +8,12 @@ string localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalA
 string lineDbDir = Path.Combine(localAppData, "LINE", "Data", "db");
 string keysDir = Path.Combine(localAppData, "IVY", "keys");
 string tempRoot = Path.Combine(Path.GetTempPath(), "linediag_" + Guid.NewGuid().ToString("N"));
-const string ChatStore = "qwc93d9f08894b861b8cc297fa09ca8e.edb";
+
+// No hardcoded account id: an optional first argument wins, else auto-detect the logged-in account's
+// chat store (the qw*.edb with a -wal sidecar), else the largest qw*.edb.
+string? ChatStore = args.Length > 0 ? args[0] : FindChatStore(lineDbDir);
+if (ChatStore is null) { Console.WriteLine("no LINE chat store (qw*.edb) found; pass the filename as an argument"); return; }
+Console.WriteLine($"store: {ChatStore}\n");
 
 Directory.CreateDirectory(tempRoot);
 try
@@ -72,6 +77,16 @@ try
     Console.WriteLine($"   broader: FTS-has-text but _message._text empty: {broad}");
 }
 finally { try { SqliteConnection.ClearAllPools(); if (Directory.Exists(tempRoot)) Directory.Delete(tempRoot, true); } catch { } }
+
+static string? FindChatStore(string dir)
+{
+    if (!Directory.Exists(dir)) return null;
+    // "qw*.edb" already excludes keep_/album_/chatStats_ (they don't start with "qw").
+    var cands = Directory.EnumerateFiles(dir, "qw*.edb").ToList();
+    var wal = cands.FirstOrDefault(f => File.Exists(f + "-wal"));           // the logged-in account's store
+    var pick = wal ?? cands.OrderByDescending(f => new FileInfo(f).Length).FirstOrDefault();
+    return pick is null ? null : Path.GetFileName(pick);
+}
 
 static long Scalar(SqliteConnection c, string sql) { using var cmd = c.CreateCommand(); cmd.CommandText = sql; var o = cmd.ExecuteScalar(); return o is null or DBNull ? -1 : Convert.ToInt64(o); }
 static void Copy(string src, string dst) { for (var a = 0; a < 3; a++) { try { using var i = new FileStream(src, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete); using var o = new FileStream(dst, FileMode.Create, FileAccess.Write, FileShare.None); i.CopyTo(o); return; } catch (IOException) when (a < 2) { Thread.Sleep(150); } } }
