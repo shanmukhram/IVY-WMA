@@ -1,0 +1,19 @@
+{
+  "source": "line",
+  "platform": "line",
+  "account": "line",
+  "verified": false,
+  "note": "Android LINE store is SQLCipher-family ENCRYPTED; the chat schema is unknown until the owner's real on-device extraction. Seeded from docs/findings.md (LINE - Android, not probed). Do NOT invent columns: this map stays verified=false until a real store is probed per docs/line-android.md, and the parser SKIPS until then. The owner must set verified=true and fill `tables` only after verifying against a live snapshot (tables/columns present, a sample row parses, timestamp plausible).",
+  "store": {
+    "file_basenames": ["naver_line", "chat.db", "square_history.db", "contacts.db"],
+    "encryption": "sqlcipher-family",
+    "key_location": "app private data / shared_prefs; location moves per app version",
+    "snapshot": "db + -wal + -shm together; read the copy; key held in memory only"
+  },
+  "tables": {
+    "messages": {"table": null, "columns": {}},
+    "chats": {"table": null, "columns": {}},
+    "contacts": {"table": null, "columns": {}}
+  },
+  "deletion_residue": "check for an FTS index not purged on unsend, tombstone flags, freelist/WAL slack (see docs/line-android.md step 6)"
+}

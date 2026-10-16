@@ -1,0 +1,18 @@
+{
+  "source": "telegram",
+  "platform": "telegram",
+  "account": "telegram",
+  "verified": false,
+  "note": "Telegram's cache4.db stores messages as serialized MTProto/TL binary blobs, NOT as plain text columns, so there is no simple column map to pin yet. Real decoding is pending the owner's on-device extraction. Plain SQLite with no passcode; SQLCipher with a passcode-derived key (params in shared_prefs) when a local passcode is set. Seeded from docs/findings.md (Telegram - Android, not probed). Stays verified=false and the parser SKIPS until a real store is probed.",
+  "store": {
+    "file_basenames": ["cache4.db"],
+    "location": "/data/data/org.telegram.messenger/files/ (one dbN per account, plus cacheN.db)",
+    "encryption": "plain; sqlcipher if a local passcode is set",
+    "payload": "messages serialized as TL blobs (needs a TL decoder, not a column map)"
+  },
+  "tables": {
+    "messages": {"table": null, "columns": {}},
+    "chats": {"table": null, "columns": {}},
+    "contacts": {"table": null, "columns": {}}
+  }
+}
