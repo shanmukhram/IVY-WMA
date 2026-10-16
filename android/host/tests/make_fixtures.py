@@ -256,6 +256,97 @@ def build_drift(out_dir: str) -> str:
     return out_dir
 
 
+# --- LINE media exports (external, plaintext) ----------------------------
+#
+# Synthetic stand-ins for the owner's exported LINE files. All bytes are invented
+# test content: a header that a real media sniffer recognises, plus unique padding
+# so distinct files hash distinctly (except where we deliberately reuse bytes to
+# exercise content-addressed dedup).
+
+import zipfile as _zipfile  # noqa: E402
+
+
+def _jpeg(tag: bytes = b"") -> bytes:
+    return b"\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x00" + tag + b"\xff\xd9"
+
+
+def _png(tag: bytes = b"") -> bytes:
+    return b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR" + tag + b"\x00\x00\x00\x00IEND\xaeB`\x82"
+
+
+def _pdf(tag: bytes = b"") -> bytes:
+    return b"%PDF-1.4\n1 0 obj<<>>endobj\n" + tag + b"\n%%EOF\n"
+
+
+def _mp4_aac(tag: bytes = b"") -> bytes:
+    return b"\x00\x00\x00\x18ftypmp42\x00\x00\x00\x00mp42isom" + tag
+
+
+# Shared JPEG used by two different messages -> must dedup to ONE archive object.
+SHARED_JPEG = _jpeg(b"shared-image-bytes")
+
+
+def _write(path: str, data: bytes) -> None:
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "wb") as f:
+        f.write(data)
+
+
+# chatIds are opaque hashes (u=1:1, c=group); no personal names anywhere.
+CHAT_DM = "u00000000000000000000000000000dead"
+CHAT_GROUP = "c00000000000000000000000000000beef"
+
+
+def build_line_ext(base_dir: str) -> str:
+    """A synthetic line_ext chat-media tree under <base_dir>/line_ext/.
+
+    Returns base_dir (the path to hand to the ingester as a directory). Contents:
+      - two chats, one DM + one group
+      - a JPEG, a plaintext thumbnail, a PDF, an AAC voice note (keyed by msg id)
+      - a `<msg>-hmac` and `<msg>-hash` integrity sidecar (counted + skipped)
+      - one bogus non-media file (skipped red-on-drift)
+      - the SHARED_JPEG reused across two messages (archive dedup)
+    """
+    root = os.path.join(base_dir, "line_ext", "files", "chats")
+
+    def msg(chat, name, data):
+        _write(os.path.join(root, chat, "messages", name), data)
+
+    # DM chat: full image + thumbnail + pdf + sidecars + bogus, all msg 100/101/102
+    msg(CHAT_DM, "100.jpg", SHARED_JPEG)
+    msg(CHAT_DM, "100.thumb", _jpeg(b"thumb-100"))  # plain JPEG thumbnail
+    msg(CHAT_DM, "100-hmac", os.urandom(32))        # integrity sidecar
+    msg(CHAT_DM, "100-hash", os.urandom(32))        # integrity sidecar
+    msg(CHAT_DM, "101.pdf", _pdf(b"doc-101"))
+    msg(CHAT_DM, "102.bin", b"NOTMEDIA\x00garbage-not-a-real-file")  # bogus
+
+    # Group chat: the SAME jpeg bytes again (dedup) + a voice note
+    msg(CHAT_GROUP, "200.jpg", SHARED_JPEG)
+    msg(CHAT_GROUP, "voice_201.aac", _mp4_aac(b"voice-201"))
+
+    return base_dir
+
+
+def build_line_keep(base_dir: str) -> str:
+    """A synthetic line_export Keep tree under <base_dir>/line_export/ (flat)."""
+    root = os.path.join(base_dir, "line_export")
+    _write(os.path.join(root, "brief.pdf"), _pdf(b"keep-brief"))
+    _write(os.path.join(root, "poster.png"), _png(b"keep-poster"))
+    return base_dir
+
+
+def zip_tree(base_dir: str, zip_path: str) -> str:
+    """Zip everything under base_dir into zip_path (arcnames relative to base_dir,
+    so a line_ext/line_export top-level folder is preserved). Returns zip_path."""
+    with _zipfile.ZipFile(zip_path, "w", _zipfile.ZIP_DEFLATED) as z:
+        for dp, _dn, fn in os.walk(base_dir):
+            for f in fn:
+                full = os.path.join(dp, f)
+                arc = os.path.relpath(full, base_dir).replace(os.sep, "/")
+                z.write(full, arc)
+    return zip_path
+
+
 if __name__ == "__main__":
     import sys
 

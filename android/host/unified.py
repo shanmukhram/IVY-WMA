@@ -80,6 +80,31 @@ CREATE TABLE IF NOT EXISTS calls (
     PRIMARY KEY (platform, account, call_id)
 );
 
+CREATE TABLE IF NOT EXISTS media (
+    id          INTEGER PRIMARY KEY,
+    platform    TEXT NOT NULL,
+    account     TEXT NOT NULL,
+    chat_id     TEXT,          -- NULL for unkeyed media (e.g. LINE Keep)
+    msg_id      TEXT,          -- the source message id; links to messages later
+    kind        TEXT,          -- image | thumbnail | video | audio | document | other
+    orig_name   TEXT,          -- the file's basename in the export
+    ext         TEXT,
+    bytes       INTEGER,       -- plaintext size
+    sha256      TEXT NOT NULL, -- content hash (also the archive object id)
+    archive_ref TEXT NOT NULL, -- archive object id (== sha256; content-addressed)
+    source      TEXT           -- e.g. line_chat | line_keep
+);
+
+-- Identity for idempotent re-ingest: the same blob for the same (platform,
+-- account, chat, message) is one row. COALESCE folds NULL keys (Keep media) so
+-- re-ingesting unkeyed files does not duplicate them (SQL NULL != NULL otherwise).
+CREATE UNIQUE INDEX IF NOT EXISTS media_identity ON media(
+    platform, account, COALESCE(chat_id, ''), COALESCE(msg_id, ''), sha256
+);
+
+-- Lookup media attached to a message once the message store is parsed.
+CREATE INDEX IF NOT EXISTS media_by_message ON media(platform, chat_id, msg_id);
+
 CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
     body, sender_name, chat_title,
     content='messages', content_rowid='id'
@@ -152,6 +177,26 @@ class Call:
     direction: str | None = None
     duration_s: int | None = None
     source_path: str | None = None
+
+
+@dataclass
+class Media:
+    """One archived media blob. For chat attachments, chat_id/msg_id carry the
+    source keys so the row links to a message once the store is parsed. For
+    unkeyed media (e.g. LINE Keep) both are None. sha256 and archive_ref are the
+    same content-addressed object id."""
+
+    platform: str
+    account: str
+    sha256: str
+    archive_ref: str
+    chat_id: str | None = None
+    msg_id: str | None = None
+    kind: str | None = None
+    orig_name: str | None = None
+    ext: str | None = None
+    bytes: int | None = None
+    source: str | None = None
 
 
 @dataclass
@@ -288,6 +333,25 @@ class UnifiedDB:
             c.__dict__,
         )
 
+    def merge_media(self, m: Media) -> bool:
+        """Insert one media row, idempotently. Returns True if a new row was
+        added, False if an identical one (same keys + sha256) already existed.
+
+        Content is never removed; a re-ingest of the same export is a no-op. The
+        archive stores the blob once (content-addressed), so identical bytes used
+        by several messages share one object while remaining distinct rows."""
+        cur = self.con.execute(
+            """
+            INSERT OR IGNORE INTO media
+                (platform, account, chat_id, msg_id, kind, orig_name, ext,
+                 bytes, sha256, archive_ref, source)
+            VALUES (:platform, :account, :chat_id, :msg_id, :kind, :orig_name,
+                    :ext, :bytes, :sha256, :archive_ref, :source)
+            """,
+            m.__dict__,
+        )
+        return cur.rowcount > 0
+
     def ingest(self, result: ParseResult) -> None:
         for c in result.chats:
             self.merge_chat(c)
@@ -322,6 +386,6 @@ class UnifiedDB:
     def counts(self) -> dict:
         cur = self.con.cursor()
         out = {}
-        for t in ("messages", "chats", "contacts", "calls"):
+        for t in ("messages", "chats", "contacts", "calls", "media"):
             out[t] = cur.execute(f"SELECT count(*) FROM {t}").fetchone()[0]
         return out

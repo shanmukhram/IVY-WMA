@@ -25,6 +25,7 @@ import make_fixtures as fx  # noqa: E402  (tests dir is this file's dir)
 from archive import Archive  # noqa: E402
 from staging import Staging  # noqa: E402
 from unified import Message, UnifiedDB  # noqa: E402
+import line_media as lm  # noqa: E402
 from parsers import contacts as p_contacts  # noqa: E402
 from parsers import sms as p_sms  # noqa: E402
 from parsers import stub as p_stub  # noqa: E402
@@ -258,6 +259,174 @@ class StubTests(unittest.TestCase):
         log = buf.getvalue()
         self.assertIn("detected as plain", log)  # cache4.db IS plain sqlite...
         self.assertIn("pending real-schema verification", log)  # ...but still skipped
+
+
+class LineMediaScanTests(unittest.TestCase):
+    """Scanning/classification without touching the archive (header-only)."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.ext = fx.build_line_ext(os.path.join(self.tmp, "ext"))
+        self.keep = fx.build_line_keep(os.path.join(self.tmp, "keep"))
+
+    def test_chat_scan_classifies_and_keys(self):
+        inv = lm.scan_path(self.ext)
+        self.assertEqual(inv.mode, "chat")
+        self.assertEqual(len(inv.chats), 2)
+        # 5 real media files (jpg, thumb, pdf, shared jpg, voice aac)
+        self.assertEqual(len(inv.items), 5)
+        self.assertEqual(inv.sidecars_skipped, 2)   # -hmac + -hash
+        self.assertEqual(inv.nonmedia_skipped, 1)   # the bogus .bin
+        self.assertEqual(inv.keyed, 5)              # all chat media are keyed
+        self.assertEqual(inv.unkeyed, 0)
+        # every chat item carries chat_id + numeric msg_id
+        for it in inv.items:
+            self.assertTrue(it.chat_id)
+            self.assertTrue(it.msg_id and it.msg_id.isdigit())
+        kinds = {(it.orig_name): it.kind for it in inv.items}
+        self.assertEqual(kinds["100.jpg"], "image")
+        self.assertEqual(kinds["100.thumb"], "thumbnail")
+        self.assertEqual(kinds["101.pdf"], "document")
+        self.assertEqual(kinds["voice_201.aac"], "audio")
+        # voice note msg id is the embedded number
+        voice = next(it for it in inv.items if it.orig_name == "voice_201.aac")
+        self.assertEqual(voice.msg_id, "201")
+
+    def test_keep_scan_is_unkeyed(self):
+        inv = lm.scan_path(self.keep)
+        self.assertEqual(inv.mode, "keep")
+        self.assertEqual(len(inv.items), 2)
+        self.assertEqual(inv.keyed, 0)
+        self.assertEqual(inv.unkeyed, 2)
+        self.assertTrue(all(it.source == "line_keep" for it in inv.items))
+        self.assertTrue(all(it.chat_id is None and it.msg_id is None for it in inv.items))
+
+    def test_zip_source_matches_dir_source(self):
+        zp = fx.zip_tree(self.ext, os.path.join(self.tmp, "ext.zip"))
+        from_dir = lm.scan_path(self.ext)
+        from_zip = lm.scan_path(zp)
+        self.assertEqual(len(from_dir.items), len(from_zip.items))
+        self.assertEqual(from_dir.sidecars_skipped, from_zip.sidecars_skipped)
+        self.assertEqual(from_dir.nonmedia_skipped, from_zip.nonmedia_skipped)
+        self.assertEqual(from_dir.chats, from_zip.chats)
+
+    def test_sniffer_rejects_nonmedia(self):
+        self.assertIsNone(lm.sniff_family(b"NOTMEDIA\x00garbage"))
+        self.assertEqual(lm.sniff_family(fx.SHARED_JPEG), "jpeg")
+        self.assertEqual(lm.sniff_family(fx._pdf()), "pdf")
+        self.assertEqual(lm.sniff_family(fx._mp4_aac()), "isobmff")
+
+
+class LineMediaIngestTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.ext = fx.build_line_ext(os.path.join(self.tmp, "ext"))
+        self.keep = fx.build_line_keep(os.path.join(self.tmp, "keep"))
+        self.archive = os.path.join(self.tmp, "archive")
+
+    def test_chat_ingest_rows_blobs_and_roundtrip(self):
+        arc = Archive.create(self.archive, PW)
+        udb = UnifiedDB.in_memory()
+        res = lm.ingest_export(self.ext, udb, arc)
+        self.assertEqual(res.rows_added, 5)
+        # 5 files but SHARED_JPEG is used twice -> 4 distinct archive objects
+        self.assertEqual(res.blobs_stored, 4)
+        self.assertEqual(udb.counts()["media"], 5)
+
+        # Rows are keyed by chat+msg so they link to messages later.
+        row = udb.con.execute(
+            "SELECT kind, source, archive_ref, bytes FROM media "
+            "WHERE chat_id=? AND msg_id='100' AND ext='.jpg'", (fx.CHAT_DM,)
+        ).fetchone()
+        self.assertEqual(row["kind"], "image")
+        self.assertEqual(row["source"], "line_chat")
+
+        # The shared jpeg -> both rows point at the SAME archive object.
+        refs = [r["archive_ref"] for r in udb.con.execute(
+            "SELECT archive_ref FROM media WHERE ext='.jpg' ORDER BY chat_id"
+        )]
+        self.assertEqual(len(refs), 2)
+        self.assertEqual(refs[0], refs[1])  # dedup
+
+        # Round-trip: the stored object decrypts back to the exact original bytes.
+        self.assertEqual(arc.get_bytes(row["archive_ref"]), fx.SHARED_JPEG)
+
+        # Only 4 objects physically stored despite 5 media rows.
+        self.assertEqual(len(arc.manifest()["objects"]), 4)
+        udb.close()
+
+    def test_idempotent_reingest(self):
+        arc = Archive.create(self.archive, PW)
+        udb = UnifiedDB.in_memory()
+        lm.ingest_export(self.ext, udb, arc)
+        first = udb.counts()["media"]
+        res2 = lm.ingest_export(self.ext, udb, arc)  # same export again
+        self.assertEqual(res2.rows_added, 0)
+        self.assertEqual(udb.counts()["media"], first)
+        udb.close()
+
+    def test_keep_ingest_unkeyed(self):
+        arc = Archive.create(self.archive, PW)
+        udb = UnifiedDB.in_memory()
+        res = lm.ingest_export(self.keep, udb, arc)
+        self.assertEqual(res.rows_added, 2)
+        rows = list(udb.con.execute(
+            "SELECT chat_id, msg_id, source, kind FROM media"
+        ))
+        self.assertEqual(len(rows), 2)
+        self.assertTrue(all(r["chat_id"] is None and r["msg_id"] is None for r in rows))
+        self.assertTrue(all(r["source"] == "line_keep" for r in rows))
+        self.assertEqual({r["kind"] for r in rows}, {"document", "image"})
+        udb.close()
+
+    def test_bogus_file_not_archived(self):
+        arc = Archive.create(self.archive, PW)
+        udb = UnifiedDB.in_memory()
+        lm.ingest_export(self.ext, udb, arc)
+        # The bogus non-media file produced no row and no object.
+        names = [r["orig_name"] for r in udb.con.execute("SELECT orig_name FROM media")]
+        self.assertNotIn("102.bin", names)
+        udb.close()
+
+    def test_cli_dry_run_no_passphrase(self):
+        import ivy_host
+
+        buf = io.StringIO()
+        from contextlib import redirect_stdout
+        # No IVY_PASSPHRASE set, no --archive: dry-run must still work.
+        os.environ.pop("IVY_PASSPHRASE", None)
+        with redirect_stdout(buf):
+            rc = ivy_host.main(["ingest-line-media", self.ext, "--dry-run"])
+        self.assertEqual(rc, 0)
+        out = buf.getvalue()
+        self.assertIn("distinct chats: 2", out)
+        self.assertIn("sidecars skipped (-hmac/-hash): 2", out)
+        self.assertIn("non-media skipped: 1", out)
+
+    def test_cli_ingest_via_archive(self):
+        import ivy_host
+
+        os.environ["IVY_PASSPHRASE"] = PW
+        try:
+            rc = ivy_host.main(
+                ["ingest-line-media", self.ext, "--archive", self.archive]
+            )
+            self.assertEqual(rc, 0)
+            arc = Archive.open(self.archive, PW)
+            udb = UnifiedDB.from_bytes(arc.get_ref_bytes("unified.db"))
+            self.assertEqual(udb.counts()["media"], 5)
+            udb.close()
+            # Also fold in the Keep export, same archive, and stay idempotent.
+            rc = ivy_host.main(
+                ["ingest-line-media", self.keep, "--archive", self.archive]
+            )
+            self.assertEqual(rc, 0)
+            arc2 = Archive.open(self.archive, PW)
+            udb2 = UnifiedDB.from_bytes(arc2.get_ref_bytes("unified.db"))
+            self.assertEqual(udb2.counts()["media"], 7)  # 5 chat + 2 keep
+            udb2.close()
+        finally:
+            os.environ.pop("IVY_PASSPHRASE", None)
 
 
 class EndToEndTests(unittest.TestCase):

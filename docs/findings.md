@@ -55,6 +55,21 @@ Status legend: **not probed** → **probed** (files/headers known) → **mapped*
 - Everything else: **TODO — probe and fill using the template above.**
 - **Host-side status:** a map-driven stub exists (`android/host/parsers/stub.py` + `android/host/maps/line.map.json`, `verified: false`). It detects encryption by header and **skips with "pending real-schema verification"**, emitting zero rows. No LINE schema is invented. After probing a real store (per `docs/line-android.md`), fill `maps/line.map.json.tables` and set `verified: true`.
 
+### LINE — Android chat media (external export) (verified against the owner's own LINE export, Oct 2026)
+- **Finding:** LINE's chat attachment media is **plaintext on disk** and the owner exported it externally, so it is **ingestible without the LINE database or its SQLCipher key.** The DB is still needed later for message text, sender/timestamps, and to resolve which attachment belongs to which message body — but the media blobs themselves need neither.
+- **Chat-media export layout (`line_ext` tree):** `.../files/chats/<chatId>/messages/<file>`.
+  - `<chatId>` is an **opaque id** (no personal name): prefix `u` = 1:1, `c` = group, `m` = other.
+  - `<file>` is `<msgId>.<ext>` (e.g. `5012.thumb`, `1946.jpg`) or `voice_<msgId>.aac` for voice notes. **msgId = the number in the filename**, which matches LINE's own message id — so media **keys to a message by (chat_id, msg_id)** once the store is parsed.
+  - **Plaintext media verified by header:** `.jpg`/`.thumb` = JPEG (`FF D8 FF`), `.png` = PNG, `.gif` = GIF, `.pdf` = `%PDF`, `.aac`/`.mp4`/`.m4a` = ISO-BMFF (`ftyp`), office `.docx/.pptx/.xlsx` = ZIP (`PK`), legacy `.doc` = OLE. `.thumb` files are plain JPEG thumbnails.
+  - **Integrity sidecars:** `<msgId>-hmac` and `<msgId>-hash` are 32-byte integrity files next to the media. **Not media** - counted and skipped, never archived.
+  - **App assets, not attachments:** the rest of the `line_ext` tree (`files/Effect/`, `files/old_sticon/`, `files/theme/`, `files/mp/`, `files/storage/`, `group_default_profile/`, `storage/g/`) is LINE's own UI assets (stickers, effects, themes, profile thumbnails) - ignored by the chat-media ingester.
+- **Keep export layout (`line_export` tree):** the owner's LINE Keep / saved files, **flat (not chat-keyed)**: PDFs, images, documents (+ a few in one-level subdirs). Ingested as **unkeyed** media (`chat_id`/`msg_id` NULL), `source = line_keep`, kind by extension.
+- **Real-export inventory (content-free, dry-run, counts only):**
+  - `line_ext`: **295 chats** (u=253, c=40, m=2); **7630 ingestible media files** (thumbnail 5298, image 2017, audio 165, document 143, video 7); **769 sidecars** skipped; **2 non-media** skipped red-on-drift (one `.mp4a`, one `.thumb` whose header is not a true JPEG); 6106 non-chat app assets ignored.
+  - `line_export`: **67 Keep files** (document 39, image 25, video 1, other 2), all unkeyed.
+- **Host-side tooling:** `android/host/line_media.py` + the `ingest-line-media` CLI (zip **or** dir input). Verifies each chat-media header is true plaintext media (red-on-drift on anything else - zero guessed blobs), encrypts each **distinct** blob into the existing content-addressed archive (identical thumbnails dedup to one object), and records a `media` row keyed by (platform, chat_id, msg_id). Idempotent (dedup on sha256 + keys). A `--dry-run` inventories without encrypting or needing a passphrase, counts only, never printing file contents or names.
+- **Dead ends / notes:** the `-hmac`/`-hash` sidecars were **not** treated as media; the app-asset directories were **not** ingested as chat attachments; a `.mp4a` and a `.thumb` on the real device failed header verification and were skipped rather than guessed.
+
 ---
 
 ## Telegram

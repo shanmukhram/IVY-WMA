@@ -34,6 +34,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from archive import Archive  # noqa: E402
 from staging import Staging  # noqa: E402
 from unified import UnifiedDB  # noqa: E402
+import line_media as lm  # noqa: E402
 from parsers import contacts as p_contacts  # noqa: E402
 from parsers import sms as p_sms  # noqa: E402
 from parsers import stub as p_stub  # noqa: E402
@@ -131,6 +132,54 @@ def cmd_ingest(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_ingest_line_media(args: argparse.Namespace) -> int:
+    export = os.path.abspath(args.export)
+
+    # --dry-run: inventory only. No passphrase, no archive, no full-file reads.
+    if args.dry_run:
+        inv = lm.scan_path(export)
+        print(f"=== line media inventory (dry-run): {export} ===")
+        lm.print_inventory(inv)
+        return 0
+
+    if not args.archive:
+        sys.exit("--archive is required unless --dry-run is given")
+    archive_dir = os.path.abspath(args.archive)
+    pw = get_passphrase()
+
+    arc = Archive.open_or_create(archive_dir, pw)
+    if arc.uses_fallback_kdf():
+        sys.stderr.write(
+            "\n*** WARNING: archive uses the PBKDF2-HMAC-SHA256 FALLBACK KDF, not\n"
+            "*** Argon2id. This DEVIATES from docs/PROTOCOL.md and is not\n"
+            "*** interoperable with an Argon2id key. Install argon2-cffi to use the\n"
+            "*** PROTOCOL scheme.\n\n"
+        )
+
+    # Re-ingest: start from the existing unified image so media merges stay
+    # idempotent across runs (same as `ingest`). Otherwise start fresh.
+    existing = arc.get_ref_bytes(UNIFIED_REF)
+    udb = UnifiedDB.from_bytes(existing) if existing else UnifiedDB.in_memory()
+
+    res = lm.ingest_export(export, udb, arc, account=args.account)
+
+    image = udb.serialize()
+    counts = udb.counts()
+    udb.close()
+    arc.put_ref_bytes(UNIFIED_REF, image)
+
+    inv = res.inventory
+    print(f"\n=== line media ingest complete: {archive_dir} ===")
+    print(f"kdf: {arc.kdf.algo}")
+    print(f"mode: {'chat-media (line_ext)' if inv.mode == 'chat' else 'keep (line_export)'}")
+    print(
+        f"media rows added={res.rows_added}, already present={res.rows_existing}, "
+        f"distinct blobs stored this run={res.blobs_stored}"
+    )
+    print("unified totals: " + ", ".join(f"{k}={v}" for k, v in counts.items()))
+    return 0
+
+
 def _report(label: str, r) -> None:
     print(
         f"  [{label}] messages={len(r.messages)} chats={len(r.chats)} "
@@ -184,6 +233,20 @@ def main(argv=None) -> int:
     ing.add_argument("out_dir", help="pulled staging dir (contains manifest.tsv)")
     ing.add_argument("--archive", help="archive dir (default: <out_dir>/../archive)")
     ing.set_defaults(func=cmd_ingest)
+
+    ilm = sub.add_parser(
+        "ingest-line-media",
+        help="fold an exported LINE media tree (line_ext/line_export, zip or dir) "
+             "into the archive",
+    )
+    ilm.add_argument("export", help="LINE export: a .zip path or an extracted dir")
+    ilm.add_argument("--archive", help="archive dir (required unless --dry-run)")
+    ilm.add_argument(
+        "--dry-run", action="store_true",
+        help="inventory only: no encryption, no passphrase; prints counts only",
+    )
+    ilm.add_argument("--account", default=lm.DEFAULT_ACCOUNT, help="account label (default: line)")
+    ilm.set_defaults(func=cmd_ingest_line_media)
 
     se = sub.add_parser("search", help="full-text search the archive's unified messages")
     se.add_argument("query", help="FTS5 query over body/sender_name/chat_title")
