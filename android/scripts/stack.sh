@@ -90,8 +90,11 @@ find "$D/org.telegram.messenger" -type f -name 'cache4.db' 2>/dev/null | while I
 done
 
 log "== jp.naver.line.android =="; pkgver jp.naver.line.android
-stage_db  "$D/jp.naver.line.android/databases/naver_line" "jp.naver.line.android/databases"
-stage_dir "$D/jp.naver.line.android/shared_prefs"         "jp.naver.line.android/shared_prefs"
+# The chat store's filename varies by version (naver_line, or chat.db/square_history.db/
+# contacts.db), so stage the whole databases dir (all .db + -wal/-shm). shared_prefs holds
+# the SQLCipher key material.
+stage_dir "$D/jp.naver.line.android/databases"    "jp.naver.line.android/databases"
+stage_dir "$D/jp.naver.line.android/shared_prefs" "jp.naver.line.android/shared_prefs"
 
 log "== com.android.providers.telephony =="
 stage_db "$D/com.android.providers.telephony/databases/mmssms.db" "com.android.providers.telephony/databases"
