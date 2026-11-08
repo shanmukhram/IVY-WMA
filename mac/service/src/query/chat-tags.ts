@@ -8,7 +8,9 @@
  *     pinned, read from LINE's own _chatOption table (commit 2021cf1).
  *
  * A chat's shown listing is hidden when either source says hidden, else the stored listing.
- * Muted and pinned come only from LINE's options; null means no source has said.
+ * Muted and pinned come only from LINE's options; null means no source has said. Deletion is its own tag:
+ * deletedAtSource when the chat itself was removed from the owner's app, deletedMessages for how many of its
+ * messages were; the vault keeps all of them either way.
  *
  * A LINE chat can also appear only in the options: LINE knows it, but no message of it was
  * captured on the PC, so no conversation row exists. Those are returned as placeholder chats
@@ -28,12 +30,16 @@ export const listingSql = (c = "c") =>
 
 /** Columns to select for the tags of conversation `c` (needs lineOptionsJoin); read back with tagView. */
 export const tagColumns = (c = "c") =>
-  `${listingSql(c)} AS listing, lo.notification AS line_notification, lo.pinned AS line_pinned`;
+  `${listingSql(c)} AS listing, lo.notification AS line_notification, lo.pinned AS line_pinned, ${c}.source_deleted_at AS deletedAtSource,
+   (SELECT COUNT(*) FROM messages dm WHERE dm.conversation_id = ${c}.id AND dm.deleted_at IS NULL AND dm.source_status = 'deleted_at_source') AS deletedMessages`;
 
 /** A WHERE fragment for a listing filter on conversation `c`; null for "all". */
 export function listingFilterSql(listing: string, c = "c"): { sql: string; args: unknown[] } | null {
   const l = listingSql(c);
   if (listing === "all") return null;
+  // deleted: the chat was removed from the owner's app, or at least one of its messages was
+  if (listing === "deleted") return { sql: `(${c}.source_deleted_at IS NOT NULL OR EXISTS (SELECT 1 FROM messages dm WHERE dm.conversation_id = ${c}.id
+                                      AND dm.deleted_at IS NULL AND dm.source_status = 'deleted_at_source'))`, args: [] };
   // a conversation no source has given a listing for is shown as normal
   if (listing === "normal") return { sql: `(${l} IS NULL OR ${l} = 'normal')`, args: [] };
   return { sql: `${l} = ?`, args: [listing] };
@@ -72,7 +78,7 @@ function optionOnlyWhere(f: OptionOnlyFilter): { sql: string; args: unknown[] } 
   const args: unknown[] = [...acct.args];
   if (f.listing === "hidden") where.push("lo.hidden = 1");
   else if (f.listing === "normal") where.push("COALESCE(lo.hidden, 0) = 0");
-  else if (f.listing === "archived") where.push("0"); // LINE has no archive
+  else if (f.listing === "archived" || f.listing === "deleted") where.push("0"); // LINE has no archive; a chat in LINE's options is not deleted
   const text = f.q?.trim();
   if (text) {
     where.push(`(instr(lower(lo.chat_id), lower(?)) > 0 OR instr(lower(COALESCE((SELECT lc.display_name FROM line_contacts lc
@@ -109,7 +115,7 @@ export function optionOnlyChats(db: DB, f: OptionOnlyFilter, limit: number, offs
       kind: null, coverage: null, coverageSources: [], coverageBySource: {},
       coverageText: "LINE lists this chat, but no message of it was captured on this PC.",
       chatTitle: null, participantCount: null, chatType: null,
-      listing: r.hidden === 1 ? "hidden" : "normal",
+      listing: r.hidden === 1 ? "hidden" : "normal", deletedAtSource: null, deletedMessages: 0,
       muted: notify === null ? null : !notify, pinned: bool(r.pinned),
       messageCount: 0, firstMessageAt: null, lastMessageAt: null, lastMessage: null,
       title: r.contactName?.trim() || r.chatId,

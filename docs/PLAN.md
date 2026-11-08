@@ -196,3 +196,15 @@ Phases 2–4 are broken down when Phase 1 reaches gate G1.
     - **Content persistence** follows decision 24: captured messages persist on the Mac; source deletion/unsend/expiry/view-once only marks, never removes.
 
     Docs reconciled the same day: CONTEXT.md (view-once/disappearing now captured, not excluded) and PRD Part 3 (AU5 → root daemon / no notification; new AU6 → OTA updates; AC2 + source map → WhatsApp Business as a second account and Instagram; App UI → no status-bar notification; overview and non-goals updated).
+
+26. **Seeing what was deleted at the source: the Mac side of decision 24 (Bunny, Nov 8 2026). DONE on the Mac; LINE detection is open on the Windows side.**
+
+    Ask: when LINE had 49 messages in a chat days ago and now has 40, show which 9 were deleted, in which chat and when, and mark a whole chat that was deleted.
+
+    Mac (built to decision 24, append-and-flag):
+    - A chat removed from the owner's app is marked on the conversation (`conversations.source_deleted_at`, migration v17) from a new optional `chatMeta.deletedAtSource` (PROTOCOL §6): a time is when the sender first noticed it gone (the earliest stands), `null` says it is back, absent means unknown. The conversation and every message stay.
+    - Messages removed one by one already had the per-message mark (`sourceStatus: deleted_at_source` with the noticed time); the chat list now shows a red "Deleted <when>" badge for a removed chat or "<n> deleted" for a chat with removed messages, the Deleted filter (`listing=deleted`) lists only those chats, and each removed message keeps its text with the red mark and "deleted <when>".
+    - A copy that arrives with blank text never replaces stored words. Before this, a LINE unsend (which blanks `_message._text`) re-sent from the same source counted as an edit and the message showed empty.
+    - "When" is the time the source first noticed the message or chat gone, not the moment the owner deleted it; LINE's store does not record that. With the PC polling every 5 s that is close; after the PC was off it is the next time it looked.
+
+    **For the Windows side (LINE).** Checked against main at the time of this decision. The LINE collector always sends `sourceStatus: live` (`LineStore.cs`, `LineDesktopCollector.cs`) and reads only new rows per chat, so a message or chat removed from LINE is never reported; the Telegram collector already reports deletions. On the Mac: 39 LINE chats and 1,292 messages, 0 marked deleted. The newest LINE message on the Mac was captured 2026-11-02T07:40:47Z although the collector reported running on Nov 8 (cursor `chats=39`); check whether LINE capture is stalled. Needed: detect a message that disappeared from a chat, a message whose text was blanked by unsend (recover the words from `_message_fts` where decision 24 says they survive), and a chat that disappeared, and send them by platform message id as `deleted_at_source` (and `chatMeta.deletedAtSource` for a chat), never as removals; guard against a store that failed to open or a switched account looking like a mass deletion.

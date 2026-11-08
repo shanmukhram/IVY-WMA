@@ -234,6 +234,9 @@ function decideText(ex: StoredMsg, inc: { text: string; editedAt: string | null;
   if (inc.preview && ex.text_quality === "full") return "keep";
   if (!inc.preview && ex.text_quality === "preview") return "upgrade";
   if (inc.text === ex.text) return "same";
+  // a blank copy never replaces words already stored: LINE's unsend blanks the stored text and a deleted
+  // message can come back empty, but the vault keeps what it captured (PLAN decision 24)
+  if (!inc.text.trim() && ex.text.trim()) return "keep";
   if (inc.preview) return inc.text.length > ex.text.length ? "upgrade" : "keep"; // two previews: keep the fuller one
   const a = inc.editedAt ?? "", b = ex.edited_at ?? "";
   if (a > b) return "edit";
@@ -344,6 +347,10 @@ export function commitMessageBatch(db: DB, r: MessageBatchRecordT): CommitResult
   const preview = isNotificationSource(source);
   const claim = effectiveClaim(source, r.platform, r.coverage);
   const meta = r.chatMeta ?? {};
+  // chatMeta.deletedAtSource: a time marks the chat removed from the owner's app (the earliest notice stands),
+  // null says it is in the app again, absent keeps what is stored. Nothing is removed for it (C6).
+  const chatGoneAt = typeof meta.deletedAtSource === "string" ? normTs(meta.deletedAtSource) : null;
+  const chatBack = meta.deletedAtSource === null ? 1 : 0;
   let conv = db.prepare("SELECT id, coverage_by_source FROM conversations WHERE platform = ? AND account = ? AND conv_key = ?").get(r.platform, r.account, r.convKey) as
     { id: string; coverage_by_source: string } | undefined;
   const by = parseCoverageBySource(conv?.coverage_by_source);
@@ -351,15 +358,16 @@ export function commitMessageBatch(db: DB, r: MessageBatchRecordT): CommitResult
   if (conv) {
     db.prepare(`UPDATE conversations SET peer = COALESCE(?, peer), kind = ?, coverage = ?, coverage_by_source = ?, cursor = ?, device_id = COALESCE(device_id, ?),
                   chat_title = COALESCE(?, chat_title), participant_count = COALESCE(?, participant_count), chat_type = COALESCE(?, chat_type),
-                  avatar_blob_oid = COALESCE(?, avatar_blob_oid), listing = COALESCE(?, listing), updated_at = ? WHERE id = ?`)
+                  avatar_blob_oid = COALESCE(?, avatar_blob_oid), listing = COALESCE(?, listing),
+                  source_deleted_at = CASE WHEN ? = 1 THEN NULL ELSE COALESCE(source_deleted_at, ?) END, updated_at = ? WHERE id = ?`)
       .run(r.peer ?? null, r.convKind, bestCoverage(by), stableJson(by), r.cursor, r.deviceId, meta.title ?? null, meta.participantCount ?? null, meta.chatType ?? null,
-        meta.avatarBlobOid ?? null, meta.listing ?? null, now, conv.id);
+        meta.avatarBlobOid ?? null, meta.listing ?? null, chatBack, chatGoneAt, now, conv.id);
   } else {
     conv = { id: randomUUID(), coverage_by_source: "" };
-    db.prepare(`INSERT INTO conversations(id, device_id, platform, account, conv_key, peer, kind, coverage, coverage_by_source, cursor, chat_title, participant_count, chat_type, avatar_blob_oid, listing, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    db.prepare(`INSERT INTO conversations(id, device_id, platform, account, conv_key, peer, kind, coverage, coverage_by_source, cursor, chat_title, participant_count, chat_type, avatar_blob_oid, listing, source_deleted_at, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
       .run(conv.id, r.deviceId, r.platform, r.account, r.convKey, r.peer ?? null, r.convKind, bestCoverage(by), stableJson(by), r.cursor,
-        meta.title ?? null, meta.participantCount ?? null, meta.chatType ?? null, meta.avatarBlobOid ?? null, meta.listing ?? null, now, now);
+        meta.title ?? null, meta.participantCount ?? null, meta.chatType ?? null, meta.avatarBlobOid ?? null, meta.listing ?? null, chatGoneAt, now, now);
   }
   // A metadata-only batch (empty messages: e.g. the chat was archived or hidden with no new messages) stops
   // here in effect: the loop below stores nothing and the summary reports inserted 0.

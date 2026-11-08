@@ -19,7 +19,10 @@
  *       tags (query/chat-tags.ts): listing (normal | archived | hidden | null when no
  *       source has said; hidden also when LINE's own chat options say so), muted and
  *       pinned (LINE's chat options; null when unknown);
- *       listing=normal|archived|hidden|all filters (default all; normal includes null).
+ *       deletedAtSource (the chat was removed from the owner's app) and deletedMessages (how many of its
+ *       messages were; the vault keeps them all);
+ *       listing=normal|archived|hidden|deleted|all filters (default all; normal includes null;
+ *       deleted = the chat or any of its messages was removed at the source).
  *       After every captured conversation come the LINE chats known only from LINE's
  *       chat options (placeholder: true, no messages), so total counts every chat;
  *       page through it with page/pageSize (pageSize at most 500)
@@ -52,7 +55,7 @@ const int = (v: unknown, dflt: number, min: number, max: number): number => {
 
 const SOURCE_RE = /^(windows|android):[a-z0-9][a-z0-9._-]*$/;
 const ROLE_RE = /^(windows|android)$/;
-const LISTINGS = ["all", "normal", "archived", "hidden"] as const;
+const LISTINGS = ["all", "normal", "archived", "hidden", "deleted"] as const;
 
 
 /** The source session of the LINE for Windows collector. */
@@ -159,7 +162,7 @@ export function registerViewRoutes(app: FastifyInstance, svc: Service): void {
     if (q.source && !SOURCE_RE.test(q.source)) return reply.status(400).send({ error: "bad_source", message: "source must be <role>:<collector>" });
     if (q.role && !ROLE_RE.test(q.role)) return reply.status(400).send({ error: "bad_role", message: "role must be windows or android" });
     const listing = q.listing || "all";
-    if (!(LISTINGS as readonly string[]).includes(listing)) return reply.status(400).send({ error: "bad_listing", message: "listing must be normal, archived, hidden or all" });
+    if (!(LISTINGS as readonly string[]).includes(listing)) return reply.status(400).send({ error: "bad_listing", message: "listing must be normal, archived, hidden, deleted or all" });
     const convPreds = (a: string) => conversationPredicates(a, q);
     const preds = convPreds("c");
     const where = ["c.deleted_at IS NULL", ...preds.sql]; const args: unknown[] = [...preds.args];

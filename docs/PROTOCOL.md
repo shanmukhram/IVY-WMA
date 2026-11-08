@@ -416,7 +416,7 @@ attachments[]`. Each attachment:
 - `deletedAtSource?` — when the source observed the deletion; only valid with
   `sourceStatus: deleted_at_source` (a deletion without it is dated by
   `captureTime`).
-- `chatMeta?` — `{ title?, participantCount?, chatType?, avatarBlobOid?, listing? }`,
+- `chatMeta?` — `{ title?, participantCount?, chatType?, avatarBlobOid?, listing?, deletedAtSource? }`,
   as the platform reports them (`chatType` in the platform's own words: `private`,
   `group`, `supergroup`, `channel`, `secret`, …). `avatarBlobOid` is the oid of a
   chunked blob (§2.2, payloadKind `avatar`) holding the chat's or peer's profile
@@ -425,7 +425,13 @@ attachments[]`. Each attachment:
   other value is valid. A sender sets it explicitly whenever it knows it, so an
   unarchive or unhide arrives as `normal`; an absent `listing` means unknown and
   never clears the value the Mac stored. Each stored `chatMeta` field is replaced
-  by a present value and kept when absent.
+  by a present value and kept when absent. `deletedAtSource` says the chat itself
+  was removed from the owner's app: a timestamp is when the sender first noticed
+  it gone (the Mac keeps the earliest), `null` says the chat is in the app again,
+  and absent means unknown. It never removes the conversation or its messages on
+  the Mac (PLAN decision 24); messages removed one by one keep using the per-message
+  `sourceStatus: deleted_at_source` and `deletedAtSource`. A message re-sent with
+  blank text never replaces the text the Mac already holds.
 - A batch MAY carry an empty `messages[]` (a metadata-only batch), sent when the
   chat's metadata, such as `listing`, changed without new messages. The Mac
   updates the conversation's metadata and the source's coverage claim and stores

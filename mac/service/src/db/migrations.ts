@@ -916,6 +916,12 @@ const v16 = `
 ALTER TABLE devices ADD COLUMN last_upload_at TEXT;
 `;
 
+// v17: a chat removed from the owner's app (chatMeta.deletedAtSource): when the source first noticed it gone.
+// NULL when the chat is in the app, or no source has said. The conversation and its messages are kept (C6).
+const v17 = `
+ALTER TABLE conversations ADD COLUMN source_deleted_at TEXT;
+`;
+
 export const MIGRATIONS: Migration[] = [
   { version: 1, name: "initial vault schema", sql: v1 },
   { version: 2, name: "import progress, manifest commandId, transferring commands", sql: v2 },
@@ -933,4 +939,5 @@ export const MIGRATIONS: Migration[] = [
   { version: 14, name: "device names chosen by the owner (devices.name)", sql: v14 },
   { version: 15, name: "unpair on revoke and forget: revoked_devices, unpair columns on forgotten_devices", sql: v15 },
   { version: 16, name: "devices.last_upload_at: when the device made its newest committed object", sql: v16 },
+  { version: 17, name: "conversations.source_deleted_at: a chat removed from the owner's app", sql: v17 },
 ];

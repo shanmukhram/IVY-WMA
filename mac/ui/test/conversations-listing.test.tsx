@@ -53,7 +53,7 @@ describe("chat listing: badges and filter", () => {
     const api = mockApi(routes());
     const { unmount } = renderWith(<ConversationsView />, api, { path: "/conversations" });
     const group = await screen.findByRole("group", { name: "Show chats" });
-    expect(within(group).getAllByRole("button").map((b) => b.textContent)).toEqual(["All", "Normal", "Archived", "Hidden"]);
+    expect(within(group).getAllByRole("button").map((b) => b.textContent)).toEqual(["All", "Normal", "Archived", "Hidden", "Deleted"]);
     expect(within(group).getByRole("button", { name: "All" })).toHaveAttribute("aria-pressed", "true");
     expect(api.calls.find((c) => c.path === "/api/views/chats")!.arg.listing).toBeUndefined(); // All sends no filter
 

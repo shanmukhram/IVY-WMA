@@ -48,6 +48,10 @@ export interface Chat {
   muted?: boolean | null; pinned?: boolean | null;
   /** a chat LINE lists but with no message captured on this PC (no conversation to open) */
   placeholder?: boolean;
+  /** the chat was removed from the owner's app: when that was first noticed (the vault keeps it) */
+  deletedAtSource?: string | null;
+  /** how many of its messages were removed from the owner's app (all kept in the vault) */
+  deletedMessages?: number;
   coverageSources?: SourceClaim[]; coverageText?: string;
   title?: string | null; avatarUrl?: string | null; source?: string; lastText?: string | null; lastAt?: string | null;
   messageCount: number; firstMessageAt?: string | null; lastMessageAt: string | null;
@@ -165,10 +169,33 @@ function TagBadge({ on, word, platform, testId }: { on?: boolean | null; word: s
   );
 }
 
-/** Every tag the owner's own app gives a chat, each with its own label: Archived or Hidden, Pinned, Muted. */
-export function ChatTags({ chat }: { chat: Pick<Chat, "listing" | "muted" | "pinned" | "platform"> }) {
+/**
+ * What was deleted in the owner's own app, in red: the whole chat (with when it was noticed), or how many
+ * of its messages. IVY keeps all of it, so the chat still opens with every message.
+ */
+export function DeletedBadge({ chat }: { chat: Pick<Chat, "deletedAtSource" | "deletedMessages" | "platform"> }) {
+  const app = platformLabel(chat.platform ?? "");
+  if (chat.deletedAtSource) {
+    return (
+      <span className="listing-badge" data-testid="deleted-badge" style={{ flex: "none", fontSize: "var(--text-xs)" }}>
+        <Badge tone="red" title={`Removed from ${app}, first noticed ${fmtTime(chat.deletedAtSource)}. IVY keeps every message.`}>Deleted {shortWhen(chat.deletedAtSource)}</Badge>
+      </span>
+    );
+  }
+  const n = chat.deletedMessages ?? 0;
+  if (n <= 0) return null;
+  return (
+    <span className="listing-badge" data-testid="deleted-badge" style={{ flex: "none", fontSize: "var(--text-xs)" }}>
+      <Badge tone="red" title={`${n} message${n === 1 ? "" : "s"} removed from ${app}. IVY keeps ${n === 1 ? "it" : "them"}, marked in the chat.`}>{n} deleted</Badge>
+    </span>
+  );
+}
+
+/** Every tag the owner's own app gives a chat, each with its own label: Deleted, Archived or Hidden, Pinned, Muted. */
+export function ChatTags({ chat }: { chat: Pick<Chat, "listing" | "muted" | "pinned" | "platform" | "deletedAtSource" | "deletedMessages"> }) {
   return (
     <>
+      <DeletedBadge chat={chat} />
       <ListingBadge listing={chat.listing} platform={chat.platform} />
       <TagBadge on={chat.pinned} word="Pinned" platform={chat.platform} testId="pinned-badge" />
       <TagBadge on={chat.muted} word="Muted" platform={chat.platform} testId="muted-badge" />
@@ -194,8 +221,8 @@ export async function fetchAllChats(api: Api, query: Query): Promise<{ total: nu
   return { ...first, items: items.filter((c) => !seen.has(c.id) && !!seen.add(c.id)) };
 }
 
-export type ListingFilter = "all" | "normal" | "archived" | "hidden";
-export const LISTING_FILTERS: Array<[ListingFilter, string]> = [["all", "All"], ["normal", "Normal"], ["archived", "Archived"], ["hidden", "Hidden"]];
+export type ListingFilter = "all" | "normal" | "archived" | "hidden" | "deleted";
+export const LISTING_FILTERS: Array<[ListingFilter, string]> = [["all", "All"], ["normal", "Normal"], ["archived", "Archived"], ["hidden", "Hidden"], ["deleted", "Deleted"]];
 const LISTING_KEY = "ivy.chats.listing";
 /** The chat list filter, remembered for this browser session (sessionStorage may be unavailable: then it is just not remembered). */
 function useListingFilter(): [ListingFilter, (v: ListingFilter) => void] {
@@ -572,6 +599,11 @@ function Thread({ id, around, hintAvatar, onOpenProfile, onJumpLatest }: { id: s
                     <time dateTime={at} title={`sent: ${fmtTime(at)}\ncaptured: ${fmtTime(m.capturedAt ?? m.captured_at)}`}>{hm(at)}</time>
                     {mEditedAt(m) && <span title={`edited ${fmtTime(mEditedAt(m))}`}>edited</span>}
                     {deleted && <Badge tone="red">deleted at source (kept in vault)</Badge>}
+                    {deleted && (m.deletedAtSource ?? m.source_deleted_at) && (
+                      <time dateTime={(m.deletedAtSource ?? m.source_deleted_at)!} title={`first noticed gone ${fmtTime(m.deletedAtSource ?? m.source_deleted_at)}`} data-testid="deleted-at">
+                        deleted {shortWhen(m.deletedAtSource ?? m.source_deleted_at)}
+                      </time>
+                    )}
                     {mPreview(m) && <Badge tone="amber">notification preview only</Badge>}
                     {multiSource && sources.length > 0 && (
                       <span title="capture sources">via {sources.map((s) => `${s.source}${s.deletedAtSource ? " (deleted there)" : ""}`).join(", ")}</span>

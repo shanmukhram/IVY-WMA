@@ -197,6 +197,12 @@ export const ChatMeta = z.object({
    * (LINE's hidden chats). Absent means the sender does not know; the Mac keeps what it stored before.
    */
   listing: z.enum(["normal", "archived", "hidden"]).optional(),
+  /**
+   * The chat itself was removed from the owner's app: when the sender first noticed it gone. `null` means
+   * the chat is in the app again (a new message, or it came back); absent means the sender does not know,
+   * and the Mac keeps what it stored. The Mac never removes the chat or its messages for this (C6).
+   */
+  deletedAtSource: ts.nullable().optional(),
 });
 
 
